@@ -25,8 +25,13 @@ from launch_ros.actions import Node
 HOME = os.path.expanduser('~')
 
 # Overridable at launch time; empty string keeps whatever the params file says.
+# curvature_preview_m matters more than it looks: with no v_mps column in the
+# CSV, speed is derived from the worst curvature within this distance. Braking
+# 8.0 -> 1.8 m/s takes ~6 m, so a 1 m preview means the car meets the corner at
+# full speed. Irrelevant when the path carries its own velocity profile.
 TUNABLES = ('lookahead_min', 'lookahead_max', 'lookahead_k',
-            'v_max', 'a_lat_max', 'throttle_max', 'steering_gain')
+            'v_max', 'a_lat_max', 'throttle_max', 'steering_gain',
+            'curvature_preview_m')
 
 
 def _nodes(context, *args, **kwargs):
@@ -48,6 +53,7 @@ def _nodes(context, *args, **kwargs):
                 cfg('pp_params_file'),
                 {'path_csv': cfg('path_csv'),
                  'pose_topic': cfg('pose_topic'),
+                 'use_tf_pose': cfg('use_tf_pose').lower() == 'true',
                  'wait_for_ready': cfg('wait_for_ready').lower() == 'true',
                  'bootstrap_seconds': float(cfg('bootstrap_seconds')),
                  'dev_lap_telemetry': cfg('dev_lap_telemetry').lower() == 'true'},
@@ -100,6 +106,11 @@ def generate_launch_description():
             description='/amcl_pose for the race-legal estimate; the devkit odom '
                         'is ground truth and RESTRICTED at race time'),
         DeclareLaunchArgument('dev_lap_telemetry', default_value='false'),
+        DeclareLaunchArgument(
+            'use_tf_pose', default_value='false',
+            description='read the pose from TF map->roboracer_1 (continuous) '
+                        'instead of the /amcl_pose topic (resample-triggered). '
+                        'Set true whenever AMCL is the pose source.'),
     ]
     args += [DeclareLaunchArgument(n, default_value='',
                                    description='override the params file value')

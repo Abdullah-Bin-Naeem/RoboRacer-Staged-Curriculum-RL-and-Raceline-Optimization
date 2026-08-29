@@ -19,14 +19,33 @@ amcl:
 
     # ---- Motion model ----
     robot_model_type: "nav2_amcl::DifferentialMotionModel"
-    # Deliberately loose. The encoders overread up to ~3x under hard
-    # acceleration (wheel slip, measured during the RL work), so the odometry
-    # this filter is fed can be badly wrong for short bursts. Tight alphas make
-    # the filter overconfident in a wrong prediction and it diverges.
-    alpha1: 0.30      # rotation noise from rotation
-    alpha2: 0.30      # rotation noise from translation
-    alpha3: 0.50      # translation noise from translation  <- slip lives here
-    alpha4: 0.30      # translation noise from rotation
+    # DERIVED FROM THE VEHICLE SPEC, not guessed. nav2 draws the motion noise as
+    #   sigma_trans = sqrt(alpha3*d_trans^2 + alpha4*(d_rot1^2 + d_rot2^2))
+    #   sigma_rot1  = sqrt(alpha1*d_rot1^2  + alpha2*d_trans^2)
+    # so sqrt(alpha) is a FRACTIONAL error, not an absolute one.
+    #
+    # At 8 m/s and 18 Hz one update is d_trans = 0.44 m. The previous values
+    # (0.30/0.30/0.50/0.30) therefore injected sigma_trans = 0.31 m and
+    # sigma_rot = 13.8 deg on EVERY update -- against a 0.134 m wall margin.
+    # The filter scattered particles far wider than physics allows and the
+    # sensor model had to drag them back, which with resample_interval: 1
+    # leaves few effective particles and a jittery mean.
+    #
+    # What the published vehicle spec actually allows:
+    #   longitudinal tire extremum slip = 0.15  -> encoders overread <=15%
+    #     15% -> alpha3 0.022; allow 30% for wheelspin transients -> 0.09
+    #   measured sideslip = 2.9 deg (velocity vs body x-axis)
+    #     0.051 rad over 0.44 m -> alpha2 0.013; 2x margin -> 0.05
+    #   heading is ABSOLUTE (IMU quaternion) and does not drift, so alpha1 only
+    #     has to cover the rot1/rot2 decomposition -> 0.05
+    #
+    # The 1.55% steady-state bias these used to absorb is gone: dead_reckoning
+    # now uses the measured 0.0581 m effective rolling radius, not the spec's
+    # geometric 0.0590. Restore 0.30/0.30/0.50/0.30 to A/B against the old set.
+    alpha1: 0.05      # rotation noise from rotation
+    alpha2: 0.05      # rotation noise from translation
+    alpha3: 0.10      # translation noise from translation  <- slip lives here
+    alpha4: 0.05      # translation noise from rotation
     alpha5: 0.20      # strafe (unused by the differential model)
 
     # ---- Laser model ----
@@ -66,14 +85,18 @@ amcl:
     set_initial_pose: true
     tf_broadcast: true
 
-    # Overridden by the launch file. The SLAM map was built with scan matching
-    # off against ground-truth odometry, so map coordinates line up with the
-    # simulator's world frame -- the car's spawn pose works as-is.
+    # Overridden by localization.launch.py; this is the standalone fallback,
+    # used only when the bootstrap seed never lands. The SLAM map was built with
+    # scan matching off against ground-truth odometry, so map coordinates equal
+    # the simulator's world frame and a world-frame pose can be used verbatim.
+    # NOT (0, 0, 0) -- that cell is a WALL in track_clean.pgm and sits 0.71 m
+    # off the racing line. Replace with the measured spawn:
+    #     ros2 topic echo /autodrive/roboracer_1/ips --once
     initial_pose:
-      x: 0.0
-      y: 0.0
+      x: 0.71
+      y: 0.02
       z: 0.0
-      yaw: 0.0
+      yaw: -1.599
 
 map_server:
   ros__parameters:

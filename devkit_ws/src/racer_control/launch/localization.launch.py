@@ -94,7 +94,14 @@ def _nodes(context, *args, **kwargs):
         Node(
             package='racer_control', executable='localization_bootstrap',
             name='localization_bootstrap', output='screen', emulate_tty=True,
-            parameters=[{'mode': LaunchConfiguration('bootstrap_mode').perform(context)}],
+            parameters=[{
+                'mode': cfg('bootstrap_mode'),
+                # AMCL is a lifecycle node and DISCARDS anything sent to
+                # /initialpose before it is active, so the seed is a handshake:
+                # wait for active, send, confirm, retry. See the node docstring.
+                'amcl_node': 'amcl',
+                'require_convergence': cfg('require_convergence').lower() == 'true',
+            }],
             condition=IfCondition(LaunchConfiguration('bootstrap')),
         ),
 
@@ -102,6 +109,28 @@ def _nodes(context, *args, **kwargs):
         Node(
             package='racer_control', executable='localization_error',
             name='localization_error', output='screen', emulate_tty=True,
+            parameters=[{'wall_margin_m': float(cfg('wall_margin'))}],
+            condition=IfCondition(LaunchConfiguration('measure_error')),
+        ),
+
+        # map -> world, identity. Purely so RViz can DRAW the ground-truth pose
+        # next to the estimate: /odom and /ips are published in the devkit's
+        # `world` frame, which left /tf when the bridge was remapped, so without
+        # this there is no way to render them alongside the map.
+        #
+        # Identity is correct here because the SLAM run had scan matching off
+        # against ground-truth odometry, making slam_toolbox's correction the
+        # identity -- map coordinates ARE world coordinates. Verified: beam
+        # endpoints projected from the true pose land 0.003 m from mapped walls.
+        #
+        # Tied to measure_error because it exists only to visualise a RESTRICTED
+        # topic. It feeds nothing in the control path.
+        Node(
+            package='tf2_ros', executable='static_transform_publisher',
+            name='map_world_tf', output='log',
+            arguments=['--x', '0', '--y', '0', '--z', '0',
+                       '--qx', '0', '--qy', '0', '--qz', '0', '--qw', '1',
+                       '--frame-id', 'map', '--child-frame-id', 'world'],
             condition=IfCondition(LaunchConfiguration('measure_error')),
         ),
 
@@ -129,12 +158,28 @@ def generate_launch_description():
             'bootstrap_mode', default_value='truth',
             description="'truth' seeds the pose from /ips once (development); "
                         "'global' searches with no initial pose (race-legal)"),
+        # Body-to-wall clearance at the tightest point of the line being driven,
+        # measured from track_clean.pgm with the 0.27 m car width subtracted:
+        #   centerline_full.csv   0.367     raceline_scipy_a6/a8   0.089
+        # The error report warns when p95 exceeds it. Default is the optimized
+        # line, the tighter gate.
+        DeclareLaunchArgument('wall_margin', default_value='0.089'),
+        DeclareLaunchArgument(
+            'require_convergence', default_value='true',
+            description='refuse to latch /localization_ready unless the pose was '
+                        'actually confirmed; false hands over regardless'),
         DeclareLaunchArgument(
             'bootstrap', default_value='true',
             description='drive forward until AMCL converges instead of being '
                         'given an initial pose'),
-        DeclareLaunchArgument('initial_x', default_value='0.0'),
-        DeclareLaunchArgument('initial_y', default_value='0.0'),
-        DeclareLaunchArgument('initial_yaw', default_value='0.0'),
+        # Fallback pose, used only when the bootstrap seed is unavailable.
+        # NOT (0, 0, 0): that cell is a WALL in track_clean.pgm and sits 0.71 m
+        # off the racing line, so AMCL would start confidently inside a barrier.
+        # This is the nearest centerline point to the old default; replace it
+        # with the measured spawn:
+        #     ros2 topic echo /autodrive/roboracer_1/ips --once
+        DeclareLaunchArgument('initial_x', default_value='0.71'),
+        DeclareLaunchArgument('initial_y', default_value='0.02'),
+        DeclareLaunchArgument('initial_yaw', default_value='-1.599'),
         OpaqueFunction(function=_nodes),
     ])

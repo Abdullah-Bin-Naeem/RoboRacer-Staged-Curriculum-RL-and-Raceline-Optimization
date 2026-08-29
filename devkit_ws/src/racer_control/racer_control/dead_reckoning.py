@@ -17,6 +17,28 @@ it is also why the motion-model noise in the AMCL config has to be generous.
 
 Because IMU yaw is absolute and world-referenced, the `odom` frame here comes out
 aligned with the simulator's world orientation; only its origin differs.
+
+DISTANCE NEVER TOUCHES dt
+-------------------------
+Encoder angle is CUMULATIVE, so arc length is `dangle * r` regardless of how
+long the interval was or whether frames were dropped. Integrating instead as
+`(dangle/dt_encoder) * dt_timer` -- a rate multiplied straight back into a
+different interval -- is not an identity, and it was biasing distance two ways:
+
+  * Jensen. The speed from interval k is held across interval k+1, and for
+    jittery intervals E[dt_{k+1}/dt_k] = mu * E[1/dt] > 1, inflating distance by
+    roughly (sigma/mu)^2. The bridge stamps every message with
+    `get_clock().now()` at socket receipt, so dt carries the full WebSocket +
+    Unity frame jitter; at 18 Hz nominal, 15% jitter is ~2% systematic OVERREAD
+    -- larger than the 1.55% wheel-radius bias corrected below, and systematic,
+    which is exactly what AMCL's zero-mean alpha noise cannot represent.
+
+  * Dropped travel. The old dt sanity guard returned AFTER `self._enc[side]` had
+    already been overwritten, so a stale or duplicate frame permanently lost that
+    angle delta -- biasing position SHORT.
+
+So the angle delta is now accumulated directly, and dt survives only where it is
+harmless: computing the reported `twist.linear.x`, which nothing integrates.
 """
 
 import math
@@ -47,28 +69,62 @@ class DeadReckoning(Node):
         super().__init__('dead_reckoning')
 
         p = self.declare_parameter
-        p('wheel_radius', 0.0590)       # published spec
+        # MEASURED 0.0581, not the published 0.0590: path-integration gave
+        # 0.05815 and steady-state speed matching 0.05813. The spec value
+        # overreads distance by 1.55%, which is ~0.43 m of phantom travel per
+        # 27.7 m lap -- a SYSTEMATIC bias, which is exactly what AMCL's
+        # zero-mean alpha noise cannot represent. See rl_racer/rl_racer/config.py.
+        p('wheel_radius', 0.0581)
         p('odom_frame', 'odom')
         p('base_frame', 'roboracer_1')  # devkit's name, so `lidar` still parents to it
-        p('publish_rate', 50.0)
+        # 200 Hz, not 50. MEASURED: scans land uniformly in the gap between odom
+        # transforms, so at 50 Hz (20 ms) 96% of them are stamped AHEAD of the
+        # newest one. AMCL must look up odom->base AT the scan timestamp to
+        # build map->odom; a mistimed lookup corrupts that transform while the
+        # published /amcl_pose stays clean. 200 Hz cuts the worst case to 5 ms.
+        #
+        # This is pure RESAMPLING of the integrated pose -- the timer rate no
+        # longer affects how far the car thinks it has travelled.
+        p('publish_rate', 200.0)
         p('publish_tf', True)
+        # Post-date the TF stamp so a consumer asking for "now" always lands
+        # INSIDE the transform window rather than extrapolating past its end.
+        # nav2's own amcl does the same for map->odom, with 0.5 s. The cost is
+        # that the pose reported at stamp t is really the pose from t-tolerance;
+        # 20 ms is small next to the bridge's own WebSocket latency, and far
+        # smaller than the error a dropped scan causes.
+        p('transform_tolerance', 0.02)
         # Encoders overread under slip. <1.0 trims the systematic part; AMCL
         # handles what is left.
         p('distance_scale', 1.0)
+        # Reset detector, in wheel radians. Cumulative angle survives dropped
+        # frames, so the ONLY delta worth rejecting is a discontinuity -- i.e.
+        # the sim resetting the counter. Arithmetic at the measured 24 m/s top
+        # speed and r=0.0581 (wheel rate 413 rad/s):
+        #     one 18 Hz tick        ~23 rad
+        #     a 0.5 s stall        ~206 rad
+        #     a full 27.7 m lap    ~477 rad   <- what a reset-to-zero looks like
+        # 300 sits above any plausible gap and below a lap's accumulation.
+        # A reset also invalidates AMCL's pose, so re-seed the filter too.
+        p('max_wheel_step', 300.0)
 
         g = lambda n: self.get_parameter(n).value
         self.wheel_r = g('wheel_radius')
         self.odom_frame, self.base_frame = g('odom_frame'), g('base_frame')
         self.publish_tf = g('publish_tf')
         self.scale = g('distance_scale')
+        self.tf_tol = float(g('transform_tolerance'))
+        self.max_step = float(g('max_wheel_step'))
 
         self.x = self.y = 0.0
         self.yaw = None                 # from IMU; None until the first message
         self.speed = 0.0
         self.yaw_rate = 0.0
         self._enc = {}                  # side -> (angle, stamp)
-        self._rate = {}                 # side -> m/s
+        self._ds = {}                   # side -> metres of arc awaiting integration
+        self._rate = {}                 # side -> m/s   (reporting only)
         self._last = None
+        self._resets = 0
 
         self.create_subscription(JointState, f'{NS}/left_encoder',
                                  lambda m: self._cb_enc('l', m), QOS)
@@ -82,7 +138,8 @@ class DeadReckoning(Node):
 
         self.get_logger().info(
             f'dead reckoning: {self.odom_frame} -> {self.base_frame}, '
-            f'wheel r={self.wheel_r} m, scale={self.scale}')
+            f'wheel r={self.wheel_r} m, scale={self.scale}, '
+            f'{g("publish_rate"):.0f} Hz, tf +{self.tf_tol * 1e3:.0f} ms')
 
     def _cb_enc(self, side, msg):
         """position is cumulative wheel angle in RADIANS (measured, not ticks)."""
@@ -93,11 +150,27 @@ class DeadReckoning(Node):
         prev = self._enc.get(side)
         self._enc[side] = (ang, t)
         if prev is None:
+            self._ds.setdefault(side, 0.0)
             return
+
+        dang = ang - prev[0]
+
+        # ---- distance: cumulative, so dt is irrelevant and must stay out ----
+        if abs(dang) > self.max_step:
+            # Counter discontinuity, not travel. Skip it; _enc is already
+            # resynced above, so the next delta is measured from the new origin.
+            self._resets += 1
+            self.get_logger().warn(
+                f'{side} encoder jumped {dang:.1f} rad (> {self.max_step:.0f}); '
+                f'treating as a reset, not travel. AMCL needs re-seeding.')
+            return
+        self._ds[side] = self._ds.get(side, 0.0) + dang * self.wheel_r
+
+        # ---- speed: reported in twist.linear.x, never integrated ----
         dt = t - prev[1]
         if dt <= 1e-4 or dt > 0.5:
-            return          # stale or duplicate frame; a bad dt gives garbage
-        self._rate[side] = (ang - prev[0]) / dt * self.wheel_r
+            return          # stale or duplicate stamp; a bad dt gives garbage
+        self._rate[side] = dang / dt * self.wheel_r
         rates = [v for v in self._rate.values() if v is not None]
         if rates:
             self.speed = float(np.mean(rates)) * self.scale
@@ -106,6 +179,22 @@ class DeadReckoning(Node):
         self.yaw = yaw_from_quat(msg.orientation)
         self.yaw_rate = msg.angular_velocity.z
 
+    def _consume_ds(self):
+        """Metres travelled since the last tick, averaged over the wheels.
+
+        Both encoders are published inside the same bridge handler, so they
+        normally land together. If a tick happens to fall between them the
+        update is split across two ticks -- mean(dl, 0) then mean(0, dr) -- which
+        still sums to the correct mean(dl, dr); only the yaw used differs, by one
+        5 ms tick.
+        """
+        if not self._ds:
+            return 0.0
+        ds = float(np.mean(list(self._ds.values())))
+        for side in self._ds:
+            self._ds[side] = 0.0
+        return ds * self.scale
+
     def _tick(self):
         if self.yaw is None:
             return
@@ -113,24 +202,28 @@ class DeadReckoning(Node):
         t = now.nanoseconds * 1e-9
         if self._last is None:
             self._last = t
+            self._consume_ds()      # drop pre-roll travel rather than banking it
             return
-        dt = t - self._last
         self._last = t
-        if dt <= 0.0 or dt > 0.5:
-            return
 
-        # Integrate encoder distance along the IMU heading. No bicycle model
-        # needed: the IMU already gives the true heading each step.
-        self.x += self.speed * math.cos(self.yaw) * dt
-        self.y += self.speed * math.sin(self.yaw) * dt
+        # Integrate encoder ARC LENGTH along the IMU heading. No bicycle model
+        # needed: the IMU already gives the true heading each step. No dt either
+        # -- the distance was measured, not inferred from a rate.
+        ds = self._consume_ds()
+        self.x += ds * math.cos(self.yaw)
+        self.y += ds * math.sin(self.yaw)
 
         stamp = now.to_msg()
+        # TF is post-dated; the Odometry message keeps the true stamp, since
+        # nothing looks that up by time.
+        tf_stamp = (now + rclpy.duration.Duration(
+            seconds=self.tf_tol)).to_msg() if self.tf_tol > 0.0 else stamp
         half = self.yaw / 2.0
         qz, qw = math.sin(half), math.cos(half)
 
         if self.publish_tf:
             tf = TransformStamped()
-            tf.header.stamp = stamp
+            tf.header.stamp = tf_stamp
             tf.header.frame_id = self.odom_frame
             tf.child_frame_id = self.base_frame
             tf.transform.translation.x = self.x

@@ -1,0 +1,224 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+Autonomous racing on the Porto track in the AutoDRIVE RoboRacer simulator
+(Sim Racing League 2026). Two independent stacks share the workspace and share
+nothing else:
+
+- **`rl_racer/`** — SAC policy driving straight off LiDAR. No map, no
+  localization. Trained as a staged curriculum where each stage resumes from
+  the previous stage's weights.
+- **`devkit_ws/` + `raceline/`** — classical stack: SLAM map → minimum-curvature
+  raceline → AMCL localization → pure pursuit.
+
+`README.md` holds measured results and lap times; `rl_racer/EXPERIMENTS.md` is
+the full training log including bugs found the expensive way.
+
+## Environment
+
+Three separate Python environments, and mixing them is the most common failure:
+
+| Context | Python | Why |
+|---|---|---|
+| devkit bridge, ROS nodes | **system** python3.10 | `rclpy`/`cv_bridge` are C extensions built against it |
+| RL training / `enjoy.py` | **`.venv-rl`** | torch + CUDA + stable-baselines3 live only there |
+| notebooks (`raceline/`) | `.venv-rl` | needs `trajectory_planning_helpers`, `casadi` |
+
+Order matters when both are needed: source ROS **first**, then the venv — ROS
+puts `rclpy` on `PYTHONPATH`, and the venv must win on `PATH`. Conda will not
+work at all.
+
+Every ROS terminal:
+
+```bash
+export ROS_LOCALHOST_ONLY=1
+source /opt/ros/humble/setup.bash
+source devkit_ws/install/setup.bash
+export CYCLONEDDS_URI=file://$(ros2 pkg prefix racer_control)/share/racer_control/config/cyclonedds.xml
+```
+
+The `CYCLONEDDS_URI` line is not optional for the full stack: CycloneDDS defaults
+`MaxAutoParticipantIndex` to 9, so with localhost-only the tenth node fails to
+start — and `race.launch.py` is about ten nodes.
+
+## Build
+
+```bash
+cd devkit_ws
+PYTHONNOUSERSITE=1 colcon build                       # all packages
+PYTHONNOUSERSITE=1 colcon build --packages-select racer_control
+```
+
+`PYTHONNOUSERSITE=1` is required — a newer setuptools in `~/.local` breaks any
+`ament_python` build against the system `packaging`. Do not run colcon from an
+activated venv.
+
+## Running
+
+The simulator is not in this repo (382 MB Unity build, download from AutoDRIVE
+releases; expected at `simulator_practice/autodrive_simulator/`). Start it
+first, in every workflow.
+
+```bash
+# classical stack — bridge (TF remapped) + localization + pure pursuit
+ros2 launch racer_control race.launch.py
+ros2 launch racer_control race.launch.py bridge:=false lookahead_k:=0.70
+
+# mapping
+ros2 launch racer_mapping mapping.launch.py     # save via the RViz SlamToolbox panel
+
+# RL: bridge in a system-python terminal, policy in the venv
+ros2 launch autodrive_roboracer bringup_headless.launch.py    # wait for "Connected!"
+cd rl_racer && python enjoy.py runs/stage3_v3/checkpoints/sac_990000_steps.zip --episodes 1
+```
+
+`race.launch.py` composes `bridge_remapped` + `localization` + `pure_pursuit`;
+each is launchable alone, and each piece can be switched off
+(`bridge:=`, `localization:=`, `follower:=`). Pure-pursuit tunables
+(`lookahead_*`, `v_max`, `a_lat_max`, `throttle_max`, `steering_gain`) pass
+through both launch files, so tuning never needs a rebuild.
+
+## RL training
+
+```bash
+cd rl_racer
+python3 probe.py                    # ALWAYS first: verifies plumbing, tick rate, reset, collisions
+python verify_env.py                # confirms each import resolves to the venv, not ~/.local or ROS
+
+./run_train.sh --stage 2 --gradient-steps 4 --resume runs/v3/checkpoints/sac_370000_steps.zip
+tensorboard --logdir runs/
+```
+
+`run_train.sh` sources ROS, activates the venv, and refuses to start unless the
+sim, the bridge on port 4567, and CUDA are all up. It `exec`s `train_sac.py`, so
+any `train_sac.py` flag passes straight through.
+
+Validation gate between stages — never promote an unmeasured checkpoint:
+
+```bash
+python enjoy.py runs/<stage>/checkpoints/<ckpt>.zip --speed encoder --episodes 2
+```
+
+Add `--legacy-obs` to load a v1–v3 checkpoint (it restores the old odom speed
+sign; runtime override only, `config.py` is untouched).
+
+Pass = zero crashes (`end=timeout`) and lap time no worse than the previous
+stage. Lap time is `steps × control_period / laps`; never compare lap *counts*
+across different control rates.
+
+There is no test suite. The only `colcon test` targets are the third-party
+devkit's flake8/pep257/copyright linters.
+
+## Architecture
+
+### RL side (`rl_racer/`)
+
+- `rl_racer/config.py` — **all tunables**, as dataclasses. Reward weights are
+  the file you actually iterate on. Every constant carries the measurement that
+  justifies it; read the comment before changing a number.
+- `rl_racer/obs.py` — LiDAR FOV crop + min-pool + observation assembly. Kept
+  separate so a future gym sim can produce byte-identical observations.
+- `rl_racer/env.py` — Gymnasium env over ROS 2. The sim is free-running, so
+  `step()` blocks on the LiDAR topic: **the scan is the master clock**, since
+  the bridge publishes every topic together inside one socket.io handler.
+- `stages/stage*.py` — each stage is a `NAME`/`RESUME_FROM`/`DEFAULTS`/`apply(cfg)`
+  module that mutates the config. Stage N's `apply()` calls stage N-1's, so
+  stages compose rather than duplicate.
+
+Invariants that break checkpoints if violated:
+
+- **Every stage emits the same 95-dim observation** (90 min-pooled beams +
+  speed, yaw_rate, prev_steer, prev_throttle, throttle_cap). Change `n_beams`
+  or `fov_half_deg` and every existing checkpoint becomes unloadable.
+- **The throttle cap is in the observation.** Raising it changes what
+  `action[1] = +1` physically means; feeding the cap in is what lets the critic
+  distinguish old replay-buffer transitions from new ones.
+- **`gamma` is derived** from the measured control period
+  (`1 - dt/horizon_seconds`), not hard-coded, so the planning horizon stays
+  fixed in seconds across machines. The printed value differs per machine on
+  purpose.
+- **Checkpoint numbering is cumulative** across stages (`reset_num_timesteps=False`):
+  stage 2 resuming at 370k produces `sac_380000_steps.zip`, not `sac_10000`.
+- `max_episode_steps` is per stage and is a *step* count, so it means different
+  driving time at different control rates.
+
+### Classical side (`devkit_ws/src/`)
+
+- `autodrive_devkit/` — third-party bridge, BSD, **unmodified**. When its
+  behaviour needs changing, do it with a launch-level remap in `racer_control`
+  (see `bridge_remapped.launch.py`), never by editing it.
+- `racer_control/` — `pure_pursuit`, `dead_reckoning` (encoders + IMU →
+  `odom→roboracer_1`), `localization_bootstrap`, `localization_error`,
+  `map_publisher`, `calibrate_steering`.
+- `racer_mapping/` — slam_toolbox config plus the committed Porto map. Scan
+  matching and loop closure are off on purpose (sim odometry is ground truth),
+  which is also why `map→odom` is identity and the saved grid lines up with the
+  devkit's `world` frame with no static transform.
+
+TF tree under localization: `map →(amcl) odom →(dead_reckoning) roboracer_1
+→(static) lidar`. The devkit broadcasts `world→roboracer_1` from the IPS; if
+that stays on `/tf`, `roboracer_1` gets two parents and the tree breaks — hence
+the remap to `/tf_ground_truth`.
+
+### Raceline (`raceline/`)
+
+Notebooks extract the centerline from the SLAM map and solve minimum-curvature
+lines two ways (scipy, TUM `tph`); the CSVs (`s,x,y,psi,kappa,w_r,w_l[,v_mps]`)
+are the deliverable that `pure_pursuit` consumes. `make_speed_variants.py`
+re-profiles an existing line's *geometry* at a ladder of grip limits —
+geometry does not depend on grip, only the velocity profile does — so `a_lat_max`
+can be measured on the car instead of guessed.
+
+## Competition legality
+
+`/ips`, `/odom`, `/tf`, and all lap and collision telemetry are **restricted
+during racing**. Legal inputs: LiDAR, camera, IMU, wheel encoders,
+steering/throttle feedback.
+
+Keep this separation intact when adding code:
+
+- The RL policy reads LiDAR + encoders only. `/odom` feeds the **progress
+  reward** and `collision_count`/`reset_command` feed **episode management** —
+  training-time only, none of it exists at inference.
+- The classical stack localizes with LiDAR + IMU + encoders against the
+  pre-built map. Ground truth appears in exactly two development-only places,
+  both flagged at runtime and both switchable off: seeding the initial pose
+  (`bootstrap_mode:=truth` vs the legal `global`) and `localization_error`.
+- Anything reading a restricted topic must say so in a comment and be reachable
+  only from a launch argument that defaults to development mode.
+
+## Measured simulator constants
+
+Several contradict the published documentation. Trust the measurements — they
+were re-derived at cost.
+
+| quantity | measured | documented |
+|---|---|---|
+| Encoder units | **radians** (wheel angle) | "ticks, 1920/rev" — off by ~300× |
+| Wheel radius | **0.0581 m** | 0.0590 m |
+| Sim tick rate | **~18 Hz** | bridge advertises 40 Hz |
+| Speed vs throttle | **≈ 24 × throttle** | 22.88 m/s top speed |
+| `twist.linear` frame | **body**, not world | unstated |
+| `/imu` vs `/odom` angular | identical — one source | unstated |
+| Scan size | **1081** beams (inclusive endpoints) | 1080 |
+
+`LidarFOV` derives its crop indices from the live scan header rather than
+hard-coding them, precisely because of that last row.
+
+## Gotchas
+
+- **Subscriber QoS must match the bridge exactly** (RELIABLE / VOLATILE /
+  KEEP_LAST / depth 1). A mismatch connects and then silently delivers nothing.
+- **`reset_command` is level-triggered** — the bridge re-emits it every tick, so
+  it must be pulsed True→False or the sim resets forever. `env.py` handles this.
+- **Nothing before `learning_starts` means anything** (5k fresh, or `--warmup`
+  on resume) when reading training curves.
+- **`.gitignore` re-admits specific run files** after excluding `runs/*`
+  wholesale; pattern order matters, since git cannot re-include a file whose
+  parent directory is excluded. Replay buffers (~29 GB) must never be committed.
+- Torch in the venv is a CUDA build, but `enjoy.py` and the env are happy on
+  CPU — at 18 Hz the per-step budget is 55 ms and SAC updates take single-digit
+  ms.

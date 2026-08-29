@@ -31,6 +31,7 @@ import math
 
 import numpy as np
 import rclpy
+import tf2_ros
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry, Path
 from rclpy.node import Node
@@ -62,6 +63,20 @@ class PurePursuit(Node):
         # Pose arrives in /odom's frame, which the devkit calls 'world'.
         p('viz_frame', 'world')
 
+        # Take the pose from TF instead of from `pose_topic`.
+        #
+        # /amcl_pose is published only when the filter RESAMPLES, so it is
+        # motion-triggered, steps discontinuously, and stops entirely when the
+        # car is stationary. AMCL's real output is the map->odom correction,
+        # which it broadcasts continuously with transform_tolerance padding;
+        # composing that with dead_reckoning's 50 Hz odom->base gives a pose
+        # that is smooth AND drift-free. Neither half is both.
+        #
+        # Leave False to keep reading `pose_topic` (the /odom development path).
+        p('use_tf_pose', False)
+        p('map_frame', 'map')
+        p('base_frame', 'roboracer_1')
+
         # Lookahead grows with speed: too short oscillates, too long cuts corners.
         p('lookahead_min', 0.45)
         p('lookahead_max', 1.30)
@@ -88,6 +103,10 @@ class PurePursuit(Node):
         p('throttle_ff', 0.040)                # measured: throttle 0.10 -> ~2.5 m/s
         p('throttle_max', 0.20)
         p('use_encoder_speed', True)           # race-legal source
+        # MEASURED 0.0581, not the published 0.0590 (see dead_reckoning.py).
+        # Was hardcoded in _cb_enc; a 1.55% high speed reading biases the
+        # throttle feedforward low as well as corrupting dead reckoning.
+        p('wheel_radius', 0.0581)
         # Lap topics are RESTRICTED during racing. Development telemetry only.
         p('dev_lap_telemetry', False)
         # Stay silent until localization_bootstrap says the pose has converged.
@@ -102,7 +121,15 @@ class PurePursuit(Node):
 
         g = lambda n: self.get_parameter(n).value
         self.pose_topic = g('pose_topic')
-        self.viz_frame = g('viz_frame')
+        self.use_tf_pose = bool(g('use_tf_pose'))
+        self.map_frame, self.base_frame = g('map_frame'), g('base_frame')
+        # The path and lookahead marker have to be drawn in the frame the poses
+        # actually live in, or RViz drops them. Under race.launch.py the devkit's
+        # `world` frame is remapped off /tf entirely and no longer exists.
+        self.viz_frame = self.map_frame if self.use_tf_pose else g('viz_frame')
+        self.tf_buffer = None
+        self.tf_listener = None
+        self.tf_warned = False
         self.ld_min, self.ld_max, self.ld_k = g('lookahead_min'), g('lookahead_max'), g('lookahead_k')
         self.wheelbase = g('wheelbase')
         self.max_steer = g('max_steer_rad')
@@ -112,6 +139,7 @@ class PurePursuit(Node):
         self.use_path_speed = g('use_path_speed')
         self.kp, self.ff, self.thr_max = g('throttle_kp'), g('throttle_ff'), g('throttle_max')
         self.use_enc = g('use_encoder_speed')
+        self.wheel_r = g('wheel_radius')
         self.dev_lap = g('dev_lap_telemetry')
         self.wait_for_ready = g('wait_for_ready')
         self.ready = not self.wait_for_ready
@@ -141,6 +169,14 @@ class PurePursuit(Node):
         self._enc = {}
         self._enc_rate = {}
         self.laps = 0
+        self._logged_lap = -1
+
+        if self.use_tf_pose:
+            self.tf_buffer = tf2_ros.Buffer()
+            self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+            self.get_logger().info(
+                f'pose from TF {self.map_frame} -> {self.base_frame} '
+                f'(continuous); {self.pose_topic} kept as a fallback')
 
         if 'odom' in self.pose_topic:
             self.create_subscription(Odometry, self.pose_topic, self._cb_odom, QOS)
@@ -213,7 +249,7 @@ class PurePursuit(Node):
         dt = t - prev[1]
         if dt <= 1e-4 or dt > 0.5:
             return   # stale or duplicate frame; a bad dt yields a garbage speed
-        self._enc_rate[side] = (ang - prev[0]) / dt * 0.0590   # wheel radius [m]
+        self._enc_rate[side] = (ang - prev[0]) / dt * self.wheel_r
         rates = [v for v in self._enc_rate.values() if v is not None]
         if rates and self.use_enc:
             self.speed = float(np.mean(rates))
@@ -223,10 +259,32 @@ class PurePursuit(Node):
             self.laps = msg.data
 
     def _cb_lap_time(self, msg):
-        if msg.data > 0.0:
+        # The bridge re-publishes last_lap_time EVERY tick, not on change, so
+        # logging per message spams ~20 lines/s of the same lap and buries
+        # everything else. Log once per completed lap instead.
+        if msg.data > 0.0 and self.laps != self._logged_lap:
+            self._logged_lap = self.laps
             self.get_logger().info(f'lap {self.laps}: {msg.data:.2f} s')
 
     # ---- control ---------------------------------------------------------
+
+    def _pose_from_tf(self):
+        """Latest map->base. Returns None until the whole chain is up."""
+        try:
+            tr = self.tf_buffer.lookup_transform(
+                self.map_frame, self.base_frame, rclpy.time.Time())
+        except Exception as exc:                        # noqa: BLE001
+            if not self.tf_warned:
+                self.tf_warned = True
+                self.get_logger().warn(
+                    f'{self.map_frame} -> {self.base_frame} not available yet '
+                    f'({exc}); falling back to {self.pose_topic}')
+            return None
+        if self.tf_warned:
+            self.tf_warned = False
+            self.get_logger().info(f'{self.map_frame} -> {self.base_frame} is up')
+        t = tr.transform.translation
+        return (t.x, t.y, yaw_from_quat(tr.transform.rotation))
 
     def _cb_ready(self, msg):
         if msg.data and not self.ready:
@@ -239,6 +297,10 @@ class PurePursuit(Node):
 
         now = self.get_clock().now().nanoseconds * 1e-9
         pose = self.pose
+        if self.use_tf_pose:
+            tf_pose = self._pose_from_tf()
+            if tf_pose is not None:
+                pose = self.pose = tf_pose
         if self.using_truth:
             pose = self.truth_pose
             if pose is not None:

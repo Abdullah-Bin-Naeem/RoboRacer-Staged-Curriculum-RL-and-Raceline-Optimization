@@ -1,0 +1,63 @@
+# Pure pursuit for the AutoDRIVE RoboRacer.
+#
+# Lookahead values come from an offline sweep against the extracted centerline
+# (bicycle model, 3 laps): these gave the lowest tracking error, ~0.03 m mean /
+# 0.06 m max. Lap time is set by the SPEED block below, not by lookahead --
+# every lookahead setting produced the same lap time.
+
+pure_pursuit:
+  ros__parameters:
+
+    path_csv: ''            # set on the command line or in the launch file
+    pose_topic: /autodrive/roboracer_1/odom   # RESTRICTED at race time; see below
+    control_hz: 20.0
+
+    # ---- Lookahead ----
+    # Ld = lookahead_k * speed, clamped. Short oscillates, long cuts corners.
+    #
+    # These are tuned for LATENCY, not for tracking error. The bridge is a
+    # WebSocket round trip, so pose is stale and commands land late. In a
+    # zero-latency sim a short lookahead (0.25) wins on paper -- with ~100 ms of
+    # loop delay the same setting is unstable (1.63 m mean error vs 0.05 m
+    # here), because the controller keeps correcting against where the car
+    # WAS. A longer lookahead is what buys back the phase margin.
+    lookahead_min: 0.80
+    lookahead_max: 1.60
+    lookahead_k: 0.55
+
+    # ---- Steering ----
+    # From the published competition vehicle spec. delta = atan(kappa*wheelbase),
+    # command = delta/max_steer_rad. Max achievable curvature is
+    # tan(0.5236)/0.324 = 1.78 1/m; this track's tightest corner needs 0.92 1/m,
+    # so there is comfortable margin.
+    wheelbase: 0.3240
+    max_steer_rad: 0.5236
+    steering_gain: 1.0        # trim; verify with `ros2 run racer_control calibrate_steering`
+
+    # ---- Speed ----
+    # v = sqrt(a_lat_max / |kappa|), clamped to [v_min, v_max].
+    # a_lat_max is a GRIP limit and cannot be validated offline -- the tuning
+    # sim has no tyre model, so it happily corners at any speed. Start at 3.0
+    # and raise it on the car until the back steps out, then back off ~20%.
+    a_lat_max: 3.0
+    v_min: 1.0
+    v_max: 8.0                 # matches V_MAX in the raceline notebook;
+                               # lower than the profile peak would clip it
+    curvature_preview_m: 1.0   # brake for the worst corner within this distance
+
+    # Follow the v_mps column when the CSV has one (the notebooks emit it).
+    # Set false to force the curvature fallback -- useful for isolating whether
+    # a line is better because of its geometry or its speed profile.
+    use_path_speed: true
+
+    # ---- Throttle ----
+    # throttle_ff is the feedforward: measured throttle 0.10 -> ~2.5 m/s.
+    throttle_kp: 0.030
+    throttle_ff: 0.040
+    # 1.0 is the devkit's full range -- no cap. Speed is now limited only by
+    # v_max and the path's own velocity profile, not by throttle authority.
+    throttle_max: 1.0
+    use_encoder_speed: true    # race-legal speed source
+
+    # Lap topics are RESTRICTED during racing. Development telemetry only.
+    dev_lap_telemetry: false

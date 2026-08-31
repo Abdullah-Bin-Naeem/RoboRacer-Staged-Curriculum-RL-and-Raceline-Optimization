@@ -39,5 +39,3 @@ events.out.tfevents.*
 # ---- SLAM serialized pose graph (30 MB) ------------------------------------
 # Regenerable, and only needed to CONTINUE a mapping session. The .pgm + .yaml
 # are the actual deliverable and are committed.
-*.posegraph
-*.data

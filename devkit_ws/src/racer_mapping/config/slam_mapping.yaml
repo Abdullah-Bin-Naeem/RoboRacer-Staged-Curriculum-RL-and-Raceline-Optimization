@@ -18,7 +18,11 @@ slam_toolbox:
     ceres_preconditioner: SCHUR_JACOBI
     ceres_trust_strategy: LEVENBERG_MARQUARDT
     ceres_dogleg_type: TRADITIONAL_DOGLEG
-    ceres_loss_function: None
+    # HuberLoss, not None. Loop closure is what first makes Ceres actually MOVE
+    # nodes, so a single bad closure now warps the map instead of merely adding a
+    # weak constraint. A robust loss caps how far one outlier constraint can drag
+    # the solution. Set back to None if you want the unrobustified behaviour.
+    ceres_loss_function: HuberLoss
 
     # ---- Frames and topics ----
     odom_frame: world           # devkit's ground-truth parent frame
@@ -59,16 +63,44 @@ slam_toolbox:
     minimum_travel_heading: 0.1
 
     # ---- Scan matching and loop closure ----
-    # Both OFF on purpose. Odometry here is simulator ground truth, so there is
-    # no drift to correct. A race track is a long feature-poor corridor, exactly
-    # the geometry where scan matching slides scans along the walls and loop
-    # closure warps an already-correct map. Trusting odom gives a cleaner result.
+    # SCAN MATCHING IS ON, AND IT IS NOT OPTIONAL.
     #
-    # If you ever map from noisy/real odometry, flip both to true and the
-    # parameters below become live.
-    use_scan_matching: false
+    # It was false here originally, on the reasoning that odom is simulator
+    # ground truth so there is no drift to correct. That reasoning is right
+    # about the GRID and fatally wrong about the GRAPH: karto's Mapper::Process
+    # only calls m_pGraph->AddVertex()/AddEdges() inside the
+    # `if (use_scan_matching)` branch. With it false you get a complete set of
+    # scans and a pose graph with ZERO vertices.
+    #
+    # That is invisible while mapping -- the .pgm comes out perfect, because the
+    # grid is rasterised from the scans, not from the graph. It only shows up
+    # when slam_toolbox is later run in localization mode against the serialized
+    # graph, where it SEGFAULTS on the first scan:
+    #     [WARN] CeresSolver: Ceres was called when there are no nodes.
+    #     AddEdge: At least one vertex is invalid.
+    #     karto::MapperGraph::LinkChainToScan -> SIGSEGV
+    # ProcessAgainstNodesNearBy asks the graph for a vertex near the pose, gets
+    # NULL back, and dereferences it.
+    #
+    # The original worry -- that matching would slide scans along a feature-poor
+    # corridor and warp a perfect trajectory -- is handled by pinning the matcher
+    # to the odometry prior instead of by switching it off. See the tightened
+    # correlation window and variance penalties below.
+    use_scan_matching: true
     use_scan_barycenter: true
-    do_loop_closing: false
+    # Loop closure ON. It was off on the argument that ground-truth odom leaves
+    # no drift to correct, but the graph is not built from odom -- karto seeds
+    # each scan with the PREVIOUS scan's correction composed with the odom delta,
+    # so the scan matcher's per-node slop integrates. Measured on a 3.6-lap run
+    # (471 nodes), radial error against lap 0 at matched track position:
+    #     lap 1  +0.023 m     lap 2  +0.108 m     lap 3  +0.750 m
+    # Super-linear, because once the reference map smears, matching against it
+    # degrades, which smears it further. This is what closes that seam.
+    #
+    # Needs REVISITS to have anything to do: with a single lap there is nothing
+    # to close against until you drive ~10 nodes (~2 m) past the start. Two laps
+    # or more.
+    do_loop_closing: true
 
     scan_buffer_size: 30
     scan_buffer_maximum_scan_distance: 10.0
@@ -80,19 +112,40 @@ slam_toolbox:
     loop_match_minimum_response_coarse: 0.35
     loop_match_minimum_response_fine: 0.45
 
-    correlation_search_space_dimension: 0.5
+    # TIGHTENED from the 0.5 default. The prior handed to the matcher is
+    # ground-truth odometry, so the correction needed is ~0; this box is a clamp,
+    # not a search. 0.2 lets a node move at most +-0.1 m off the true pose.
+    # Karto feeds each new scan the PREVIOUS scan's correction plus the odom
+    # delta, so corrections integrate -- keeping the per-node bound small is what
+    # keeps drift from accumulating over a lap without loop closure.
+    correlation_search_space_dimension: 0.2
     correlation_search_space_resolution: 0.01
     correlation_search_space_smear_deviation: 0.1
 
-    loop_search_space_dimension: 8.0
+    # REDUCED from the 8.0 default, which is a room-scale number: the whole track
+    # is only 5.4 m wide, so an 8 m coarse search box spans it end to end and can
+    # happily match the wrong wall. The prior error this has to cover is under a
+    # metre (see the per-lap figures above), so 4.0 keeps ample margin, quarters
+    # the false-match surface, and is 4x cheaper -- cost is quadratic in this.
+    loop_search_space_dimension: 4.0
     loop_search_space_resolution: 0.05
     loop_search_space_smear_deviation: 0.03
 
-    distance_variance_penalty: 0.5
-    angle_variance_penalty: 1.0
+    # These are VARIANCES IN A DENOMINATOR, so LOWER = trusts odometry more:
+    # karto scores  penalty = 1 - GAIN * squaredOffset / variance_penalty  and
+    # multiplies it into the match response. Lowered from the 0.5/1.0 defaults
+    # so a match that disagrees with the ground-truth prior is scored down hard.
+    distance_variance_penalty: 0.1
+    angle_variance_penalty: 0.2
     fine_search_angle_offset: 0.00349
     coarse_search_angle_offset: 0.349
     coarse_angle_resolution: 0.0349
-    minimum_angle_penalty: 0.9
-    minimum_distance_penalty: 0.5
+    # FLOORS on the penalty multipliers -- and they were quietly defeating the
+    # variance penalties above. karto computes
+    #     penalty = max(1 - GAIN * squaredOffset / variance, minimum_penalty)
+    # so at the stock 0.9 an angular disagreement could never cost more than 10%
+    # of the match response no matter how wrong it was, which made tightening
+    # angle_variance_penalty almost inert. Lowered so the penalties can bite.
+    minimum_angle_penalty: 0.5
+    minimum_distance_penalty: 0.1
     use_response_expansion: true

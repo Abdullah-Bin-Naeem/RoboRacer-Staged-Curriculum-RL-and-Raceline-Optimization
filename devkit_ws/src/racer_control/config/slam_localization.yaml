@@ -1,0 +1,131 @@
+# slam_toolbox in LOCALIZATION mode -- the alternative to amcl.yaml.
+#
+# Frames:  map -> odom -> roboracer_1 -> lidar
+#          slam_toolbox publishes map->odom (same link AMCL publishes);
+#          racer_control/dead_reckoning publishes odom->roboracer_1;
+#          a static publisher supplies roboracer_1->lidar.
+#
+# Unlike AMCL this reads NO .pgm. It deserializes the pose graph written by the
+# mapping run (track.posegraph + track.data) and scan-matches the live scan
+# against the stored scans. It publishes its own /map from that graph, so there
+# is no nav2_map_server and no lifecycle_manager in the launch.
+#
+# THE ONE LINE THAT MATTERS MOST
+# ------------------------------
+# `use_scan_matching: true`. Here scan matching IS the correction mechanism;
+# with it off this node would do nothing at all.
+#
+# It also has to have been true FOR THE MAPPING RUN, for a different reason:
+# karto only adds vertices and edges to the pose graph inside that branch, so a
+# map built with it false deserializes into a graph with zero nodes and this
+# node segfaults on the first scan. `track` is such a map; use `track_sm`.
+#
+# Note that slam_toolbox re-applies every mapper parameter from THIS file onto
+# the deserialized mapper (loadSerializedPoseGraph -> SMapper::configure), so
+# nothing here is inherited from the mapping config. What the mapping run does
+# fix permanently is the data: the vertex poses and their spacing.
+
+slam_toolbox:
+  ros__parameters:
+
+    # ---- Solver (same as the mapping run) ----
+    solver_plugin: solver_plugins::CeresSolver
+    ceres_linear_solver: SPARSE_NORMAL_CHOLESKY
+    ceres_preconditioner: SCHUR_JACOBI
+    ceres_trust_strategy: LEVENBERG_MARQUARDT
+    ceres_dogleg_type: TRADITIONAL_DOGLEG
+    ceres_loss_function: None
+
+    # ---- Mode and map ----
+    mode: localization
+    # BASE PATH, NO EXTENSION. slam_toolbox appends .posegraph and .data itself;
+    # passing `track.posegraph` fails in a way that looks like a missing file.
+    # Overridden by the launch file.
+    map_file_name: ''
+    # Where to start the pose graph. Same spawn the AMCL config falls back to.
+    # NOT (0,0,0) -- that cell is a wall. If this is ignored or wrong, RViz's
+    # "2D Pose Estimate" tool publishes /initialpose, which this node also
+    # accepts, so you can always seed by hand.
+    map_start_pose: [0.71, 0.02, -1.599]
+
+    # ---- Frames ----
+    odom_frame: odom            # NOT `world` -- that was ground truth, and is
+                                # restricted at race time. This is
+                                # dead_reckoning's frame.
+    map_frame: map
+    base_frame: roboracer_1
+    scan_topic: /autodrive/roboracer_1/lidar
+    use_sim_time: false
+
+    # ---- Rates ----
+    # Scans land at the measured ~18 Hz, not the advertised 40. transform_publish
+    # matches the mapping run; map_update_interval is slower because in
+    # localization the grid is only for looking at.
+    debug_logging: false
+    throttle_scans: 1
+    transform_publish_period: 0.02
+    map_update_interval: 1.0
+    resolution: 0.05            # must match the map that was built
+    max_laser_range: 9.5        # must match the mapping run and amcl.yaml
+    minimum_time_interval: 0.05
+    transform_timeout: 0.2
+    tf_buffer_duration: 30.0
+    stack_size_to_use: 40000000
+    enable_interactive_mode: false
+
+    # ---- Scan matching: ON, and load-bearing ----
+    use_scan_matching: true
+    use_scan_barycenter: true
+    # Node spacing. 0.1 m matches the graph that was built.
+    minimum_travel_distance: 0.1
+    minimum_travel_heading: 0.1
+    # Rolling buffer of live scans kept in localization mode. Smaller than the
+    # mapping value: nothing is being accumulated into a permanent graph.
+    scan_buffer_size: 10
+    scan_buffer_maximum_scan_distance: 10.0
+    link_match_minimum_response_fine: 0.1
+    link_scan_maximum_distance: 1.5
+
+    # Loop closure is a MAPPING concern -- it corrects a graph being built.
+    # In localization the graph is fixed, so this is off.
+    do_loop_closing: false
+    loop_search_maximum_distance: 3.0
+    loop_match_minimum_chain_size: 10
+    loop_match_maximum_variance_coarse: 3.0
+    loop_match_minimum_response_coarse: 0.35
+    loop_match_minimum_response_fine: 0.45
+
+    # ---- The correlative scan matcher's search window ----
+    # RAISED from the mapping value of 0.5. The matcher searches a box of this
+    # size centred on the odometry guess; if the true pose falls outside, it
+    # cannot be found at any resolution.
+    #
+    # At 8 m/s and 18 Hz the car covers 0.44 m between scans. A 0.5 m box is
+    # +-0.25 m, so with perfectly clean odometry the truth already sits at the
+    # edge. Encoders overread under slip, so 1.0 buys margin for the transient.
+    # Cost is quadratic in this value -- if CPU becomes a problem, lower it and
+    # fix the odometry instead.
+    correlation_search_space_dimension: 1.0
+    correlation_search_space_resolution: 0.01
+    # Blurs the reference grid before scoring so the cost surface is smooth
+    # rather than spiky. Same role as sigma_hit in AMCL's likelihood field.
+    correlation_search_space_smear_deviation: 0.1
+
+    # ---- Scan matcher penalties ----
+    # How much the matcher is allowed to disagree with the odometry prior.
+    # These are VARIANCES IN A DENOMINATOR, so HIGHER = trusts odometry LESS:
+    # karto scores  penalty = 1 - GAIN * squaredOffset / variance_penalty  and
+    # multiplies it into the match response, so a bigger variance weakens the
+    # pull toward the prior. (The mapping config goes the other way -- there the
+    # prior IS ground truth, so it wants these small.) Here dead reckoning is the
+    # known-weak link and the matcher exists to overrule it, so these stay at
+    # the defaults: lowering them would make it inherit the error we want
+    # rejected.
+    distance_variance_penalty: 0.5
+    angle_variance_penalty: 1.0
+    fine_search_angle_offset: 0.00349
+    coarse_search_angle_offset: 0.349
+    coarse_angle_resolution: 0.0349
+    minimum_angle_penalty: 0.9
+    minimum_distance_penalty: 0.5
+    use_response_expansion: true

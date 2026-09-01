@@ -2,15 +2,14 @@ from glob import glob
 
 from setuptools import setup
 
-package_name = 'racer_mapping'
+package_name = 'racer_localization'
 
 setup(
     name=package_name,
     version='0.1.0',
     packages=[package_name],
     data_files=[
-        ('share/ament_index/resource_index/packages',
-            ['resource/' + package_name]),
+        ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/config', glob('config/*.yaml') + glob('config/*.rviz')),
         ('share/' + package_name + '/launch', glob('launch/*.launch.py')),
@@ -19,14 +18,13 @@ setup(
     zip_safe=True,
     maintainer='Abdullah Bin Naeem',
     maintainer_email='abdullahbinnaeempro@gmail.com',
-    description='SLAM mapping bringup for the AutoDRIVE RoboRacer',
+    description='Dead reckoning plus AMCL / slam_toolbox localization for the RoboRacer',
     license='BSD',
-    tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            # Moved from racer_control: serving a .pgm is a mapping concern, and
-            # this package already owns maps/.
-            'map_publisher = racer_mapping.map_publisher:main',
+            'dead_reckoning = racer_localization.dead_reckoning:main',
+            'localization_bootstrap = racer_localization.localization_bootstrap:main',
+            'localization_error = racer_localization.localization_error:main',
         ],
     },
 )

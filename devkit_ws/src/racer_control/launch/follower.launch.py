@@ -1,16 +1,25 @@
-"""Pure pursuit follower, with the map and RViz for watching it work.
+"""Pure pursuit follower. The controller and nothing else.
 
-Assumes the simulator and devkit bridge are already up:
-    ros2 launch autodrive_roboracer bringup_headless.launch.py
+    ros2 launch racer_control follower.launch.py
 
-Everything is visualised in the devkit's `world` frame. The mapping run had scan
-matching disabled, so slam_toolbox's map->odom correction was identity and the
-saved grid lines up with `world` without any static transform.
+RViz and /map used to be started here. They are not this package's to own --
+racer_bringup composes the window, racer_mapping serves the grid -- and having
+the follower start them is how two /map publishers on different frames ended up
+racing each other. Normally reached as race.launch.py; launchable alone against
+an already-running localizer.
 
 Tuning knobs are exposed as launch arguments so they can be overridden without
 a rebuild, e.g.
 
-    ros2 launch racer_control pure_pursuit.launch.py lookahead_k:=0.70
+    ros2 launch racer_control follower.launch.py lookahead_k:=0.70
+
+POSE SOURCE -- the one setting that decides whether a run means anything.
+`pose_topic` defaults to the devkit's odometry, which is simulator GROUND TRUTH
+and RESTRICTED at race time. That default is a development convenience for
+driving the line with localization out of the picture; the node now says so
+loudly at startup (racer_common/restricted.py). For a real run pass
+use_tf_pose:=true, which reads the localizer's map->base correction instead.
+race.launch.py sets that for you.
 """
 
 import os
@@ -18,11 +27,9 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
-from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-
-HOME = os.path.expanduser('~')
+from racer_common.frames import DEFAULT_RACELINE, NS
 
 # Overridable at launch time; empty string keeps whatever the params file says.
 # curvature_preview_m matters more than it looks: with no v_mps column in the
@@ -36,8 +43,6 @@ TUNABLES = ('lookahead_min', 'lookahead_max', 'lookahead_k',
 
 def _nodes(context, *args, **kwargs):
     cfg = lambda n: LaunchConfiguration(n).perform(context)
-    pkg_share = get_package_share_directory('racer_control')
-
     overrides = {n: float(cfg(n)) for n in TUNABLES if cfg(n) != ''}
     if overrides:
         print(f'[pure_pursuit] launch overrides: {overrides}')
@@ -60,22 +65,6 @@ def _nodes(context, *args, **kwargs):
                 overrides,
             ],
         ),
-        Node(
-            package='racer_control',
-            executable='map_publisher',
-            name='map_publisher',
-            condition=IfCondition(LaunchConfiguration('map_publisher')),
-            output='screen',
-            parameters=[{'map_yaml': cfg('map_yaml'), 'frame_id': 'world'}],
-        ),
-        Node(
-            package='rviz2',
-            executable='rviz2',
-            name='rviz2',
-            output='log',
-            condition=IfCondition(LaunchConfiguration('rviz')),
-            arguments=['-d', os.path.join(pkg_share, 'config', 'follow.rviz')],
-        ),
     ]
 
 
@@ -88,21 +77,12 @@ def generate_launch_description():
             default_value=os.path.join(pkg_share, 'config', 'pure_pursuit.yaml')),
         DeclareLaunchArgument(
             'path_csv',
-            default_value=os.path.join(HOME, 'Documents/roboracer/raceline/centerline_full.csv'),
+            default_value=DEFAULT_RACELINE,
             description='path to follow (s,x,y,psi,kappa,w_r,w_l)'),
-        DeclareLaunchArgument(
-            'map_yaml',
-            default_value=os.path.join(
-                HOME, 'Documents/roboracer/devkit_ws/src/racer_mapping/maps/track_clean.yaml')),
-        DeclareLaunchArgument('rviz', default_value='true'),
-        # Off when AMCL is running: nav2's map_server already publishes /map in
-        # the `map` frame, and this one publishes `world`. Two publishers on one
-        # topic means AMCL may latch the wrong frame.
-        DeclareLaunchArgument('map_publisher', default_value='true'),
         DeclareLaunchArgument('wait_for_ready', default_value='false'),
         DeclareLaunchArgument('bootstrap_seconds', default_value='0.0'),
         DeclareLaunchArgument(
-            'pose_topic', default_value='/autodrive/roboracer_1/odom',
+            'pose_topic', default_value=f'{NS}/odom',
             description='/amcl_pose for the race-legal estimate; the devkit odom '
                         'is ground truth and RESTRICTED at race time'),
         DeclareLaunchArgument('dev_lap_telemetry', default_value='false'),

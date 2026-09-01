@@ -2,13 +2,15 @@
 <package format="3">
   <name>racer_control</name>
   <version>0.1.0</version>
-  <description>Pure pursuit path follower for the AutoDRIVE RoboRacer</description>
+  <description>Control for the AutoDRIVE RoboRacer: pure pursuit path
+  following and steering calibration. Localization moved to racer_localization;
+  this package is now only what its name says.</description>
   <maintainer email="abdullahbinnaeempro@gmail.com">Abdullah Bin Naeem</maintainer>
   <license>BSD</license>
 
   <exec_depend>rclpy</exec_depend>
+  <exec_depend>racer_common</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
-  <exec_depend>lifecycle_msgs</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>std_srvs</exec_depend>

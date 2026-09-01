@@ -46,8 +46,14 @@ NS = '/autodrive/roboracer_1'
 QOS = QoSProfile(durability=QoSDurabilityPolicy.VOLATILE,
                  reliability=QoSReliabilityPolicy.RELIABLE,
                  history=QoSHistoryPolicy.KEEP_LAST, depth=1)
-MAP = ('/home/theflash/Documents/roboracer/devkit_ws/src/racer_mapping/'
-       'maps/track_clean')
+# Which grid to score against. track_clean is AMCL's map; track_sm is the grid
+# that came out of the SAME mapping run as the pose graph slam_toolbox
+# localizes against, so that is the one to use when debugging the slam stack --
+# scoring the scan against a different map than the localizer uses answers the
+# wrong question. Override with argv[2].
+MAPS_DIR = ('/home/theflash/Documents/roboracer/devkit_ws/src/racer_mapping/'
+            'maps/')
+DEFAULT_MAP = MAPS_DIR + 'track_sm'
 LIDAR_X = 0.2733          # lidar offset forward of the rear axle, from the bridge
 
 
@@ -69,10 +75,11 @@ def yaw_from_quat(q):
 
 class Check(Node):
 
-    def __init__(self, want):
+    def __init__(self, want, map_base=DEFAULT_MAP):
         super().__init__('check_scan_alignment')
-        meta = yaml.safe_load(open(MAP + '.yaml'))
-        img = read_pgm(MAP + '.pgm')
+        self.map_base = map_base
+        meta = yaml.safe_load(open(map_base + '.yaml'))
+        img = read_pgm(map_base + '.pgm')
         self.res = meta['resolution']
         self.ox, self.oy = meta['origin'][0], meta['origin'][1]
         self.h, self.w = img.shape
@@ -128,7 +135,11 @@ class Check(Node):
 def main():
     want = int(sys.argv[1]) if len(sys.argv) > 1 else 40
     rclpy.init()
-    node = Check(want)
+    map_base = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_MAP
+    if '/' not in map_base:
+        map_base = MAPS_DIR + map_base
+    node = Check(want, map_base)
+    print(f'scoring against {map_base}.pgm')
     print(f'collecting {want} scans -- park or drive somewhere the LEFT and RIGHT '
           'walls differ\n')
     while rclpy.ok() and node.n < want:

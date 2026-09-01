@@ -7,6 +7,8 @@
   <maintainer email="abdullahbinnaeempro@gmail.com">Abdullah Bin Naeem</maintainer>
   <license>BSD</license>
 
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
   <exec_depend>slam_toolbox</exec_depend>
   <exec_depend>nav2_map_server</exec_depend>
 

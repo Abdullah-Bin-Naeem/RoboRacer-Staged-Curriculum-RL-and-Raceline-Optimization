@@ -1,5 +1,7 @@
 """Devkit bridge with its ground-truth TF remapped off /tf.
 
+    ros2 launch racer_bringup bridge.launch.py
+
 Use this instead of `autodrive_roboracer bringup_headless.launch.py` whenever
 localization is running.
 

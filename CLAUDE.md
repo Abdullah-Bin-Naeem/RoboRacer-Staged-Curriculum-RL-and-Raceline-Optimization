@@ -37,8 +37,11 @@ Every ROS terminal:
 export ROS_LOCALHOST_ONLY=1
 source /opt/ros/humble/setup.bash
 source devkit_ws/install/setup.bash
-export CYCLONEDDS_URI=file://$(ros2 pkg prefix racer_control)/share/racer_control/config/cyclonedds.xml
+export CYCLONEDDS_URI=file://$(ros2 pkg prefix racer_common)/share/racer_common/config/cyclonedds.xml
 ```
+
+or just `source ros_env.sh`, which does all four and warns if the workspace is
+unbuilt.
 
 The `CYCLONEDDS_URI` line is not optional for the full stack: CycloneDDS defaults
 `MaxAutoParticipantIndex` to 9, so with localhost-only the tenth node fails to
@@ -49,7 +52,7 @@ start — and `race.launch.py` is about ten nodes.
 ```bash
 cd devkit_ws
 PYTHONNOUSERSITE=1 colcon build                       # all packages
-PYTHONNOUSERSITE=1 colcon build --packages-select racer_control
+PYTHONNOUSERSITE=1 colcon build --packages-select racer_localization
 ```
 
 `PYTHONNOUSERSITE=1` is required — a newer setuptools in `~/.local` breaks any
@@ -63,9 +66,11 @@ releases; expected at `simulator_practice/autodrive_simulator/`). Start it
 first, in every workflow.
 
 ```bash
-# classical stack — bridge (TF remapped) + localization + pure pursuit
-ros2 launch racer_control race.launch.py
-ros2 launch racer_control race.launch.py bridge:=false lookahead_k:=0.70
+# classical stack — bridge (TF remapped) + chassis + localizer + pure pursuit
+ros2 launch racer_bringup race.launch.py                      # AMCL
+ros2 launch racer_bringup race.launch.py localizer:=slam      # slam_toolbox
+ros2 launch racer_bringup race.launch.py mode:=race           # nothing restricted
+ros2 launch racer_bringup race.launch.py bridge:=false lookahead_k:=0.70
 
 # mapping
 ros2 launch racer_mapping mapping.launch.py     # save via the RViz SlamToolbox panel
@@ -75,9 +80,15 @@ ros2 launch autodrive_roboracer bringup_headless.launch.py    # wait for "Connec
 cd rl_racer && python enjoy.py runs/stage3_v3/checkpoints/sac_990000_steps.zip --episodes 1
 ```
 
-`race.launch.py` composes `bridge_remapped` + `localization` + `pure_pursuit`;
-each is launchable alone, and each piece can be switched off
-(`bridge:=`, `localization:=`, `follower:=`). Pure-pursuit tunables
+`race.launch.py` (in `racer_bringup`, the only package that composes others)
+starts `bridge` + `chassis` + the localizer named by `localizer:=` + `follower`,
+plus `instruments` and one RViz. Each is launchable alone, and each piece can be
+switched off (`bridge:=`, `chassis:=`, `localization:=`, `follower:=`).
+`localizer:=` picks `amcl` (nav2 against `track_clean.pgm`), `slam`
+(slam_toolbox against the `track_sm` pose graph), or `none`.
+`mode:=race` forces every legal setting at once and omits `instruments`
+entirely; `mode:=dev` (default) keeps the development conveniences and every
+node reading a restricted topic says so at startup. Pure-pursuit tunables
 (`lookahead_*`, `v_max`, `a_lat_max`, `throttle_max`, `steering_gain`) pass
 through both launch files, so tuning never needs a rebuild.
 
@@ -147,16 +158,33 @@ Invariants that break checkpoints if violated:
 
 ### Classical side (`devkit_ws/src/`)
 
+One rule holds the layout together: **only `racer_bringup` composes.** Every
+other package launches its own subsystem and nothing else. Before that rule,
+`race.launch.py` lived in `racer_control` and included the AMCL launch file by
+name, so the A/B could not be run from the top-level entry point at all — and
+the shared half of the two localizers was copy-pasted into both.
+
 - `autodrive_devkit/` — third-party bridge, BSD, **unmodified**. When its
-  behaviour needs changing, do it with a launch-level remap in `racer_control`
-  (see `bridge_remapped.launch.py`), never by editing it.
-- `racer_control/` — `pure_pursuit`, `dead_reckoning` (encoders + IMU →
-  `odom→roboracer_1`), `localization_bootstrap`, `localization_error`,
-  `map_publisher`, `calibrate_steering`.
-- `racer_mapping/` — slam_toolbox config plus the committed Porto map. Scan
-  matching and loop closure are off on purpose (sim odometry is ground truth),
-  which is also why `map→odom` is identity and the saved grid lines up with the
-  devkit's `world` frame with no static transform.
+  behaviour needs changing, do it with a launch-level remap in `racer_bringup`
+  (see `bridge.launch.py`), never by editing it.
+- `racer_common/` — no nodes. TF frame names, the lidar extrinsic, the spawn
+  pose, workspace paths (`frames.py`), and the competition restricted-topic list
+  with its runtime warning (`restricted.py`). Also owns `cyclonedds.xml`.
+  Everything else imports from here instead of repeating literals.
+- `racer_localization/` — `dead_reckoning` (encoders + IMU → `odom→roboracer_1`),
+  `localization_bootstrap`, `localization_error`, and the two interchangeable
+  localizers. `chassis.launch.py` is the half both share; `amcl.launch.py` and
+  `slam.launch.py` contain *only* their localizer; `instruments.launch.py` holds
+  every node that reads a restricted topic, so legality is one inclusion.
+- `racer_control/` — `pure_pursuit`, `calibrate_steering`. Control only; the
+  name is now true.
+- `racer_mapping/` — slam_toolbox mapping config, `map_publisher`, and the
+  committed Porto map. Scan matching is **on** (karto only adds graph vertices
+  inside that branch, so a map built without it is unusable for localization);
+  loop closure is on too, because the scan matcher's per-node slop integrates —
+  measured +0.023 m after one lap, +0.750 m after three.
+- `racer_bringup/` — `race.launch.py`, `bridge.launch.py`, the RViz configs.
+  The composition root, and the only package that depends on the others.
 
 TF tree under localization: `map →(amcl) odom →(dead_reckoning) roboracer_1
 →(static) lidar`. The devkit broadcasts `world→roboracer_1` from the IPS; if
@@ -174,9 +202,19 @@ can be measured on the car instead of guessed.
 
 ## Competition legality
 
-`/ips`, `/odom`, `/tf`, and all lap and collision telemetry are **restricted
-during racing**. Legal inputs: LiDAR, camera, IMU, wheel encoders,
-steering/throttle feedback.
+`/ips`, `/odom`, `/tf`, and all lap and collision telemetry are **restricted**.
+Legal inputs: LiDAR, camera, IMU, wheel encoders, steering/throttle feedback.
+
+But restriction is about **when and how often**, not only which topic. The first
+lap is a **warmup** and the timer starts after it, so those topics are readable
+up to that point. What is never acceptable is a node that keeps reading ground
+truth into the timed laps. Two access patterns, two functions in
+`racer_common/restricted.py`:
+
+| | pattern | legal | function |
+|---|---|---|---|
+| seed | one read, before the car moves, then the subscription is **destroyed** | yes | `restricted.seed()` + `restricted.released()` |
+| stream | a continuous subscription | no | `restricted.warn()` (red) |
 
 Keep this separation intact when adding code:
 
@@ -184,11 +222,26 @@ Keep this separation intact when adding code:
   reward** and `collision_count`/`reset_command` feed **episode management** —
   training-time only, none of it exists at inference.
 - The classical stack localizes with LiDAR + IMU + encoders against the
-  pre-built map. Ground truth appears in exactly two development-only places,
-  both flagged at runtime and both switchable off: seeding the initial pose
-  (`bootstrap_mode:=truth` vs the legal `global`) and `localization_error`.
-- Anything reading a restricted topic must say so in a comment and be reachable
-  only from a launch argument that defaults to development mode.
+  pre-built map. Ground truth appears in exactly two places: the one-shot pose
+  seed (`bootstrap_mode:=truth`, **race-legal**, released by
+  `_release_truth()` as soon as it resolves) and `localization_error`
+  (continuous, development-only, omitted by `mode:=race`).
+- Anything reading a restricted topic **continuously** must (a) live in
+  `racer_localization/launch/instruments.launch.py`, which `mode:=race` omits
+  wholesale, and (b) call `racer_common.restricted.warn()` so it announces itself
+  at startup. A comment is not enough: the boundary used to be 33 comments and no
+  checks, and `pure_pursuit`'s `pose_topic` DEFAULTED to ground-truth `/odom`, so
+  development runs produced lap times that read as race-legal and were not.
+
+`mode:=race` deliberately does **not** force `bootstrap_mode:=global` any more.
+It used to, and that was a bug rather than caution: slam_toolbox has no global
+relocalization at all, so `mode:=race localizer:=slam` fell through to the
+hardcoded `frames.SPAWN_*` — and slam seeds with a ±0.5 m correlative search, so
+a wrong constant could never be recovered and stayed frozen for the whole timed
+run. The warmup seed is both legal and the only thing that makes that
+combination work. `SPAWN_*` is now only the fallback for `bootstrap:=false` and
+`bootstrap_mode:=global`; the bootstrap prints the measured spawn whenever the
+constant disagrees with it.
 
 ## Measured simulator constants
 

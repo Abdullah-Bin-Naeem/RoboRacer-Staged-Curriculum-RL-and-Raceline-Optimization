@@ -34,6 +34,7 @@ import rclpy
 import tf2_ros
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry, Path
+from racer_common import restricted
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import JointState
@@ -183,6 +184,23 @@ class PurePursuit(Node):
         else:
             self.create_subscription(PoseWithCovarianceStamped, self.pose_topic,
                                      self._cb_amcl, QOS)
+
+        # Say out loud what the car is actually steering on. `pose_topic`
+        # defaults to the devkit's odometry, which is simulator GROUND TRUTH --
+        # and for a long time nothing anywhere printed that, so development runs
+        # produced lap times that read as race-legal and were not.
+        if restricted.is_restricted(self.pose_topic):
+            if self.use_tf_pose:
+                self.get_logger().warn(
+                    f'{self.pose_topic} is RESTRICTED and is subscribed as a '
+                    f'fallback only -- steering on TF {self.map_frame} -> '
+                    f'{self.base_frame}. Legal as long as the TF lookup keeps '
+                    'succeeding; a fallback WOULD silently make this run illegal.')
+            else:
+                restricted.warn(self, self.pose_topic,
+                                'THIS IS THE STEERING SOURCE')
+        else:
+            self.get_logger().info(f'steering on {self.pose_topic}')
 
         if self.using_truth:
             self.create_subscription(Odometry, self.bootstrap_topic,
@@ -400,10 +418,24 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
-        t, s = Float32(), Float32()
-        t.data = s.data = 0.0
-        node.pub_t.publish(t)
-        node.pub_s.publish(s)
+        # Zero the actuators on the way out -- but never let cleanup raise.
+        # Under `ros2 launch`, SIGINT reaches rclpy's own handler first and the
+        # context is already invalid by the time this runs, so the publish threw
+        # RCLError, which skipped destroy_node() AND the shutdown, and exited 1.
+        # (The stop command cannot be delivered in that case either way: the
+        # bridge is being torn down in the same breath. Say so rather than
+        # crashing.)
+        try:
+            if rclpy.ok():
+                t, s = Float32(), Float32()
+                t.data = s.data = 0.0
+                node.pub_t.publish(t)
+                node.pub_s.publish(s)
+            else:
+                node.get_logger().warn(
+                    'context already shut down; stop command not sent')
+        except Exception as exc:                     # noqa: BLE001 - cleanup
+            node.get_logger().warn(f'stop command failed: {exc}')
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

@@ -31,7 +31,7 @@ else
     echo "  cd $_ROBORACER/devkit_ws && PYTHONNOUSERSITE=1 colcon build"
 fi
 
-_dds="$(ros2 pkg prefix racer_control 2>/dev/null)/share/racer_control/config/cyclonedds.xml"
+_dds="$(ros2 pkg prefix racer_common 2>/dev/null)/share/racer_common/config/cyclonedds.xml"
 if [ -f "$_dds" ]; then
     export CYCLONEDDS_URI="file://$_dds"
 else

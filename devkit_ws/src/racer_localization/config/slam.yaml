@@ -116,16 +116,37 @@ slam_toolbox:
     # These are VARIANCES IN A DENOMINATOR, so HIGHER = trusts odometry LESS:
     # karto scores  penalty = 1 - GAIN * squaredOffset / variance_penalty  and
     # multiplies it into the match response, so a bigger variance weakens the
-    # pull toward the prior. (The mapping config goes the other way -- there the
-    # prior IS ground truth, so it wants these small.) Here dead reckoning is the
-    # known-weak link and the matcher exists to overrule it, so these stay at
-    # the defaults: lowering them would make it inherit the error we want
-    # rejected.
-    distance_variance_penalty: 0.5
-    angle_variance_penalty: 1.0
+    # pull toward the prior.
+    #
+    # POSITION AND HEADING ARE NOT THE SAME PRIOR. This block used to treat them
+    # as one -- "dead reckoning is the known-weak link, so keep both loose" --
+    # and that is only half true:
+    #
+    #   position   IS dead reckoning. Encoders overread under slip (measured up
+    #              to ~3x under hard acceleration), so it really is weak and the
+    #              matcher really does have to overrule it. Stays loose.
+    #   heading    is NOT dead reckoning. dead_reckoning.py never integrates
+    #              yaw; it reads /imu's absolute quaternion, and in the bridge
+    #              that is the SAME variable published as /odom's ground-truth
+    #              orientation (autodrive.orientation_quaternion). So the
+    #              heading prior has zero error by construction.
+    #
+    # Leaving the angular pair loose let the matcher rotate away from a heading
+    # that was already exact. Because `odom` is yaw-locked to `world` and the
+    # map was built against that same ground truth, correct map->odom is a PURE
+    # TRANSLATION -- any rotation in it is pure error, and it was accumulating
+    # anticlockwise: the estimate crabbed left and the scan rotated off the map.
+    #
+    # minimum_angle_penalty was the bigger half. It clamps the angular penalty
+    # from below, so at 0.9 an angular disagreement could never cost more than
+    # 10% of the match response -- the matcher rotated essentially for free.
+    # These are the mapping run's values, and for the same reason it uses them:
+    # there, too, the heading prior was ground truth.
+    distance_variance_penalty: 0.5      # position: still weak, still overruled
+    angle_variance_penalty: 0.2         # heading: exact, so hold the matcher to it
     fine_search_angle_offset: 0.00349
     coarse_search_angle_offset: 0.349
     coarse_angle_resolution: 0.0349
-    minimum_angle_penalty: 0.9
+    minimum_angle_penalty: 0.5          # 0.9 made the angular penalty inert
     minimum_distance_penalty: 0.5
     use_response_expansion: true

@@ -121,7 +121,7 @@ Every terminal:
 export ROS_LOCALHOST_ONLY=1
 source /opt/ros/humble/setup.bash
 source devkit_ws/install/setup.bash
-export CYCLONEDDS_URI=file://$(ros2 pkg prefix racer_control)/share/racer_control/config/cyclonedds.xml
+export CYCLONEDDS_URI=file://$(ros2 pkg prefix racer_common)/share/racer_common/config/cyclonedds.xml
 ```
 
 That last line matters. CycloneDDS defaults `MaxAutoParticipantIndex` to 9, so
@@ -134,7 +134,7 @@ Start the simulator, then:
 
 ```bash
 # classical stack: bridge + localization + raceline following
-ros2 launch racer_control race.launch.py
+ros2 launch racer_bringup race.launch.py
 
 # build a map
 ros2 launch racer_mapping mapping.launch.py

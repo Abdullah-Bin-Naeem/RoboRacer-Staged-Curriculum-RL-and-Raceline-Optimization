@@ -59,6 +59,7 @@ import rclpy
 import tf2_ros
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
+from racer_common import restricted
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from rclpy.time import Time
@@ -167,9 +168,12 @@ class LocalizationError(Node):
         self.pub = self.create_publisher(Float32, '~/error', QOS)
         self.create_timer(float(g('report_period')), self._report)
 
-        self.get_logger().warn(
-            f'DEVELOPMENT ONLY: comparing {self.source} against {truth_topic}, '
-            'which is RESTRICTED during racing')
+        # The canonical STREAM case: a continuous ground-truth subscription, as
+        # opposed to localization_bootstrap's one-shot warmup seed. Not legal
+        # for a timed run at any point in it, which is why instruments.launch.py
+        # exists and why mode:=race omits that file wholesale.
+        restricted.warn(self, truth_topic,
+                        f'continuous comparison against {self.source}')
         if self.require_ready:
             self.get_logger().info(
                 f'sampling starts {self.grace_s:.1f} s after /localization_ready; '

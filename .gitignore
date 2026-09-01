@@ -10,9 +10,14 @@ __pycache__/
 .venv*/
 .ipynb_checkpoints/
 
-# ---- Simulator (382 MB Unity build) ----------------------------------------
+# ---- Simulator (~382 MB Unity build each) ----------------------------------
 # Download from the AutoDRIVE releases page; not ours to redistribute.
+# simulator_comp/ was committed by accident in 16264e1 (370 MB across 31 files,
+# including three over GitHub's 50 MB warning threshold). Untracked again here;
+# note that only removes it from future commits -- the blobs stay in the pushed
+# history until someone rewrites it.
 simulator_practice/
+simulator_comp/
 
 # ---- RL training artifacts (~30 GB) ----------------------------------------
 # Replay buffers are 224-247 MB each and 132 of them exist. Never commit these.
@@ -39,3 +44,11 @@ events.out.tfevents.*
 # ---- SLAM serialized pose graph (30 MB) ------------------------------------
 # Regenerable, and only needed to CONTINUE a mapping session. The .pgm + .yaml
 # are the actual deliverable and are committed.
+
+# Serializing from the RViz SlamToolbox panel with an empty name writes
+# `.posegraph` and `.data` into the node's working directory -- byte-identical
+# junk copies of whatever map was open. Root-anchored so the real maps under
+# racer_mapping/maps/ stay tracked; track_sm.posegraph + track_sm.data ARE a
+# deliverable, since slam_localization.launch.py loads them.
+/.posegraph
+/.data

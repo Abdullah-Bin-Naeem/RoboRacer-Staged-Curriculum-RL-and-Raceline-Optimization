@@ -395,6 +395,8 @@ for slam_toolbox, whose ±0.5 m correlative search has less room than AMCL's
 | icra 3 | a4.0 zoned, v_max 7.0 | 4 | 14.65 / 14.69 | clean; zone validated: clearance at the hairpin exit 0.02 -> 0.20 m. Tightest spot now 0.11 m at s 36, the car cutting 0.14 m inside the middle-wall hairpin at 3.3 m/s (lookahead chord; safe direction, watch on the climb). Ladder climb starts |
 | icra 4 | a5.0, v_max 7.0 | 5 | 13.45 / 13.47 | clean; bias +0.06 inside; hairpin-exit zone 0.17 m; s 36 inside cut unchanged at 0.11 m across rungs, so geometric (lookahead chord), to get an inside zone after the climb |
 | note | | | | | Correction: the s 36 spot is not a cut. Per-sample, the car is on the line to 2 cm and the line runs along that lane's right wall at the design margin; the "+0.17 inside" was a 5 m section average mixing the hairpin with the straight. No zone there. A per-side clearance clamp was added to the width cast as a guard for walls ahead of the normal, but the failure that prompted it did not exist |
+| icra 5 | a6.0, v_max 7.0 | 7 | 12.60 / 12.66 | clean; bias +0.06 inside; exit zone 0.17 m. First tire-limit sign: at s 35-37 the car runs 0.06-0.08 m wide (right) on the gentle left-hander where the line hugs the right wall, clearance 0.11 -> 0.07 m. Right zone 34:38.5:R:0.15 added; ladder regenerated |
+| zone 2 | ladder regenerated with `45.5:51.5:L:0.20,34:38.5:R:0.15` (width guard now in the cast) | | | 12.09 predicted at 6.0 | line 0.26 -> 0.39 m off the right wall at s 34-38.5, car clearance 0.17 -> 0.27 m; exit zone kept at 0.32 m; rest of the lap moved 8 cm p90; shorter line, 0.08 s faster on paper |
 
 ### Porto
 

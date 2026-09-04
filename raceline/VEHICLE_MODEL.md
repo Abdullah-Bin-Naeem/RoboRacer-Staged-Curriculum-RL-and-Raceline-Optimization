@@ -400,6 +400,7 @@ for slam_toolbox, whose ±0.5 m correlative search has less room than AMCL's
 | icra 6 | a6.0 two zones, v_max 7.0 | 8 | 12.55 / 12.58 | clean; both zones validated: right zone 0.07 -> 0.22 m, exit zone 0.17 m; bias +0.06 inside; faster than run 5. Tightest now 0.13 m at s 22, on the line beside a wall at the design margin, 2.8 m/s |
 | icra 7 | a6.5, v_max 7.0 | 8 | 12.20 / 12.33 | clean; zones 0.22 / 0.17 m; no sample under 0.15 m anywhere; hairpins inside with worst outward 0.06 m. Laps crept 12.20 -> 12.45 across the run (tick 17.2 Hz) |
 | icra 8 | a7.0, v_max 7.0 | 8 | 12.05 / 12.09 | clean, but the tire's limit: gap to the profile 0.61 s (0.45 below), tracking 0.086, inside bias down to +0.02. The left-leg hairpin takes it: 0.19 m inside toward the tip on entry (0.11 m clearance), 0.32 m outside on exit (0.13 m with the 0.20 zone). 6.5 is the submission rung, 7.0 the fast line. Zones deepened for 7.0: exit 0.30, entry 43:45:R:0.10 |
+| zone 3 | ladder regenerated with `45.5:51.5:L:0.30,34:38.5:R:0.15,43:45:R:0.10` | | | 11.44 predicted at 7.0 | exit clearance 0.32 -> 0.42 m. The entry zone did NOT bite: the line already sits 0.33 m from the tip, above the 0.285 m constraint, so 0.10 off that side never reached it (would need ~0.22). Left as is: fast-line concern only. Rest of the lap moved 1 cm p90 |
 
 ### Porto
 

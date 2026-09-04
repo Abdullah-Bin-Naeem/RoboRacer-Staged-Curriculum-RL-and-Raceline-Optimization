@@ -92,7 +92,9 @@ TRACKS = {
         # limit shows at the left-leg hairpin, 0.19 m inside toward the tip on
         # entry (s 43.8, 0.11 m) and 0.32 m outside on exit (0.13 m with the
         # 0.20 zone). 6.5 needs neither; they are what makes 7.0 a fast line
-        # rather than a gamble.
+        # rather than a gamble. NOTE: the entry zone at 43:45 does not bite at
+        # 0.10 (the line is already 0.33 m off the tip, above the 0.285 m the
+        # solver requires); ~0.22 would be needed to move the line there.
         'margin_zones': '45.5:51.5:L:0.30,34:38.5:R:0.15,43:45:R:0.10',
     },
 }

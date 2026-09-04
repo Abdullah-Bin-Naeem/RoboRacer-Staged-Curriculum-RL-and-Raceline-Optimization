@@ -88,7 +88,12 @@ TRACKS = {
         # running 0.06-0.08 m wide toward it on the gentle left-hander, 0.07 m
         # of clearance (0.11 at 4.0 and 5.0, where it sat on the line). Per
         # sample, wall on the right, not a section average. The left has 1.2 m.
-        'margin_zones': '45.5:51.5:L:0.20,34:38.5:R:0.15',
+        # Third zone and a deeper first one, from the 7.0 rung: the tire's
+        # limit shows at the left-leg hairpin, 0.19 m inside toward the tip on
+        # entry (s 43.8, 0.11 m) and 0.32 m outside on exit (0.13 m with the
+        # 0.20 zone). 6.5 needs neither; they are what makes 7.0 a fast line
+        # rather than a gamble.
+        'margin_zones': '45.5:51.5:L:0.30,34:38.5:R:0.15,43:45:R:0.10',
     },
 }
 

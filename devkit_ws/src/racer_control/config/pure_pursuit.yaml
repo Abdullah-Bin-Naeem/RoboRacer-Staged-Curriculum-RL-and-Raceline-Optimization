@@ -164,7 +164,19 @@ pure_pursuit:
     # the speed the car will have when the command lands (cmd_delay_s), so they
     # are real tire slips: 0.08 is ~5.5 m/s^2 on the fitted curve, above the
     # profile's 4.55 and under the 7.06 peak, encoders ~0.3 m/s high while it binds.
-    slip_accel: 0.08
+    # 0.16, not 0.08, when the line is planned at the tire's lateral limit.
+    # Measured on ICRA 2026, a7.0 line, encoder window fix in place, 0 collisions:
+    #     slip_accel 0.08 -> best 11.90, median 11.98, speed deficit 0.23 m/s
+    #     slip_accel 0.12 -> best 11.75, median 11.80, deficit 0.17
+    #     slip_accel 0.16 -> best 11.75, median 11.75, deficit 0.10
+    # The band was saturating on 57% of ticks through the corner exit at s 4-10,
+    # holding achieved a_long to 2.31 m/s^2 where the profile planned 5.0.
+    # On the a6.5 line the same sweep changed NOTHING (12.05 flat at 0.08/0.12/
+    # 0.15) because the deficit there was already 0.15 m/s -- so this only pays
+    # on a line planned at the grip limit, which is why it never showed on Porto.
+    # slip_brake is deliberately NOT raised: braking into a corner at higher slip
+    # is how the tire is lost.
+    slip_accel: 0.16
     slip_brake: 0.08
     v_slip_den: 4.0            # PhysX minLongSlipDenominator, default 4 m/s
     slip_kp: 0.76              # proportional lead on (v_target - v_land) inside the band;

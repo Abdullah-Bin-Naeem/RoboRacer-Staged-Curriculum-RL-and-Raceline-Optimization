@@ -209,7 +209,8 @@ def _launch(context, *args, **kwargs):
     if spec is not None:
         # The seed handshake is now common to both localizers; only the map
         # format differs.
-        loc_args = {'initial_x': initial[0],
+        loc_args = {'track': track,
+                    'initial_x': initial[0],
                     'initial_y': initial[1],
                     'initial_yaw': initial[2],
                     'bootstrap': cfg('bootstrap'),
@@ -264,6 +265,7 @@ def _launch(context, *args, **kwargs):
             'wall_margin': cfg('wall_margin'),
             'log_csv': cfg('log_csv'),
             'log_rate': cfg('log_rate'),
+            'track': track,
         }.items(),
         condition=IfCondition(measure_error),
     ))

@@ -108,6 +108,7 @@ def _nodes(context, *args, **kwargs):
             name='localization_bootstrap', output='screen', emulate_tty=True,
             parameters=[{
                 'mode': bootstrap_mode,
+                'track': track,
                 # Not a lifecycle node, so there is no state to poll; the
                 # appearance of map->odom is the equivalent signal.
                 'ready_check': 'tf',

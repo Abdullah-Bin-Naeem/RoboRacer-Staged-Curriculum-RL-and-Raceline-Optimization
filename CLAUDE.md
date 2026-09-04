@@ -251,7 +251,8 @@ Adding a track:
 # 1. select the track in the simulator's menu, start the bridge, then map it
 ros2 launch racer_mapping mapping.launch.py     # drive a few laps, save via RViz
 # 2. put the grid and pose graph in maps/<track>/ as track_clean.* / track_sm.*
-# 3. read the spawn the car actually starts at
+# 3. read the spawn the car actually starts at -- RIGHT AFTER A RESET, before
+#    driving: after the mapping laps /ips is wherever you parked, not the spawn
 ros2 topic echo /autodrive/roboracer_1/ips --once
 # 4. add a row to racer_common.frames.TRACKS, then build the lines
 cd raceline && python optimize_raceline.py --track <track> --ladder 4.0,4.5,5.0,5.5,6.0

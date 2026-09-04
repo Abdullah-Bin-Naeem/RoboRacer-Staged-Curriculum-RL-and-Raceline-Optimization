@@ -77,6 +77,7 @@ def _nodes(context, *args, **kwargs):
             name='localization_bootstrap', output='screen', emulate_tty=True,
             parameters=[{
                 'mode': cfg('bootstrap_mode'),
+                'track': track,
                 # AMCL is a lifecycle node and DISCARDS anything sent to
                 # /initialpose before it is active, so the seed is a handshake:
                 # wait for active, send, confirm, retry. See the node docstring.

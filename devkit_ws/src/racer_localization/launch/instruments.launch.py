@@ -29,7 +29,7 @@ from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
-from racer_common.frames import BASE, MAP, WORLD
+from racer_common.frames import BASE, MAP, TRACK, WORLD
 
 
 def generate_launch_description():
@@ -53,6 +53,8 @@ def generate_launch_description():
             'log_csv', default_value='',
             description='write every sample to this CSV; empty disables it. '
                         'Relative paths land in the directory you launched from'),
+        DeclareLaunchArgument('track', default_value=TRACK,
+                              description='track whose grid the logger scores scans against'),
         DeclareLaunchArgument('log_rate', default_value='20.0',
                               description='CSV samples per second'),
         DeclareLaunchArgument('wall_margin', default_value='0.089',
@@ -80,6 +82,7 @@ def generate_launch_description():
                 'out': LaunchConfiguration('log_csv'),
                 # cast: log_rate:=50 arrives as an int and the node declares a double
                 'rate': ParameterValue(LaunchConfiguration('log_rate'), value_type=float),
+                'track': LaunchConfiguration('track'),
             }],
         ),
 

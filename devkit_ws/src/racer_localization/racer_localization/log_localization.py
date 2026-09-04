@@ -164,7 +164,11 @@ class Logger(Node):
         # Grid to score the scan against. Default is the one slam_toolbox
         # localizes against, so the fit columns answer a question about the
         # map actually in use rather than a different one.
-        p('map', os.path.join(MAPS_DIR, 'track_sm'))
+        # Grid for the scan-fit metric. Empty = the track's AMCL grid, resolved
+        # through racer_common.frames (track:= or RACER_TRACK); a base path
+        # without extension overrides.
+        p('map', '')
+        p('track', '')
         p('wheel_radius', 0.0581)       # MEASURED; see dead_reckoning.py
         g = lambda n: self.get_parameter(n).value   # noqa: E731
         path = path if path is not None else str(g('out'))
@@ -179,6 +183,9 @@ class Logger(Node):
         # Scoring a scan is then one array lookup per beam: project each
         # endpoint into map cells and read off how far it landed from a wall.
         base = str(g('map'))
+        if not base:
+            from racer_common import frames
+            base = frames.map_yaml(str(g('track')) or None)[:-len('.yaml')]
         meta = yaml.safe_load(open(base + '.yaml'))
         img = read_pgm(base + '.pgm')
         self.res = meta['resolution']

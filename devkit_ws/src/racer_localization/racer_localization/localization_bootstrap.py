@@ -145,6 +145,7 @@ class LocalizationBootstrap(Node):
         super().__init__('localization_bootstrap')
 
         p = self.declare_parameter
+        p('track', '')                   # which track's registered spawn to check against; '' = RACER_TRACK
         p('throttle', 0.08)              # gentle -- this is a search, not a lap
         p('steer_gain', 0.6)             # wall-centring proportional gain
         p('pos_std_target', 0.15)        # [m]   converged when below this
@@ -407,7 +408,11 @@ class LocalizationBootstrap(Node):
         Only printed when the car is actually parked: seeding while moving
         measures where the car IS, not where it STARTS.
         """
-        from racer_common.frames import SPAWN_X, SPAWN_Y, SPAWN_YAW
+        # The registered spawn of the track in use, not the module constants
+        # (those are computed at import for RACER_TRACK and would be Porto's
+        # on a track:= run).
+        from racer_common import frames
+        SPAWN_X, SPAWN_Y, SPAWN_YAW = frames.spawn(str(self.get_parameter('track').value) or None)
         gap = math.hypot(x - float(SPAWN_X), y - float(SPAWN_Y))
         dyaw = abs(wrap(yaw - float(SPAWN_YAW)))
         if abs(self.speed) > 0.1:

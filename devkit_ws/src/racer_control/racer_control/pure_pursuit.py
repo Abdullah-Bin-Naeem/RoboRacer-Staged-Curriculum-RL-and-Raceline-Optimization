@@ -284,11 +284,6 @@ class PurePursuit(Node):
         p('throttle_max', 0.20)
         # False = speed from the pose topic's odometry twist: ground truth, DEV ONLY.
         p('use_encoder_speed', True)
-        # Reject physically impossible encoder-derived wheel speeds (see _cb_enc).
-        # Off reproduces the old behaviour exactly, for A/B.
-        p('enc_reject_spikes', True)
-        p('enc_spike_ratio', 1.6)      # allowed multiple of the commanded wheel speed
-        p('enc_speed_max', 22.88)      # [m/s] the vehicle's top speed; a hard ceiling
         # MEASURED 0.0581, not the published 0.0590 (see dead_reckoning.py).
         # Was hardcoded in _cb_enc; a 1.55% high speed reading biases the
         # throttle feedforward low as well as corrupting dead reckoning.
@@ -340,10 +335,6 @@ class PurePursuit(Node):
         self.use_path_speed = g('use_path_speed')
         self.kp, self.ff, self.thr_max = g('throttle_kp'), g('throttle_ff'), g('throttle_max')
         self.use_enc = g('use_encoder_speed')
-        self.enc_reject_spikes = bool(g('enc_reject_spikes'))
-        self.enc_spike_ratio = float(g('enc_spike_ratio'))
-        self.enc_speed_max = float(g('enc_speed_max'))
-        self._enc_spikes = 0
         self.wheel_r = g('wheel_radius')
         self.speed_source = str(g('speed_source')).lower()
         self.throttle_mode = str(g('throttle_mode')).lower()
@@ -549,47 +540,7 @@ class PurePursuit(Node):
         dt = t - prev[1]
         if dt <= 1e-4 or dt > 0.5:
             return   # stale or duplicate frame; a bad dt yields a garbage speed
-        rate = (ang - prev[0]) / dt * self.wheel_r
-
-        # Reject physically impossible wheel speeds.
-        #
-        # The dt guard above only catches duplicate and stale frames. It does
-        # NOT catch a BUNCHED pair: two encoder messages whose header stamps are
-        # 4 ms apart while the angle between them covers a whole ~20 ms frame.
-        # That passes (dt > 1e-4) and reports five times the real wheel speed.
-        #
-        # Measured on a macOS + Rosetta host, where the two encoders arrive at
-        # different rates (52.4 and 45.1 Hz) and delivery is uneven: 2.17% of
-        # ticks read 12-31 m/s while the car was doing 4 m/s. The car cannot
-        # exceed 22.88 m/s at all. The same logs on native Linux have ZERO such
-        # readings (icra_run7/8: v_enc max 7.96 m/s), which is why this never
-        # showed up there.
-        #
-        # It matters because v_enc feeds the tire observer, which feeds v_est,
-        # which places the slip band: the observer degraded from p90 0.24 m/s to
-        # 0.72, the follower stopped trusting its own speed, throttle never
-        # exceeded 0.28, and the car ran 1.5 m/s under target on 71% of ticks --
-        # 12.20 s a lap became 15.91 s, silently, with no crash and no warning.
-        # The evaluation machine is unknown, so this is insurance, not a
-        # local workaround.
-        #
-        # The ceiling is the simulator's own physics: it spins the wheel to
-        # u_per_throttle * throttle within a millisecond (VEHICLE_MODEL.md
-        # section 3.1), so the wheel cannot be going far faster than the wheel
-        # speed we just commanded. Rejecting holds the previous good rate for
-        # one frame, which is what a dropped sample would have done anyway.
-        if self.enc_reject_spikes:
-            ceiling = max(self.u_cmd, self.v_enc, 1.0) * self.enc_spike_ratio + 1.0
-            ceiling = min(ceiling, self.enc_speed_max)
-            if abs(rate) > ceiling:
-                self._enc_spikes += 1
-                if self._enc_spikes in (1, 10, 100, 1000):
-                    self.get_logger().warn(
-                        'encoder spike #%d rejected: %.1f m/s wheel speed with a '
-                        '%.1f m/s ceiling (dt %.4f s). Uneven message delivery on '
-                        'this host; see _cb_enc.' % (self._enc_spikes, rate, ceiling, dt))
-                return
-        self._enc_rate[side] = rate
+        self._enc_rate[side] = (ang - prev[0]) / dt * self.wheel_r
         rates = [v for v in self._enc_rate.values() if v is not None]
         if rates:
             self.v_enc = float(np.mean(rates))

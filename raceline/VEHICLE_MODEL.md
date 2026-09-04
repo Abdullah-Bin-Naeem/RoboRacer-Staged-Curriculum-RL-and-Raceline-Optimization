@@ -477,3 +477,43 @@ for slam_toolbox, whose ±0.5 m correlative search has less room than AMCL's
   in braking zones, nothing on straights) plus the longer path from running
   8 cm wide in corners. Looking for the braking loss found the position lead
   of 5.4; fixed in `dead_reckoning`, measured as run 23.
+
+### ICRA 2026 track, macOS + Rosetta host (branch `adil-icra-longitudinal`)
+
+Second machine: native macOS simulator (compete build) + the devkit bridge in an
+amd64 container under Rosetta. Pose from `/odom` throughout, so these are
+development numbers; the point of them is the host difference, not legality.
+
+| run | line | best / mean | note |
+|---|---|---|---|
+| base | a6.5 stock | 15.91 / — | 3.7 s slower than the same config on the Linux box, with BETTER pose. Encoder-derived wheel speed corrupted: v_enc max 30.96 m/s against a 22.88 m/s vehicle, 2.17% of reads impossible, tire observer p90 0.72 m/s vs 0.24 there. Follower stopped trusting its own speed, never exceeded 0.28 throttle, ran 1.6 m/s under target on 71% of ticks |
+| headless | a6.5 stock | 15.57 / — | `-batchmode -nographics` tripled the publish rate (45 -> 158 Hz) and made the aliasing WORSE; the win was `-ip/-port`, which auto-connects and makes a sim relaunch a scriptable reset |
+| fix | a6.5 + `enc_window_s 0.05` | 12.09 / — | the bridge stalls then dumps the backlog (msg 577: stamp gap 0.118 s, angle step 0.350; msg 578: 0.007 s, 5.881 rad = 51.9 m/s). Differentiating over a window makes the arithmetic right at any publish rate. v_enc max 12.54, impossible 0.12%, observer p90 0.19, deficit 1.56 -> 0.19 m/s |
+| gfx | a6.5 + fix, graphics | 12.13 / 12.10 | fix holds in GUI mode too |
+| slip a6.5 | 0.08 / 0.12 / 0.15 | 12.05 flat | NULL. Deficit already 0.15 m/s, nothing for the band to recover |
+| ladder | a7.0 + fix | 11.90 / 11.98 | ideal 11.44; gap +0.46 |
+| slip a7.0 | 0.12 | 11.75 / 11.80 | deficit 0.17 |
+| slip a7.0 | **0.16** | **11.75 / 11.75** | **deficit 0.10; the band had been saturating on 57% of ticks at the s 4-10 corner exit, holding a_long to 2.31 where the profile planned 5.0** |
+| slip a7.0 | 0.20 | 11.75 / 11.77 | plateau; 0.16 is the optimum |
+| reject | `steer_a_lat_max` 8.5 | 146 collisions, no laps | the cap is load-bearing: above the tire's lateral peak more steering means less force (section 3.2) |
+
+**slip_accel only pays on a line planned at the grip limit.** Flat on a6.5,
+worth 0.15 s on a7.0. That is why it never surfaced on Porto, and it is worth
+testing on the Linux box, where the a7.0 run showed 49.3% of ticks more than
+0.3 m/s below target.
+
+**Remaining gap on a7.0: 0.26 s to the 11.44 ideal.** Not tracking (|e_lat| mean
+0.028 m, max 0.084) and not path length (53.94 m driven against a 54.17 m line,
+i.e. 0.05 s *saved*). It is localized speed deficit, with the car already ABOVE
+target on 38% of ticks -- the profile is conservative in places, so the lever is
+a higher rung, not the follower.
+
+**Untapped, measured: `v_max`.** 8.0 clips 6.3% of the a7.0 lap and the car
+reaches 7.88, so the cap is real. Worth 0.047 s at 9.0 and 0.085 s at 10.0.
+`ProfileLimits.v_max` says "pure_pursuit.yaml clips here anyway" -- it was
+matched to the follower's clip, not to any physical limit. Needs the ladder
+regenerated.
+
+**Ladder extrapolation** (ideal ~ c/sqrt(a_lat), fitted on the existing rungs),
+carrying this host's +0.46 s gap: a7.5 -> 11.15 ideal / ~11.6 real;
+a8.0 -> 10.89 / ~11.35; a8.5 -> 10.66 / ~11.1.

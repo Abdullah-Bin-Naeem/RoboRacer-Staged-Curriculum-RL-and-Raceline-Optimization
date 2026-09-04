@@ -77,10 +77,13 @@ TRACKS = {
         # Lowest rung until the ladder has been climbed on the car; raise this
         # to the highest rung that runs clean, exactly as Porto's was.
         'raceline': 'raceline_a4.0.csv',
-        # NONE yet, on purpose: margin zones are placed only after a rung runs
-        # clean and analyze_run.py shows where this track's tracking error
-        # lands. Porto's zones must not be copied here.
-        'margin_zones': '',
+        # Placed from measurement, exactly as Porto's were: on the first logged
+        # run (a4.0, 13 laps) the car exited the right-hand hairpin round the
+        # left leg's tip 0.10-0.13 m to the left of the line on EVERY lap, and
+        # the line ran 0.26 m from the outer wall there, leaving 0.02 m. Extra
+        # left margin over that exit puts the line at 0.43 m and the car at
+        # 0.32 m; the re-solved line is shorter and predicts 0.09 s faster.
+        'margin_zones': '45.5:51.5:L:0.20',
     },
 }
 

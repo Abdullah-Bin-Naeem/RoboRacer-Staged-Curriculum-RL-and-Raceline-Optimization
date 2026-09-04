@@ -12,6 +12,7 @@ from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -34,13 +35,33 @@ def generate_launch_description():
             description='Open RViz preloaded with the map/scan/TF displays',
         ),
 
+        # Scan matching decides which artifacts the session yields, not the
+        # quality of the grid: sim odometry is ground truth, so the occupancy
+        # grid is rasterised at true poses either way and AMCL is unaffected.
+        # karto builds the pose GRAPH only inside its scan-matching branch, so
+        # scan_matching:=false gives a grid-only map (exactly how Porto's
+        # track_clean.pgm was made) and a graph the slam localizer would
+        # segfault on. Loop closure follows it: with no graph there is nothing
+        # to close. Leave true when you want track_sm.* as well.
+        DeclareLaunchArgument(
+            'scan_matching',
+            default_value='true',
+            description='false = AMCL-only mapping: grid only, no pose graph',
+        ),
+
         Node(
             package='slam_toolbox',
             executable='async_slam_toolbox_node',
             name='slam_toolbox',
             output='screen',
             emulate_tty=True,
-            parameters=[LaunchConfiguration('params_file')],
+            parameters=[
+                LaunchConfiguration('params_file'),
+                {'use_scan_matching': ParameterValue(
+                    LaunchConfiguration('scan_matching'), value_type=bool),
+                 'do_loop_closing': ParameterValue(
+                    LaunchConfiguration('scan_matching'), value_type=bool)},
+            ],
         ),
 
         Node(

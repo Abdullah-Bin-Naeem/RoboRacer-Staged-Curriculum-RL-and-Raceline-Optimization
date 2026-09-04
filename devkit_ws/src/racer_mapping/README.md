@@ -55,8 +55,14 @@ export ROS_LOCALHOST_ONLY=1
 source /opt/ros/humble/setup.bash
 source ~/Documents/roboracer/devkit_ws/install/setup.bash
 
-ros2 launch racer_mapping mapping.launch.py
+ros2 launch racer_mapping mapping.launch.py                        # grid + pose graph
+ros2 launch racer_mapping mapping.launch.py scan_matching:=false   # AMCL only: grid, no graph
 ```
+
+`scan_matching:=false` is the AMCL-only path and is exactly how Porto's
+`track_clean.pgm` was made. The grid is identical either way, since sim
+odometry is ground truth; the flag only decides whether a usable pose graph
+for the slam localizer comes out of the same session.
 
 ## Save
 

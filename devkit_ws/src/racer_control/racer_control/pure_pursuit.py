@@ -284,6 +284,9 @@ class PurePursuit(Node):
         p('throttle_max', 0.20)
         # False = speed from the pose topic's odometry twist: ground truth, DEV ONLY.
         p('use_encoder_speed', True)
+        # Window used to differentiate the wheel angle (see _cb_enc). 0 restores
+        # the old message-to-message behaviour exactly, for A/B.
+        p('enc_window_s', 0.05)
         # MEASURED 0.0581, not the published 0.0590 (see dead_reckoning.py).
         # Was hardcoded in _cb_enc; a 1.55% high speed reading biases the
         # throttle feedforward low as well as corrupting dead reckoning.
@@ -335,6 +338,8 @@ class PurePursuit(Node):
         self.use_path_speed = g('use_path_speed')
         self.kp, self.ff, self.thr_max = g('throttle_kp'), g('throttle_ff'), g('throttle_max')
         self.use_enc = g('use_encoder_speed')
+        self.enc_window_s = float(g('enc_window_s'))
+        self._enc_hist_side = {}
         self.wheel_r = g('wheel_radius')
         self.speed_source = str(g('speed_source')).lower()
         self.throttle_mode = str(g('throttle_mode')).lower()
@@ -533,14 +538,46 @@ class PurePursuit(Node):
             return
         t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         ang = float(msg.position[0])
-        prev = self._enc.get(side)
-        self._enc[side] = (ang, t)
-        if prev is None:
+
+        # Differentiate over a fixed TIME WINDOW, not message to message.
+        #
+        # The bridge's header stamp is its own publish time, not when the
+        # simulator advanced the wheel, and the two are not locked together.
+        # When the bridge publishes faster than the simulator steps, it stalls
+        # and then dumps the backlog: measured on a macOS + Rosetta host with
+        # encoders at 117 Hz,
+        #
+        #     msg 577:  stamp gap 0.118 s,  angle step 0.350 rad   (stall)
+        #     msg 578:  stamp gap 0.007 s,  angle step 5.881 rad   (catch-up)
+        #
+        # Message to message that second one reads 51.9 m/s, against a 22.88 m/s
+        # vehicle limit; 1.1% of reads came out over 12 m/s. v_enc feeds the tire
+        # observer -> v_est -> the slip band, so the follower stopped trusting
+        # its own speed and ran ~1.6 m/s under target for a 3.4 s/lap loss, with
+        # no crash and no warning.
+        #
+        # Over a window both the angle travelled and the time it took are
+        # correct, however unevenly the messages arrived, so no rotation is
+        # discarded. Replayed over the raw capture:
+        #
+        #     per-message   p95 4.65   max 51.91   1.12% impossible
+        #     window 0.05   p95 3.21   max  8.96   0.00% impossible
+        #
+        # 0.05 s is the shortest window that clears it, so it costs the least
+        # lag (~25 ms against a 175 ms round trip). On a host where the bridge
+        # publishes at the simulator's rate (~18-20 Hz, the Linux dev box) a
+        # 0.05 s window spans a single message, so this reduces exactly to the
+        # previous behaviour -- a no-op there by construction.
+        hist = self._enc_hist_side.setdefault(side, [])
+        hist.append((t, ang))
+        while len(hist) > 2 and t - hist[1][0] >= self.enc_window_s:
+            hist.pop(0)
+        if len(hist) < 2:
             return
-        dt = t - prev[1]
+        dt = t - hist[0][0]
         if dt <= 1e-4 or dt > 0.5:
             return   # stale or duplicate frame; a bad dt yields a garbage speed
-        self._enc_rate[side] = (ang - prev[0]) / dt * self.wheel_r
+        self._enc_rate[side] = (ang - hist[0][1]) / dt * self.wheel_r
         rates = [v for v in self._enc_rate.values() if v is not None]
         if rates:
             self.v_enc = float(np.mean(rates))

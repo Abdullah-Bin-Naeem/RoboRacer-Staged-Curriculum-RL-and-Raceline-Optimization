@@ -4,10 +4,10 @@ weave, localization, encoder slip, and (when the follower's status columns are
 present) how the speed estimator and the slip controller behaved.
 
     python3 raceline/analyze_run.py run.csv
-    python3 raceline/analyze_run.py run.csv --path raceline/raceline_a4.5.csv
+    python3 raceline/analyze_run.py run.csv --path raceline/porto/raceline_a6.5.csv
     python3 raceline/analyze_run.py run_a.csv run_b.csv          # several, one after another
 
-Without --path the line is auto-detected: every CSV in raceline/ with a
+Without --path the line is auto-detected: every CSV in raceline/<track>/ with a
 geometry is tried and the one the TRUE trajectory sits closest to wins.
 
 What the numbers mean
@@ -80,7 +80,10 @@ def pick_line(log, mov, explicit):
     if explicit:
         return load_line(explicit)
     best, best_med, runner_up = None, np.inf, None
-    for f in sorted(glob.glob(os.path.join(HERE, '*.csv'))):
+    # Lines live in raceline/<track>/; the flat glob is kept for anything
+    # left at the top level.
+    for f in sorted(glob.glob(os.path.join(HERE, '*.csv'))
+                    + glob.glob(os.path.join(HERE, '*', '*.csv'))):
         line = load_line(f)
         if line is None:
             continue

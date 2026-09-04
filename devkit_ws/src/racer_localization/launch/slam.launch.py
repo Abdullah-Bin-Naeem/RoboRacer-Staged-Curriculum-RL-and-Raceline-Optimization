@@ -62,19 +62,25 @@ from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from racer_common.frames import (BASE, DEFAULT_POSE_GRAPH, MAP, NS, ODOM,
-                                 SPAWN_X, SPAWN_Y, SPAWN_YAW)
+from racer_common import frames
+from racer_common.frames import BASE, MAP, NS, ODOM
 
 
 def _nodes(context, *args, **kwargs):
     cfg = lambda n: LaunchConfiguration(n).perform(context)
+    # The track's pose graph unless one was named (race.launch.py names it).
+    track = cfg('track')
+    map_graph = cfg('map_graph') or frames.pose_graph(track)
+    spawn = frames.spawn(track)
+    initial = [cfg(n) or spawn[i] for i, n in
+               enumerate(('initial_x', 'initial_y', 'initial_yaw'))]
     pkg_share = get_package_share_directory('racer_localization')
 
     overrides = {
-        'map_file_name': cfg('map_graph'),
-        'map_start_pose': [float(cfg('initial_x')),
-                           float(cfg('initial_y')),
-                           float(cfg('initial_yaw'))],
+        'map_file_name': map_graph,
+        'map_start_pose': [float(initial[0]),
+                           float(initial[1]),
+                           float(initial[2])],
         'odom_frame': ODOM,
         'map_frame': MAP,
         'base_frame': BASE,
@@ -145,7 +151,10 @@ def generate_launch_description():
             'slam_params_file',
             default_value=os.path.join(pkg_share, 'config', 'slam.yaml')),
         DeclareLaunchArgument(
-            'map_graph', default_value=DEFAULT_POSE_GRAPH,
+            'track', default_value=frames.TRACK,
+            description='track whose pose graph to use'),
+        DeclareLaunchArgument(
+            'map_graph', default_value='',
             description='serialized pose graph, BASE PATH with no extension -- '
                         'slam_toolbox appends .posegraph and .data itself'),
         DeclareLaunchArgument(
@@ -161,9 +170,9 @@ def generate_launch_description():
             'require_convergence', default_value='true',
             description='refuse to latch /localization_ready unless the pose was '
                         'actually confirmed; false hands over regardless'),
-        DeclareLaunchArgument('initial_x', default_value=SPAWN_X),
-        DeclareLaunchArgument('initial_y', default_value=SPAWN_Y),
-        DeclareLaunchArgument('initial_yaw', default_value=SPAWN_YAW),
+        DeclareLaunchArgument('initial_x', default_value=''),
+        DeclareLaunchArgument('initial_y', default_value=''),
+        DeclareLaunchArgument('initial_yaw', default_value=''),
         DeclareLaunchArgument(
             'rviz', default_value='true',
             description='open RViz with this localizer''s config; '

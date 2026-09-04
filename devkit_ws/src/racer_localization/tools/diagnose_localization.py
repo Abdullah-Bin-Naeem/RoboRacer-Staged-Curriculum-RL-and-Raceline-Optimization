@@ -127,8 +127,12 @@ class Diag(Node):
         self.collisions = None
         self.xtrack = []
         self.px = self.py = None
+        # Track-scoped: raceline/<track>/. RACER_TRACK picks the track, the same
+        # variable racer_common.frames reads; DIAG_PATH_CSV overrides outright.
+        _track = os.environ.get('RACER_TRACK', 'porto')
         for _csv in (os.environ.get('DIAG_PATH_CSV'),
-                     os.path.expanduser('~/Documents/roboracer/raceline/centerline_speed.csv')):
+                     os.path.expanduser(
+                         f'~/Documents/roboracer/raceline/{_track}/centerline_speed.csv')):
             if _csv and os.path.exists(_csv):
                 d = np.loadtxt(_csv, delimiter=',')
                 self.px, self.py = d[:, 1], d[:, 2]

@@ -4,8 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Autonomous racing on the Porto track in the AutoDRIVE RoboRacer simulator
-(Sim Racing League 2026). Two independent stacks share the workspace and share
+Autonomous racing in the AutoDRIVE RoboRacer simulator (Sim Racing League
+2026). Porto is the developed track; the simulator ships several others and the
+classical stack is track-scoped (see **Tracks**). Two independent stacks share the workspace and share
 nothing else:
 
 - **`rl_racer/`** — SAC policy driving straight off LiDAR. No map, no
@@ -87,8 +88,9 @@ cd rl_racer && python enjoy.py runs/stage3_v3/checkpoints/sac_990000_steps.zip -
 starts `bridge` + `chassis` + the localizer named by `localizer:=` + `follower`,
 plus `instruments` and one RViz. Each is launchable alone, and each piece can be
 switched off (`bridge:=`, `chassis:=`, `localization:=`, `follower:=`).
-`localizer:=` picks `amcl` (nav2 against `track_clean.pgm`), `slam`
-(slam_toolbox against the `track_sm` pose graph), or `none`.
+`localizer:=` picks `amcl` (nav2 against the track's `track_clean.pgm`), `slam`
+(slam_toolbox against its `track_sm` pose graph), or `none`.
+`track:=` picks which track's map, raceline and spawn to use; see **Tracks**.
 `mode:=race` forces every legal setting at once and omits `instruments`
 entirely; `mode:=dev` (default) keeps the development conveniences and every
 node reading a restricted topic says so at startup. Pure-pursuit tunables
@@ -194,7 +196,7 @@ the shared half of the two localizers was copy-pasted into both.
   `pp_*` columns and `raceline/analyze_run.py run.csv` turns a log into lap
   times, tracking error, corner bias, weave, estimator error and encoder ratio.
 - `racer_mapping/` — slam_toolbox mapping config, `map_publisher`, and the
-  committed Porto map. Scan matching is **on** (karto only adds graph vertices
+  committed maps, one directory per track (`maps/porto/`). Scan matching is **on** (karto only adds graph vertices
   inside that branch, so a map built without it is unusable for localization);
   loop closure is on too, because the scan matcher's per-node slop integrates —
   measured +0.023 m after one lap, +0.750 m after three.
@@ -210,12 +212,57 @@ the remap to `/tf_ground_truth`.
 
 `optimize_raceline.py` is the pipeline: map → centerline → minimum-curvature
 line → velocity profile → CSVs (`s,x,y,psi,kappa,w_r,w_l[,v_mps]`) that
-`pure_pursuit` consumes. Run it from `.venv-rl`. It rebuilds the centerline when
-the CSV is missing and exports `raceline_a4.0/4.5/4.9.csv`: the same geometry at
-three lateral limits, so grip is stepped up on the car instead of guessed.
-Geometry does not depend on grip, only the velocity profile does. The notebooks
-import from it for plots; `make_speed_variants.py` re-profiles any other line
-under the same physics.
+`pure_pursuit` consumes. Run it from `.venv-rl`, with `--track` choosing which
+`maps/<track>/` it reads and which `raceline/<track>/` it writes. It rebuilds the
+centerline when the CSV is missing and exports a ladder (`raceline_a4.0.csv`
+through `a7.0.csv`): the same geometry at several lateral limits, so grip is
+stepped up on the car instead of guessed. Geometry does not depend on grip, only
+the velocity profile does. The notebooks import from it for plots;
+`make_speed_variants.py` re-profiles any other line under the same physics.
+
+## Tracks
+
+The simulator ships several tracks (Porto, Berlin, the SRL 2024/2025 scenes),
+selected from its in-sim menu, so **nothing may assume Porto**. Every track
+asset is scoped by name:
+
+| asset | path |
+|---|---|
+| occupancy grid, pose graph | `devkit_ws/src/racer_mapping/maps/<track>/` |
+| centreline, raceline ladder | `raceline/<track>/` |
+| spawn, default line, margin zones | `racer_common.frames.TRACKS['<track>']` |
+
+`racer_common/frames.py` is the registry and the only place that resolves a
+track to paths (`map_yaml()`, `pose_graph()`, `raceline()`, `spawn()`). Pick one
+with `track:=<name>` on any launch file, or `RACER_TRACK=<name>` in the
+environment; naming a `path_csv:=`/`map_yaml:=` explicitly still overrides.
+
+**What is per track and what is not.** The car model is not: the tire curves,
+the 25.25 m/s per unit throttle, the command-delay handling and the whole
+controller are derived from the simulator's physics and transfer unchanged.
+What does not transfer is exactly what the registry holds — the spawn, the grip
+rung measured safe, and the **margin zones**, which are hand-placed at the
+s-ranges where *that* track's tracking error lands. Reusing another track's
+margin zones pushes the line toward a wall rather than away from one.
+
+Adding a track:
+
+```bash
+# 1. select the track in the simulator's menu, start the bridge, then map it
+ros2 launch racer_mapping mapping.launch.py     # drive a few laps, save via RViz
+# 2. put the grid and pose graph in maps/<track>/ as track_clean.* / track_sm.*
+# 3. read the spawn the car actually starts at
+ros2 topic echo /autodrive/roboracer_1/ips --once
+# 4. add a row to racer_common.frames.TRACKS, then build the lines
+cd raceline && python optimize_raceline.py --track <track> --ladder 4.0,4.5,5.0,5.5,6.0
+# 5. step the ladder up on the car, lowest rung first, and read every run
+ros2 launch racer_bringup race.launch.py track:=<track> \
+    path_csv:=$PWD/raceline/<track>/raceline_a4.0.csv log_csv:=run.csv
+python3 raceline/analyze_run.py run.csv --path raceline/<track>/raceline_a4.0.csv
+```
+
+Only once a rung runs clean do the margin zones get placed, from where
+`analyze_run.py` reports the corner bias and the wall contacts, not guessed.
 
 Every number about the car is in `raceline/VEHICLE_MODEL.md`, derived from the
 simulator's Unity source, with references. The three that change decisions:

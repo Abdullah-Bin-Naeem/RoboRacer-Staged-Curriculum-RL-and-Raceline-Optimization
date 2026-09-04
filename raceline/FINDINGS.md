@@ -181,15 +181,19 @@ judged not worth starting once the record was already beaten.
 - **Localizer:** AMCL on the pre-built map, LiDAR + IMU + encoders, with the
   warmup ground-truth seed; `dead_reckoning` extrapolating both heading and
   position to each stamp.
-- **Lines:** `optimize_raceline.py` plans at longitudinal 5.0 m/s and lateral
-  at the tire asymptote. `raceline_a6.5.csv` is the default and submission line;
-  `raceline_a7.0.csv` the fast line; `raceline_a7.0_rec.csv` the record attempt.
+- **Lines:** `optimize_raceline.py --track porto` plans at longitudinal
+  5.0 m/s and lateral at the tire asymptote. In `raceline/porto/`:
+  `raceline_a6.5.csv` is the default and submission line, `raceline_a7.0.csv`
+  the fast line, `raceline_a7.0_rec.csv` the record attempt.
+
+All of these numbers are Porto's. The controller transfers to another track
+unchanged; the spawn, the safe grip rung and the margin zones do not, and are
+re-derived per track (see **Tracks** in `CLAUDE.md`).
 
 Run it with:
 
 ```bash
 source ros_env.sh
-ros2 launch racer_bringup race.launch.py localizer:=amcl \
-    path_csv:=$PWD/raceline/raceline_a6.5.csv log_csv:=run.csv
-python3 raceline/analyze_run.py run.csv --path raceline/raceline_a6.5.csv
+ros2 launch racer_bringup race.launch.py localizer:=amcl track:=porto log_csv:=run.csv
+python3 raceline/analyze_run.py run.csv --path raceline/porto/raceline_a6.5.csv
 ```

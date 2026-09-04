@@ -25,25 +25,33 @@ from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from racer_common.frames import DEFAULT_MAP_YAML, SPAWN_X, SPAWN_Y, SPAWN_YAW
+from racer_common import frames
+from racer_common.frames import TRACK
 
 
 def _nodes(context, *args, **kwargs):
     cfg = lambda n: LaunchConfiguration(n).perform(context)
+    # Track assets, unless an explicit path/pose was given (race.launch.py
+    # always passes them explicitly; this matters when launched standalone).
+    track = cfg('track')
+    map_yaml = cfg('map_yaml') or frames.map_yaml(track)
+    spawn = frames.spawn(track)
+    initial = [cfg(n) or spawn[i] for i, n in
+               enumerate(('initial_x', 'initial_y', 'initial_yaw'))]
     pkg_share = get_package_share_directory('racer_localization')
 
     amcl_overrides = {
         'set_initial_pose': True,
-        'initial_pose.x': float(cfg('initial_x')),
-        'initial_pose.y': float(cfg('initial_y')),
-        'initial_pose.yaw': float(cfg('initial_yaw')),
+        'initial_pose.x': float(initial[0]),
+        'initial_pose.y': float(initial[1]),
+        'initial_pose.yaw': float(initial[2]),
     }
 
     return [
         Node(
             package='nav2_map_server', executable='map_server',
             name='map_server', output='screen',
-            parameters=[cfg('amcl_params_file'), {'yaml_filename': cfg('map_yaml')}],
+            parameters=[cfg('amcl_params_file'), {'yaml_filename': map_yaml}],
         ),
 
         Node(
@@ -101,7 +109,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'amcl_params_file',
             default_value=os.path.join(pkg_share, 'config', 'amcl.yaml')),
-        DeclareLaunchArgument('map_yaml', default_value=DEFAULT_MAP_YAML),
+        DeclareLaunchArgument('track', default_value=TRACK,
+                          description='track whose map and spawn to use'),
+    DeclareLaunchArgument('map_yaml', default_value='',
+                          description="empty = the track's grid"),
         DeclareLaunchArgument(
             'bootstrap', default_value='true',
             description='drive forward until AMCL converges instead of being '
@@ -115,9 +126,9 @@ def generate_launch_description():
             description='refuse to latch /localization_ready unless the pose was '
                         'actually confirmed; false hands over regardless'),
         # Fallback pose, used only when the bootstrap seed is unavailable.
-        DeclareLaunchArgument('initial_x', default_value=SPAWN_X),
-        DeclareLaunchArgument('initial_y', default_value=SPAWN_Y),
-        DeclareLaunchArgument('initial_yaw', default_value=SPAWN_YAW),
+        DeclareLaunchArgument('initial_x', default_value=''),
+        DeclareLaunchArgument('initial_y', default_value=''),
+        DeclareLaunchArgument('initial_yaw', default_value=''),
         DeclareLaunchArgument(
             'rviz', default_value='true',
             description='open RViz with this localizer''s config; '

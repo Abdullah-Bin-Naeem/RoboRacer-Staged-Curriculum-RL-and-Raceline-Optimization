@@ -39,6 +39,7 @@ from __future__ import annotations
 import argparse
 import sys
 from dataclasses import dataclass
+import os
 from pathlib import Path
 
 import numpy as np
@@ -49,7 +50,14 @@ from scipy.optimize import lsq_linear
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
-DEFAULT_MAP = REPO / "devkit_ws/src/racer_mapping/maps/track_clean"
+MAPS_DIR = REPO / "devkit_ws/src/racer_mapping/maps"
+DEFAULT_TRACK = os.environ.get("RACER_TRACK", "porto")
+# Per track: the grid lives in maps/<track>/ and the lines in raceline/<track>/.
+# --margin-zones is per track too (they are s-ranges on THAT centreline);
+# the argument that built each track's ladder is recorded in
+# racer_common.frames.TRACKS so it can be reproduced.
+def map_base(track):
+    return MAPS_DIR / track / "track_clean"
 
 
 # --------------------------------------------------------------------------- #
@@ -577,8 +585,10 @@ def load_xy(path):
 # --------------------------------------------------------------------------- #
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    p.add_argument("--map", type=Path, default=DEFAULT_MAP, help="map base path, no extension")
-    p.add_argument("--out", type=Path, default=HERE, help="output directory")
+    p.add_argument("--track", default=DEFAULT_TRACK,
+                   help="track name; picks maps/<track>/ and raceline/<track>/")
+    p.add_argument("--map", type=Path, default=None, help="map base path, no extension; default: the track's")
+    p.add_argument("--out", type=Path, default=None, help="output directory; default: raceline/<track>/")
     p.add_argument("--n-points", type=int, default=400)
     p.add_argument("--safety", type=float, default=0.15,
                    help="body-to-wall margin [m] on top of half the car width; a wall touch is a respawn")
@@ -608,6 +618,10 @@ def main(argv=None):
     p.add_argument("--score", nargs="*", metavar="CSV", help="only re-score these lines and exit")
     p.add_argument("-q", "--quiet", action="store_true")
     a = p.parse_args(argv)
+    if a.map is None:
+        a.map = map_base(a.track)
+    if a.out is None:
+        a.out = HERE / a.track
 
     tm = TrackMap(a.map)
     lim = ProfileLimits(a_lat=a.a_lat, a_long=a.a_long, v_max=a.v_max)

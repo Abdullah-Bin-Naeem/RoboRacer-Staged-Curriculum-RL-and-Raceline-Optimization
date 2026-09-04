@@ -72,8 +72,8 @@ from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from racer_common.frames import (DEFAULT_MAP_YAML, DEFAULT_POSE_GRAPH,
-                                 DEFAULT_RACELINE, SPAWN_X, SPAWN_Y, SPAWN_YAW)
+from racer_common import frames
+from racer_common.frames import TRACK
 
 # Passed straight through to pure_pursuit when given.
 # curvature_preview_m matters more than it looks: with no v_mps column in the
@@ -134,6 +134,17 @@ LOCALIZERS = {
 
 def _launch(context, *args, **kwargs):
     cfg = lambda n: LaunchConfiguration(n).perform(context)
+
+    # Track assets resolve from track:= unless the path was given explicitly.
+    # Empty defaults rather than module constants, because the constants are
+    # computed at import time for frames.TRACK and would ignore track:=.
+    track = cfg('track')
+    path_csv = cfg('path_csv') or frames.raceline(track)
+    map_yaml = cfg('map_yaml') or frames.map_yaml(track)
+    map_graph = cfg('map_graph') or frames.pose_graph(track)
+    spawn = frames.spawn(track)
+    initial = [cfg(n) or spawn[i] for i, n in
+               enumerate(('initial_x', 'initial_y', 'initial_yaw'))]
 
     localizer = cfg('localizer').lower()
     if localizer not in LOCALIZERS and localizer != 'none':
@@ -198,14 +209,14 @@ def _launch(context, *args, **kwargs):
     if spec is not None:
         # The seed handshake is now common to both localizers; only the map
         # format differs.
-        loc_args = {'initial_x': cfg('initial_x'),
-                    'initial_y': cfg('initial_y'),
-                    'initial_yaw': cfg('initial_yaw'),
+        loc_args = {'initial_x': initial[0],
+                    'initial_y': initial[1],
+                    'initial_yaw': initial[2],
                     'bootstrap': cfg('bootstrap'),
                     'bootstrap_mode': bootstrap_mode,
                     'require_convergence': cfg('require_convergence')}
         loc_args['map_yaml' if localizer == 'amcl' else 'map_graph'] = (
-            cfg('map_yaml') if localizer == 'amcl' else cfg('map_graph'))
+            map_yaml if localizer == 'amcl' else map_graph)
 
         # Warn only when nothing will seed this localizer: no global search AND
         # no one-shot truth seed leaves it on the hardcoded constant, which
@@ -215,7 +226,7 @@ def _launch(context, *args, **kwargs):
             actions.append(LogInfo(msg=(
                 f'[race] WARNING: {localizer} has no global relocalization and '
                 'no truth seed, so it starts on racer_common.frames.SPAWN_* '
-                f'({cfg("initial_x")}, {cfg("initial_y")}, {cfg("initial_yaw")}) '
+                f'({initial[0]}, {initial[1]}, {initial[2]}) '
                 'and cannot recover an error larger than ~0.5 m. '
                 'bootstrap_mode:=truth is race-legal and fixes this.')))
         # The localizer owns its own RViz (so that launching it standalone is
@@ -268,7 +279,7 @@ def _launch(context, *args, **kwargs):
 
     # 6. follower, on a delay so the localizer is publishing before it asks
     follower_args = {
-        'path_csv': cfg('path_csv'),
+        'path_csv': path_csv,
         'pose_topic': spec['pose_topic'] if spec else cfg('pose_topic'),
         'use_tf_pose': use_tf_pose,
         'dev_lap_telemetry': dev_lap,
@@ -297,11 +308,19 @@ def generate_launch_description():
             'mode', default_value='dev',
             description="'race' refuses every restricted topic and forces the "
                         "legal settings; 'dev' keeps the conveniences"),
-        DeclareLaunchArgument('path_csv', default_value=DEFAULT_RACELINE),
-        DeclareLaunchArgument('map_yaml', default_value=DEFAULT_MAP_YAML,
-                              description='occupancy grid, AMCL only'),
-        DeclareLaunchArgument('map_graph', default_value=DEFAULT_POSE_GRAPH,
-                              description='serialized pose graph, slam only'),
+        DeclareLaunchArgument(
+            'track', default_value=TRACK,
+            description='which track\'s map, raceline and spawn to use '
+                        '(racer_common.frames.TRACKS)'),
+        DeclareLaunchArgument(
+            'path_csv', default_value='',
+            description="raceline CSV; empty = the track's default line"),
+        DeclareLaunchArgument(
+            'map_yaml', default_value='',
+            description="occupancy grid, AMCL only; empty = the track's"),
+        DeclareLaunchArgument(
+            'map_graph', default_value='',
+            description="serialized pose graph, slam only; empty = the track's"),
         DeclareLaunchArgument('rviz', default_value='true'),
 
         # Turn pieces off when running them yourself.
@@ -350,9 +369,9 @@ def generate_launch_description():
             'follower_delay', default_value='2.0',
             description='fallback delay; with an AMCL bootstrap the follower '
                         'waits for /localization_ready instead'),
-        DeclareLaunchArgument('initial_x', default_value=SPAWN_X),
-        DeclareLaunchArgument('initial_y', default_value=SPAWN_Y),
-        DeclareLaunchArgument('initial_yaw', default_value=SPAWN_YAW),
+        DeclareLaunchArgument('initial_x', default_value=''),
+        DeclareLaunchArgument('initial_y', default_value=''),
+        DeclareLaunchArgument('initial_yaw', default_value=''),
     ]
     args += [DeclareLaunchArgument(n, default_value='',
                                    description='override the pure_pursuit value')

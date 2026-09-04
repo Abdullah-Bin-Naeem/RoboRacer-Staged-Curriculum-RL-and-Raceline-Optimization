@@ -29,7 +29,8 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from racer_common.frames import DEFAULT_RACELINE, NS
+from racer_common import frames
+from racer_common.frames import NS, TRACK
 
 # Overridable at launch time; empty string keeps whatever the params file says.
 # curvature_preview_m matters more than it looks: with no v_mps column in the
@@ -59,6 +60,8 @@ STR_TUNABLES = ('speed_source', 'throttle_mode')
 
 def _nodes(context, *args, **kwargs):
     cfg = lambda n: LaunchConfiguration(n).perform(context)
+    # The track's default line unless a CSV was named (race.launch.py names it).
+    path_csv = cfg('path_csv') or frames.raceline(cfg('track'))
     overrides = {n: float(cfg(n)) for n in TUNABLES if cfg(n) != ''}
     overrides.update({n: cfg(n) for n in STR_TUNABLES if cfg(n) != ''})
     if overrides:
@@ -73,7 +76,7 @@ def _nodes(context, *args, **kwargs):
             emulate_tty=True,
             parameters=[
                 cfg('pp_params_file'),
-                {'path_csv': cfg('path_csv'),
+                {'path_csv': path_csv,
                  'pose_topic': cfg('pose_topic'),
                  'use_tf_pose': cfg('use_tf_pose').lower() == 'true',
                  'wait_for_ready': cfg('wait_for_ready').lower() == 'true',
@@ -92,9 +95,11 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'pp_params_file',
             default_value=os.path.join(pkg_share, 'config', 'pure_pursuit.yaml')),
+        DeclareLaunchArgument('track', default_value=TRACK,
+                              description="track whose default line to follow"),
         DeclareLaunchArgument(
             'path_csv',
-            default_value=DEFAULT_RACELINE,
+            default_value='',
             description='path to follow (s,x,y,psi,kappa,w_r,w_l)'),
         DeclareLaunchArgument('wait_for_ready', default_value='false'),
         DeclareLaunchArgument('bootstrap_seconds', default_value='0.0'),

@@ -24,33 +24,96 @@ WORLD = 'world'
 # devkit's /tf is remapped away.
 LIDAR_XYZ = ('0.2733', '0.0', '0.096')
 
-# ---- Spawn -----------------------------------------------------------------
-# Fallback initial pose. NOT (0, 0, 0): that cell is a WALL in track_clean.pgm
-# and sits 0.71 m off the racing line, so a filter seeded there starts
-# confidently inside a barrier. This is the nearest centreline point.
-# Replace with the measured spawn if the car starts elsewhere:
-#     ros2 topic echo /autodrive/roboracer_1/ips --once
-SPAWN_X = '0.71'
-SPAWN_Y = '0.02'
-SPAWN_YAW = '-1.599'
-
 # ---- Paths -----------------------------------------------------------------
 REPO = os.path.join(os.path.expanduser('~'), 'Documents/roboracer')
 MAPS_DIR = os.path.join(REPO, 'devkit_ws/src/racer_mapping/maps')
 RACELINE_DIR = os.path.join(REPO, 'raceline')
 
-DEFAULT_MAP_YAML = os.path.join(MAPS_DIR, 'track_clean.yaml')
-# BASE PATH, NO EXTENSION -- slam_toolbox appends .posegraph and .data itself.
-DEFAULT_POSE_GRAPH = os.path.join(MAPS_DIR, 'track_sm')
-# Built by raceline/optimize_raceline.py: min-curvature geometry with extra left
-# margin on the straight after R1 and on the S-exit approach (--margin-zones
-# 2.5:6:L:0.10,17:21.5:L:0.15), 0.15 m body-to-wall margin elsewhere, velocity
-# profile at a_lat 6.5 m/s^2. That is over the tire's 4.90 asymptote and is held
-# by the follower's curvature cap (steer_a_lat_max): measured clean on the car,
-# 13 laps at 17.5 Hz, 6.85 s best. raceline_a6.0.csv is the safe rung,
-# raceline_a7.0.csv the record attempt (6.65 s best); same geometry, ladder in
-# VEHICLE_MODEL.md section 7.
-DEFAULT_RACELINE = os.path.join(RACELINE_DIR, 'raceline_a6.5.csv')
+# ---- Tracks ----------------------------------------------------------------
+# Every track asset is scoped by track name: the occupancy grid and pose graph
+# live in maps/<track>/, the centreline and the raceline ladder in
+# raceline/<track>/. The simulator ships several tracks (Porto, Berlin, and the
+# SRL 2024/2025 scenes), so nothing here may assume Porto.
+#
+# WHAT IS PER TRACK AND WHAT IS NOT: the car model is not -- the tire curves,
+# the 25.25 m/s per unit throttle, the command delay handling and the whole
+# controller come from the simulator's physics and transfer unchanged
+# (raceline/FINDINGS.md section 2). What lives in this registry is exactly the
+# part that does NOT transfer: where the car spawns, which grip rung was
+# measured safe, and the margin zones, which are hand-placed at the spots where
+# THIS track's tracking error lands. Reusing another track's margin zones would
+# push the line toward a wall rather than away from one.
+#
+# Adding a track: map it (racer_mapping), drop the grid in maps/<name>/, run
+# optimize_raceline.py --track <name>, then add a row here.
+TRACKS = {
+    'porto': {
+        # Fallback initial pose. NOT (0, 0, 0): that cell is a WALL in
+        # track_clean.pgm and sits 0.71 m off the racing line, so a filter
+        # seeded there starts confidently inside a barrier. This is the nearest
+        # centreline point. Replace with the measured spawn if the car starts
+        # elsewhere:  ros2 topic echo /autodrive/roboracer_1/ips --once
+        'spawn': ('0.71', '0.02', '-1.599'),
+        # Built by raceline/optimize_raceline.py: min-curvature geometry with
+        # extra left margin on the straight after R1 and on the S-exit approach,
+        # 0.15 m body-to-wall margin elsewhere, velocity profile at a_lat 6.5.
+        # That is over the tire's 4.90 asymptote and is held by the follower's
+        # curvature cap (steer_a_lat_max): measured clean, 32 consecutive laps,
+        # 6.65 s best. raceline_a7.0.csv is the fast line (6.50 s) and
+        # raceline_a7.0_rec.csv the record attempt (6.45 s, 0.03 m clearance);
+        # same geometry, ladder in VEHICLE_MODEL.md section 7.
+        'raceline': 'raceline_a6.5.csv',
+        # The argument that built this track's ladder. Per track by
+        # construction: these are s-ranges on THIS centreline.
+        'margin_zones': '2.5:6:L:0.10,17:21.5:L:0.15',
+    },
+}
+
+# Which track the stack uses when nothing says otherwise. Override with the
+# RACER_TRACK environment variable, or track:= on any launch file.
+TRACK = os.environ.get('RACER_TRACK', 'porto')
+
+
+def _track(track=None):
+    name = track or TRACK
+    if name not in TRACKS:
+        raise KeyError(
+            f'unknown track {name!r}; known: {sorted(TRACKS)}. Add a row to '
+            'racer_common.frames.TRACKS after mapping it.')
+    return name
+
+
+def map_yaml(track=None):
+    """Occupancy grid for AMCL."""
+    return os.path.join(MAPS_DIR, _track(track), 'track_clean.yaml')
+
+
+def pose_graph(track=None):
+    """BASE PATH, NO EXTENSION -- slam_toolbox appends .posegraph and .data."""
+    return os.path.join(MAPS_DIR, _track(track), 'track_sm')
+
+
+def raceline_dir(track=None):
+    return os.path.join(RACELINE_DIR, _track(track))
+
+
+def raceline(track=None, name=None):
+    """A line for this track: the registry's default, or `name` within it."""
+    t = _track(track)
+    return os.path.join(RACELINE_DIR, t, name or TRACKS[t]['raceline'])
+
+
+def spawn(track=None):
+    """(x, y, yaw) as strings, for launch arguments."""
+    return TRACKS[_track(track)]['spawn']
+
+
+# Back-compatible module constants, resolved for the current TRACK. Launch
+# files that accept track:= call the functions above instead.
+DEFAULT_MAP_YAML = map_yaml()
+DEFAULT_POSE_GRAPH = pose_graph()
+DEFAULT_RACELINE = raceline()
+SPAWN_X, SPAWN_Y, SPAWN_YAW = spawn()
 
 # ---- Vehicle ---------------------------------------------------------------
 NS = '/autodrive/roboracer_1'

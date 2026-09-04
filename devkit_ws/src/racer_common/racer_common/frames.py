@@ -74,9 +74,14 @@ TRACKS = {
         # read /ips right after a reset, not after driving. Coincides with
         # Porto's spawn; the scenes share a spawn point.
         'spawn': ('0.800', '3.158', '-1.5707'),
-        # Lowest rung until the ladder has been climbed on the car; raise this
-        # to the highest rung that runs clean, exactly as Porto's was.
-        'raceline': 'raceline_a4.0.csv',
+        # Ladder climbed on the car (VEHICLE_MODEL.md section 7, runs icra 2-8):
+        # a4.0 14.70 -> a5.0 13.45 -> a6.0 12.55 -> a6.5 12.20 -> a7.0 12.05.
+        # 6.5 is the submission rung (clean, no sample under 0.15 m clearance);
+        # 7.0 is the fast line and sits at the tire's lateral limit.
+        # This was still 'raceline_a4.0.csv' after the climb, so anything
+        # launched without an explicit path_csv:= silently drove the 14.70 s
+        # line. Same role Porto's 'raceline_a6.5.csv' plays.
+        'raceline': 'raceline_a6.5.csv',
         # Placed from measurement, exactly as Porto's were: on the first logged
         # run (a4.0, 13 laps) the car exited the right-hand hairpin round the
         # left leg's tip 0.10-0.13 m to the left of the line on EVERY lap, and

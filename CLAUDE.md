@@ -16,6 +16,9 @@ nothing else:
 
 `README.md` holds measured results and lap times; `rl_racer/EXPERIMENTS.md` is
 the full training log including bugs found the expensive way.
+`raceline/FINDINGS.md` is the classical stack's summary: the tuning levers, the
+timing bugs, and the lap-time ceiling (its per-run history is `VEHICLE_MODEL.md`
+section 7).
 
 ## Environment
 

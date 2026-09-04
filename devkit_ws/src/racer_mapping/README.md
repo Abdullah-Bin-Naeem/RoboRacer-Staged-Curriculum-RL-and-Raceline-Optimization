@@ -2,11 +2,15 @@
 
 Map an AutoDRIVE track with slam_toolbox. Copy-paste, one terminal each.
 
+Maps are per track: everything for one track lives in `maps/<track>/`
+(`racer_common.frames.TRACKS` is the registry; `track:=<name>` selects it at
+launch). The commands below map a track called `icra2026`; substitute yours.
+
 ## Once
 
 ```bash
 sudo apt install ros-humble-slam-toolbox ros-humble-nav2-map-server
-mkdir -p ~/Documents/roboracer/devkit_ws/src/racer_mapping/maps
+mkdir -p ~/Documents/roboracer/devkit_ws/src/racer_mapping/maps/icra2026
 ```
 
 ## T1 — sim
@@ -60,16 +64,33 @@ Stop Drive. Leave T4 running. In the RViz **SlamToolboxPlugin** panel, paste
 this into **both** text boxes (they are separate) and click both buttons:
 
 ```
-/home/theflash/Documents/roboracer/devkit_ws/src/racer_mapping/maps/track
+/home/theflash/Documents/roboracer/devkit_ws/src/racer_mapping/maps/icra2026/track
 ```
 
 Save Map -> `track.pgm` + `.yaml`   Serialize Map -> `track.posegraph` + `.data`
 
+Then clean the grid. SLAM leaves speckle: lone wall hits and stray free
+pockets that give AMCL false features to match. `tools/clean_map.py` removes
+both deterministically (wall blobs under 5 cells, every free region but the
+largest) and writes `track_clean.pgm` + `.yaml` next to the input. That is
+the file AMCL localizes against; Porto's needed 251 cells cleaned.
+
+```bash
+cd ~/Documents/roboracer/devkit_ws/src/racer_mapping
+python3 tools/clean_map.py maps/icra2026/track.pgm
+```
+
 Check:
 
 ```bash
-ls -la ~/Documents/roboracer/devkit_ws/src/racer_mapping/maps/
+ls -la ~/Documents/roboracer/devkit_ws/src/racer_mapping/maps/icra2026/
 ```
+
+AMCL needs `track_clean.pgm` + `.yaml`; the slam localizer needs
+`track_sm.posegraph` + `.data` (rename `track.posegraph`/`.data` to that, or
+save with the `track_sm` name). Then add the track to
+`racer_common.frames.TRACKS` with the spawn from
+`ros2 topic echo /autodrive/roboracer_1/ips --once`.
 
 Then Ctrl-C T4, T2, sim.
 
@@ -92,5 +113,9 @@ PYTHONNOUSERSITE=1 colcon build --packages-select racer_mapping
 
 `PYTHONNOUSERSITE=1` required, and not from a venv prompt.
 
-Tuning lives in [`config/slam_mapping.yaml`](config/slam_mapping.yaml) — scan
-matching and loop closure are off on purpose, since sim odometry is ground truth.
+Tuning lives in [`config/slam_mapping.yaml`](config/slam_mapping.yaml). Scan
+matching and loop closure are ON; the file explains why at length. The short
+version: sim odometry is ground truth, so the occupancy GRID is perfect either
+way and AMCL does not care, but karto only builds the pose GRAPH inside the
+scan-matching branch, so a map made with it off segfaults the slam localizer.
+Leave it on and one session yields both maps.

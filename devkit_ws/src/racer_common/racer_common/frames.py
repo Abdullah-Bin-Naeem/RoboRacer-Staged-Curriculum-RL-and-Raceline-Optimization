@@ -67,6 +67,18 @@ TRACKS = {
         # construction: these are s-ranges on THIS centreline.
         'margin_zones': '2.5:6:L:0.10,17:21.5:L:0.15',
     },
+    'icra2026': {
+        # Measured off the live bridge at the start box (ips + imu yaw),
+        # 2026-09-04, on the competition simulator's ICRA 2026 track.
+        'spawn': ('1.1615', '1.815', '-1.4456'),
+        # Lowest rung until the ladder has been climbed on the car; raise this
+        # to the highest rung that runs clean, exactly as Porto's was.
+        'raceline': 'raceline_a4.0.csv',
+        # NONE yet, on purpose: margin zones are placed only after a rung runs
+        # clean and analyze_run.py shows where this track's tracking error
+        # lands. Porto's zones must not be copied here.
+        'margin_zones': '',
+    },
 }
 
 # Which track the stack uses when nothing says otherwise. Override with the

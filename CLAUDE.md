@@ -264,6 +264,23 @@ python3 raceline/analyze_run.py run.csv --path raceline/<track>/raceline_a4.0.cs
 Only once a rung runs clean do the margin zones get placed, from where
 `analyze_run.py` reports the corner bias and the wall contacts, not guessed.
 
+**Two grids per track when the walls are hollow.** Tracks built from ducting
+map as two thin faces with an unknown strip between, and rays enter the
+hollow at the ducts' open ends. `track_clean.pgm` is the **sensor map**: the
+world as the LiDAR sees it, faces, gaps and all, and it is what AMCL
+localizes against, because that is what its rays will return at race time.
+If that grid has openings the LiDAR sees through but the car cannot drive
+through, the raceline needs a **geometry map**, `track_solid.pgm`, with them
+sealed; `optimize_raceline.py` prefers it automatically when it exists. On the
+ICRA 2026 track it took capping the two duct ends by hand (GIMP, then export
+to PGM, then the cleaner over the result). Never give AMCL the solid map.
+
+The centreline extractor orders the skeleton ring by BFS to the antipode and
+back (`_order_loop`), not by a greedy neighbour walk. The greedy walk strands
+itself at the thick spots a skeleton keeps after pruning and then closes the
+partial path through walls; a near-oval like Porto never triggered it, a
+switchback did, dropping a third of the lap.
+
 Every number about the car is in `raceline/VEHICLE_MODEL.md`, derived from the
 simulator's Unity source, with references. The three that change decisions:
 throttle commands a wheel speed (25.25 m/s per unit), so encoders read the

@@ -57,7 +57,12 @@ DEFAULT_TRACK = os.environ.get("RACER_TRACK", "porto")
 # the argument that built each track's ladder is recorded in
 # racer_common.frames.TRACKS so it can be reproduced.
 def map_base(track):
-    return MAPS_DIR / track / "track_clean"
+    # track_clean is what AMCL localizes against: the world as the LiDAR sees
+    # it. When that has openings the LiDAR sees through but the car cannot
+    # drive through (a duct's open end), the GEOMETRY must use a copy with
+    # them sealed, track_solid, or the centreline shortcuts through them.
+    solid = MAPS_DIR / track / "track_solid"
+    return solid if solid.with_suffix(".pgm").exists() else MAPS_DIR / track / "track_clean"
 
 
 # --------------------------------------------------------------------------- #
@@ -308,20 +313,68 @@ def extract_centerline(tm: TrackMap, n_points=400, smooth=0.5):
     lsz = ndimage.sum(pruned, llab, range(1, ln + 1))
     loop = llab == (int(np.argmax(lsz)) + 1)
 
-    pts = np.argwhere(loop)                            # walk the ring pixel by pixel
-    remaining = {tuple(p) for p in pts}
-    cur = tuple(pts[0]); order = [cur]; remaining.discard(cur)
-    while True:
-        r, c = cur
-        nxt = next((cand for dr in (-1, 0, 1) for dc in (-1, 0, 1)
-                    if (dr or dc) and (cand := (r + dr, c + dc)) in remaining), None)
-        if nxt is None:
-            break
-        order.append(nxt); remaining.discard(nxt); cur = nxt
-    if remaining:
-        print(f"WARNING: centerline walk left {len(remaining)} pixels unvisited", file=sys.stderr)
+    order = _order_loop(loop)
     raw = np.array([tm.px2world(r, c) for r, c in order])
     return resample_closed(raw[:, 0], raw[:, 1], n_points, smooth=smooth)
+
+
+def _order_loop(loop):
+    """Order the pixels of a (pruned) skeleton ring into one closed walk.
+
+    Not a greedy neighbour walk: a skeleton keeps small thick spots after
+    pruning, and a greedy walk that picks the first free neighbour strands
+    itself at one of them and stops, after which resample_closed joins the
+    dead end back to the start THROUGH WALLS. On the ICRA 2026 switchback that
+    dropped the whole left third of the lap and cut across the duct. Instead:
+    BFS from a start pixel to its antipode (the farthest pixel along the
+    ring), take that shortest path as one half, delete its interior, and BFS
+    again for the other half. Shortest paths never wander into thick spots or
+    leftover spurs, and the union is the ring. Pixels off both halves are the
+    artifacts, reported but harmless.
+    """
+    from collections import deque
+    pts = [tuple(p) for p in np.argwhere(loop)]
+    on = set(pts)
+    nbrs = lambda p: [(p[0] + dr, p[1] + dc) for dr in (-1, 0, 1) for dc in (-1, 0, 1)
+                      if (dr or dc) and (p[0] + dr, p[1] + dc) in on]
+
+    def bfs(start, blocked=frozenset()):
+        parent = {start: None}; q = deque([start])
+        while q:
+            cur = q.popleft()
+            for nb in nbrs(cur):
+                if nb not in parent and nb not in blocked:
+                    parent[nb] = cur; q.append(nb)
+        return parent
+
+    start = pts[0]
+    par = bfs(start)
+    far = max(par, key=lambda p: _bfs_depth(par, p))
+    half1 = _chain(par, far)                         # start -> far
+    par2 = bfs(start, blocked=frozenset(half1[1:-1]))
+    if far not in par2:
+        print("WARNING: skeleton is not a ring; falling back to one half", file=sys.stderr)
+        return half1
+    half2 = _chain(par2, far)                        # start -> far the other way round
+    order = half1 + half2[::-1][1:-1]
+    missed = len(on) - len(set(order))
+    if missed:
+        print(f"note: {missed} skeleton pixels off the ring (thick spots/spurs), ignored", file=sys.stderr)
+    return order
+
+
+def _chain(parent, node):
+    out = []
+    while node is not None:
+        out.append(node); node = parent[node]
+    return out[::-1]
+
+
+def _bfs_depth(parent, node):
+    d = 0
+    while parent[node] is not None:
+        node = parent[node]; d += 1
+    return d
 
 
 def export_centerline(cx, cy, tm: TrackMap, out_dir: Path, lim: ProfileLimits, phys: SimPhysics = PHYS):

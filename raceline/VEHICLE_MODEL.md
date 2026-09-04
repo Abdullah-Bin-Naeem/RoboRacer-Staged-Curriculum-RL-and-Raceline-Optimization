@@ -385,6 +385,20 @@ for slam_toolbox, whose ±0.5 m correlative search has less room than AMCL's
 
 ## 7. History and results
 
+### ICRA 2026 track (branch `multi-track`)
+
+| run | line | laps | best / mean | note |
+|---|---|---|---|---|
+| icra 1 | a4.0, v_max 7.0 | 8 | 14.70 / 14.75 | first drive after mapping: clean, seed 1.6 cm; no log (logger had a pre-layout map path, fixed) |
+| icra 2 | a4.0, v_max 7.0 | 13 | 14.70 / 14.75 | clean; tracking 0.062 m, equal-time localization 0.115 m, bias +0.05 inside, delay 172 ms = three frames at 17.7 Hz. The car model and controller transferred unchanged |
+| zone | a4.0 ladder regenerated with `--margin-zones 45.5:51.5:L:0.20` | | | 14.23 predicted | run 2 ran 0.02-0.07 m from the outer wall on every lap at the hairpin exit (s 48-50, car 0.10-0.13 m outside the line, line 0.26 m from the wall): Porto's R1 pattern. Line now 0.43 m off that wall, 0.5 m shorter, 0.09 s faster on paper |
+| icra 3 | a4.0 zoned, v_max 7.0 | 4 | 14.65 / 14.69 | clean; zone validated: clearance at the hairpin exit 0.02 -> 0.20 m. Tightest spot now 0.11 m at s 36, the car cutting 0.14 m inside the middle-wall hairpin at 3.3 m/s (lookahead chord; safe direction, watch on the climb). Ladder climb starts |
+| icra 4 | a5.0, v_max 7.0 | 5 | 13.45 / 13.47 | clean; bias +0.06 inside; hairpin-exit zone 0.17 m; s 36 inside cut unchanged at 0.11 m across rungs, so geometric (lookahead chord), to get an inside zone after the climb |
+| note | | | | | Correction: the s 36 spot is not a cut. Per-sample, the car is on the line to 2 cm and the line runs along that lane's right wall at the design margin; the "+0.17 inside" was a 5 m section average mixing the hairpin with the straight. No zone there. A per-side clearance clamp was added to the width cast as a guard for walls ahead of the normal, but the failure that prompted it did not exist |
+
+### Porto
+
+
 - 2026-09-03: model derived from source; raceline pipeline reviewed and
   rebuilt (`optimize_raceline.py`), lines re-exported.
 - 2026-09-04: controller and localization changes driven by six logged runs.

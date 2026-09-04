@@ -83,6 +83,9 @@ TRACKS = {
         # the line ran 0.26 m from the outer wall there, leaving 0.02 m. Extra
         # left margin over that exit puts the line at 0.43 m and the car at
         # 0.32 m; the re-solved line is shorter and predicts 0.09 s faster.
+        # The other tight spot, 0.11 m at s 36, is NOT a drift: the car sits on
+        # the line to 2 cm and the line runs along that lane's right wall at the
+        # design margin, as it does in places on Porto. No zone there.
         'margin_zones': '45.5:51.5:L:0.20',
     },
 }

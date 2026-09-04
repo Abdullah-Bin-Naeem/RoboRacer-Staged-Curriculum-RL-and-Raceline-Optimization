@@ -168,8 +168,14 @@ class TrackMap:
             f.readline()
             self.img = np.frombuffer(f.read(self.W * self.H), dtype=np.uint8).reshape(self.H, self.W)
         self.free = self.img >= 254
-        # metres from each free cell to the nearest non-free cell; 0 outside free space
+        # metres from each free cell to the nearest non-free cell; 0 outside free space,
+        # plus WHICH cell that is, so widths() can tell which side it lies on
         self.dist = ndimage.distance_transform_edt(self.free) * self.res
+        # every non-free cell centre, for per-side nearest-wall queries in widths()
+        rr, cc = np.nonzero(~self.free)
+        wx, wy = self.px2world(rr, cc)
+        from scipy.spatial import cKDTree
+        self._walls = cKDTree(np.c_[wx, wy])
 
     # PGM row 0 is the top of the image = max world y
     def px2world(self, r, c):
@@ -204,7 +210,29 @@ class TrackMap:
                 if not alive.any():
                     break
             out.append(d)
-        return out[0], out[1]
+        w_right, w_left = out
+        # A ray along the normal can miss a wall that lies AHEAD of it, such as
+        # the free end of a duct on a hairpin approach, and then the solver's
+        # corridor, the follower's chord bound and any margin zone all believe
+        # in room that is not there. So each side's width is also capped by the
+        # nearest wall cell on THAT side within max_r. (A single-nearest-cell
+        # rule is not enough: the other side's wall can be marginally closer.)
+        # Guard, not a fix for a seen failure: the ICRA 2026 spot that prompted
+        # it turned out to be the line running along a side wall at the design
+        # margin, which the normal ray had seen all along.
+        cpsi, spsi = np.cos(psi), np.sin(psi)
+        for i, hits in enumerate(self._walls.query_ball_point(np.c_[x, y], max_r)):
+            if not hits:
+                continue
+            pts = self._walls.data[hits]
+            vx, vy = pts[:, 0] - x[i], pts[:, 1] - y[i]
+            dist = np.hypot(vx, vy)
+            left = (cpsi[i] * vy - spsi[i] * vx) > 0.0
+            if left.any():
+                w_left[i] = min(w_left[i], dist[left].min())
+            if (~left).any():
+                w_right[i] = min(w_right[i], dist[~left].min())
+        return w_right, w_left
 
 
 # --------------------------------------------------------------------------- #

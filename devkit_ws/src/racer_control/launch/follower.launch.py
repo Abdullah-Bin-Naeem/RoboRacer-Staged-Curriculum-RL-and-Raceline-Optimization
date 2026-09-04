@@ -36,14 +36,31 @@ from racer_common.frames import DEFAULT_RACELINE, NS
 # CSV, speed is derived from the worst curvature within this distance. Braking
 # 8.0 -> 1.8 m/s takes ~6 m, so a 1 m preview means the car meets the corner at
 # full speed. Irrelevant when the path carries its own velocity profile.
-TUNABLES = ('lookahead_min', 'lookahead_max', 'lookahead_k',
+#
+# KEEP IN STEP with racer_bringup/launch/race.launch.py, which passes the same
+# names through. A name listed there but not here is dropped silently.
+TUNABLES = ('lookahead_min', 'lookahead_max', 'lookahead_k', 'lookahead_curv_gain', 'lookahead_sag_frac',
+            'lookahead_delay_ref', 'derate_delay_from', 'derate_delay_to', 'derate_a_lat',
+            'steer_a_lat_max',
             'v_max', 'a_lat_max', 'throttle_max', 'steering_gain',
-            'curvature_preview_m')
+            'curvature_preview_m',
+            # slip throttle and fused speed (see pure_pursuit.py docstring)
+            'slip_accel', 'slip_brake', 'u_launch', 'u_per_throttle', 'v_slip_den', 'tire_rise_slope',
+            'cmd_delay_s', 'slip_kp', 'target_lead_s',
+            # control loop rate; 20 matches the 17.5 Hz sim tick seen here, raise it
+            # with the tick (headless sim, faster machine) so the loop is not the limit
+            'control_hz',
+            'pose_speed_window', 'pose_speed_gain', 'pose_corr_max', 'imu_lever_arm', 'latency_comp_s',
+            # legacy launch ramp
+            'a_long_launch', 'a_long_launch_v')
+# String-valued switches, passed through without the float() cast.
+STR_TUNABLES = ('speed_source', 'throttle_mode')
 
 
 def _nodes(context, *args, **kwargs):
     cfg = lambda n: LaunchConfiguration(n).perform(context)
     overrides = {n: float(cfg(n)) for n in TUNABLES if cfg(n) != ''}
+    overrides.update({n: cfg(n) for n in STR_TUNABLES if cfg(n) != ''})
     if overrides:
         print(f'[pure_pursuit] launch overrides: {overrides}')
 
@@ -94,6 +111,6 @@ def generate_launch_description():
     ]
     args += [DeclareLaunchArgument(n, default_value='',
                                    description='override the params file value')
-             for n in TUNABLES]
+             for n in TUNABLES + STR_TUNABLES]
 
     return LaunchDescription(args + [OpaqueFunction(function=_nodes)])

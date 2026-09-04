@@ -107,6 +107,25 @@ class DeadReckoning(Node):
         # 300 sits above any plausible gap and below a lap's accumulation.
         # A reset also invalidates AMCL's pose, so re-seed the filter too.
         p('max_wheel_step', 300.0)
+        # Extrapolate the IMU heading to each transform's stamp with the IMU's own
+        # yaw rate. Otherwise the heading in odom->base lags the scan by up to one
+        # 18 Hz tick: the (post-dated) transform that covers scan k was published
+        # before tick k's messages arrived, so it carries heading k-1. At the
+        # S-curve's 2.7 rad/s that is 8 deg, and AMCL absorbs it by rotating
+        # map->odom -- measured as +-8..14 deg swings of m2o_yaw with 0.5-1.1 m of
+        # cross error at s ~ 20 m on every run, i.e. the wall hits there. Over the
+        # <= 75 ms involved a measured rate is good to ~0.01 rad.
+        p('extrapolate_yaw', True)
+        # The same for POSITION. The transform that covers scan k carries the
+        # integrated position of frame k-1 as well, so AMCL pairs each scan with
+        # odometry one frame old and pushes map->odom forward by a frame of
+        # travel wherever the walls constrain the along-track direction.
+        # Measured (runs 16-22, 13-18 Hz alike): the estimate LEADS the true
+        # position by 35-40 ms x speed, 0.30 m at 6.5 m/s, and shifting the
+        # truth by 40 ms takes the along error from 0.21 to 0.08 m rms with no
+        # residual offset. Carrying the position forward by the wheel speed to
+        # each stamp removes the mismatch. Capped at 0.1 s like the heading.
+        p('extrapolate_pos', True)
 
         g = lambda n: self.get_parameter(n).value
         self.wheel_r = g('wheel_radius')
@@ -115,6 +134,10 @@ class DeadReckoning(Node):
         self.scale = g('distance_scale')
         self.tf_tol = float(g('transform_tolerance'))
         self.max_step = float(g('max_wheel_step'))
+        self.extrapolate_yaw = bool(g('extrapolate_yaw'))
+        self.extrapolate_pos = bool(g('extrapolate_pos'))
+        self._imu_t = None              # stamp of the heading in self.yaw
+        self._enc_t = None              # stamp of the newest encoder message banked into x, y
 
         self.x = self.y = 0.0
         self.yaw = None                 # from IMU; None until the first message
@@ -139,7 +162,8 @@ class DeadReckoning(Node):
         self.get_logger().info(
             f'dead reckoning: {self.odom_frame} -> {self.base_frame}, '
             f'wheel r={self.wheel_r} m, scale={self.scale}, '
-            f'{g("publish_rate"):.0f} Hz, tf +{self.tf_tol * 1e3:.0f} ms')
+            f'{g("publish_rate"):.0f} Hz, tf +{self.tf_tol * 1e3:.0f} ms, '
+            f'extrapolate yaw={self.extrapolate_yaw} pos={self.extrapolate_pos}')
 
     def _cb_enc(self, side, msg):
         """position is cumulative wheel angle in RADIANS (measured, not ticks)."""
@@ -165,6 +189,7 @@ class DeadReckoning(Node):
                 f'treating as a reset, not travel. AMCL needs re-seeding.')
             return
         self._ds[side] = self._ds.get(side, 0.0) + dang * self.wheel_r
+        self._enc_t = t if self._enc_t is None else max(self._enc_t, t)
 
         # ---- speed: reported in twist.linear.x, never integrated ----
         dt = t - prev[1]
@@ -178,6 +203,27 @@ class DeadReckoning(Node):
     def _cb_imu(self, msg):
         self.yaw = yaw_from_quat(msg.orientation)
         self.yaw_rate = msg.angular_velocity.z
+        self._imu_t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+
+    def _yaw_at(self, t):
+        """Heading at time t: the last IMU heading carried forward by its rate.
+
+        Capped at 0.1 s so a stalled IMU cannot spin the estimate.
+        """
+        if not self.extrapolate_yaw or self._imu_t is None:
+            return self.yaw
+        return self.yaw + self.yaw_rate * max(0.0, min(t - self._imu_t, 0.1))
+
+    def _pos_at(self, t):
+        """Position at time t: the integrated position carried forward by the
+        wheel speed along the heading, see extrapolate_pos. Capped at 0.1 s so
+        a stalled encoder cannot run the estimate away."""
+        if not self.extrapolate_pos or self._enc_t is None:
+            return self.x, self.y
+        dt = max(0.0, min(t - self._enc_t, 0.1))
+        yaw = self._yaw_at(self._enc_t + 0.5 * dt)
+        return (self.x + self.speed * dt * math.cos(yaw),
+                self.y + self.speed * dt * math.sin(yaw))
 
     def _consume_ds(self):
         """Metres travelled since the last tick, averaged over the wheels.
@@ -218,25 +264,32 @@ class DeadReckoning(Node):
         # nothing looks that up by time.
         tf_stamp = (now + rclpy.duration.Duration(
             seconds=self.tf_tol)).to_msg() if self.tf_tol > 0.0 else stamp
-        half = self.yaw / 2.0
-        qz, qw = math.sin(half), math.cos(half)
+        # Heading AT the stamp each message carries, not the heading of the last
+        # IMU tick: see extrapolate_yaw. The position integration above keeps the
+        # measured heading, because the encoder distance it moves was measured
+        # in the same bridge tick as that heading.
+        t_tf = t + (self.tf_tol if self.tf_tol > 0.0 else 0.0)
+        half_tf = self._yaw_at(t_tf) / 2.0
+        half_od = self._yaw_at(t) / 2.0
+        x_tf, y_tf = self._pos_at(t_tf)
+        x_od, y_od = self._pos_at(t)
 
         if self.publish_tf:
             tf = TransformStamped()
             tf.header.stamp = tf_stamp
             tf.header.frame_id = self.odom_frame
             tf.child_frame_id = self.base_frame
-            tf.transform.translation.x = self.x
-            tf.transform.translation.y = self.y
-            tf.transform.rotation.z, tf.transform.rotation.w = qz, qw
+            tf.transform.translation.x = x_tf
+            tf.transform.translation.y = y_tf
+            tf.transform.rotation.z, tf.transform.rotation.w = math.sin(half_tf), math.cos(half_tf)
             self.tfb.sendTransform(tf)
 
         od = Odometry()
         od.header.stamp = stamp
         od.header.frame_id = self.odom_frame
         od.child_frame_id = self.base_frame
-        od.pose.pose.position.x, od.pose.pose.position.y = self.x, self.y
-        od.pose.pose.orientation.z, od.pose.pose.orientation.w = qz, qw
+        od.pose.pose.position.x, od.pose.pose.position.y = x_od, y_od
+        od.pose.pose.orientation.z, od.pose.pose.orientation.w = math.sin(half_od), math.cos(half_od)
         od.twist.twist.linear.x = self.speed
         od.twist.twist.angular.z = self.yaw_rate
         # Position is dead-reckoned and drifts; heading comes from an absolute

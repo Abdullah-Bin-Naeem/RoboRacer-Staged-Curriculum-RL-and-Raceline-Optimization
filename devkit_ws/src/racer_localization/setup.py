@@ -25,6 +25,7 @@ setup(
             'dead_reckoning = racer_localization.dead_reckoning:main',
             'localization_bootstrap = racer_localization.localization_bootstrap:main',
             'localization_error = racer_localization.localization_error:main',
+            'log_localization = racer_localization.log_localization:main',
         ],
     },
 )

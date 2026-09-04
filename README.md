@@ -37,19 +37,29 @@ run used a different episode cap):
 **38.7 hours** of training across six runs. Best policy is stage 3: 9.6% faster
 than stage 2, race-legal, and crash-free over three full episodes.
 
-### Classical stack (predicted, from the raceline notebooks)
+### Classical stack (measured, AMCL + pure pursuit, race-legal sensors)
 
-| line | length | \|κ\| max | lap |
-|---|---|---|---|
-| centerline | 30.93 m | 0.92 | 7.580 s |
-| min-curvature (scipy) | 27.72 m | 1.00 | **6.813 s** |
-| min-curvature (TUM `tph`) | 27.54 m | 1.07 | 7.000 s |
+Minimum-curvature line on the SLAM map, velocity profile from the simulator's
+own tire and drag model (`raceline/VEHICLE_MODEL.md`), AMCL on LiDAR + IMU +
+encoders, pure pursuit with a tire-observer speed estimate and a slip-band
+throttle placed one measured round trip ahead. Laps are timed from the log by
+track position, on this laptop; the loop's round trip is three simulator
+frames (175 ms at 17.6 Hz).
 
-Both optimized lines beat the centerline by ~8–10%, almost entirely by
-shortening the path — the corridor is 1.40 m wide on a 0.27 m car, so there is
-little room for geometry to do more. These times assume a lateral grip limit
-that has not yet been measured on the vehicle, so treat the *comparison* as
-sound and the absolute numbers as provisional.
+| line (a_lat) | simulator | tick | laps | best | mean | note |
+|---|---|---|---|---|---|---|
+| 7.0 m/s² | headless | 19.3 Hz | 7 clean | **6.50 s** | 6.58 s | run 38; longitudinal profile 5.0 m/s², wall clearance 0.07 m |
+| 7.0 m/s² | headless | 20.3 Hz | 9 clean | 6.58 s | 6.63 s | run 29; longitudinal profile 4.55 m/s² |
+| 7.0 m/s² | graphics | 17.6 Hz | 12 clean | 6.60 s | 6.69 s | run 28; 69 consecutive clean laps, runs 25–29 |
+| 6.5 m/s² | headless | 19.8 Hz | 32 clean | 6.65 s | 6.71 s | run 40; the safe default, 5.0 profile, corner bias −0.01 |
+| profile prediction, 7.0 | | | | 6.36 s | | at the 5.0 longitudinal limit; assumes instant commands |
+
+The track's best known lap is 6.46 s. What remains is the round trip: the car
+brakes early to keep the tire on the line in the two tightest corners and
+runs 2–3 % under the profile through them. On a slower machine the follower
+measures its own delay and derates the speed targets rather than the wall
+margin (`derate_*` in `pure_pursuit.yaml`). Every run and every change, in
+order, is in `raceline/VEHICLE_MODEL.md` §7.
 
 ---
 

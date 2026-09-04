@@ -1,109 +1,59 @@
 #!/usr/bin/env python3
+"""Re-profile an existing raceline's GEOMETRY at a ladder of lateral limits.
 
-"""Re-profile an existing raceline at several aggression levels.
+The line's geometry comes from minimising curvature and does not depend on grip;
+only the velocity profile does. So rather than re-solving, this reuses the
+geometry and recomputes speeds at a ladder of limits under the simulator's own
+physics (optimize_raceline.SimPhysics, from VEHICLE_MODEL.md).
 
-The line's GEOMETRY comes from minimising curvature and does not depend on grip
-at all -- only the velocity profile does. So rather than re-solving, this reuses
-the geometry and recomputes speeds at a ladder of limits.
+optimize_raceline.py already exports this ladder for the line it produces. Use
+this for any OTHER line: a hand-edited CSV, a logged RL trace, an old export.
+
+    python make_speed_variants.py raceline_tum.csv                 # -> raceline_tum_a4.0.csv ...
+    python make_speed_variants.py some_line.csv --ladder 3.5,4.0,4.5
 
 Point the follower at each in turn and note where the car first runs wide. That
-is your real a_lat, measured through lap testing instead of guessed.
-
-    python make_speed_variants.py                    # default ladder
-    python make_speed_variants.py raceline_tum.csv   # a different base line
+is the real usable a_lat, measured instead of guessed. Measured so far (see
+VEHICLE_MODEL.md §3.2): p90 4.74 m/s² while tracking, the 6.0 rung washed wide
+at 5.5, and the tire's asymptote, 4.90, is the physical ceiling.
 """
-
+import argparse
 import sys
 from pathlib import Path
 
-import numpy as np
-import trajectory_planning_helpers as tph
-import yaml
-from scipy import ndimage
-
-HERE = Path(__file__).parent
-MAP = Path.home() / "Documents/roboracer/devkit_ws/src/racer_mapping/maps/track_clean"
-
-MASS = 3.906
-DRAG_COEFF = 0.05
-DYN_MODEL_EXP = 2.0          # traction ellipse
-VEHICLE_WIDTH = 0.27
-
-# (a_lat, a_long, v_max) -- climb until the car cannot hold the line.
-LADDER = [
-    (6.0, 5.0, 8.0),
-    (8.0, 6.5, 10.0),
-    (10.0, 8.0, 12.0),
-    (12.0, 9.5, 14.0),
-    (15.0, 11.0, 16.0),
-]
-
-base_name = sys.argv[1] if len(sys.argv) > 1 else "raceline_scipy.csv"
-src = HERE / base_name
-
-# --- map, for the clearance check -------------------------------------------
-meta = yaml.safe_load(open(MAP.with_suffix(".yaml")))
-res_m, (ox, oy, _) = meta["resolution"], meta["origin"]
-with open(MAP.with_suffix(".pgm"), "rb") as f:
-    f.readline()
-    Wm, Hm = map(int, f.readline().split())
-    f.readline()
-    img = np.frombuffer(f.read(Wm * Hm), dtype=np.uint8).reshape(Hm, Wm)
-DIST = ndimage.distance_transform_edt(img >= 254) * res_m
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from optimize_raceline import (DEFAULT_MAP, PHYS, ProfileLimits, TrackMap,  # noqa: E402
+                               export_csv, load_xy, score_line, velocity_profile)
 
 
-def margin_of(x, y):
-    """Worst clearance minus half the car width. Negative means it hits a wall."""
-    c = np.clip(((x - ox) / res_m - 0.5).round().astype(int), 0, Wm - 1)
-    r = np.clip((Hm - (y - oy) / res_m - 0.5).round().astype(int), 0, Hm - 1)
-    return float(DIST[r, c].min() - VEHICLE_WIDTH / 2)
+def main():
+    p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    p.add_argument("csv", type=Path, help="line to re-profile (s,x,y,... layout; only x,y are used)")
+    p.add_argument("--ladder", default="4.0,4.5,4.9", help="a_lat rungs [m/s^2]")
+    p.add_argument("--a-long", type=float, default=PHYS.a_long_robust0)
+    p.add_argument("--v-max", type=float, default=8.0)
+    p.add_argument("--map", type=Path, default=DEFAULT_MAP)
+    a = p.parse_args()
+
+    tm = TrackMap(a.map)
+    x, y = load_xy(a.csv)
+    base = score_line(x, y, tm, ProfileLimits(a_long=a.a_long, v_max=a.v_max), PHYS, a.csv.stem)
+    print(f"{a.csv.name}: {base['n']} points, {base['length']:.2f} m, |k|max {base['kmax']:.3f}, "
+          f"body margin {base['body_margin']:+.3f} m, steering {base['steer_rate_max']:.2f} rad/s "
+          f"(limit {PHYS.steer_rate})")
+    if base["body_margin"] < 0.0:
+        print("WARNING: this geometry puts the car body inside a wall; the profile will not save it")
+
+    print(f"\n{'a_lat':>6}{'lap':>9}{'v max':>7}   file")
+    for rung in [float(v) for v in a.ladder.split(",")]:
+        lim = ProfileLimits(a_lat=rung, a_long=a.a_long, v_max=a.v_max)
+        vx, ax, t = velocity_profile(base["kappa"], base["el"], lim)
+        out = export_csv(a.csv.with_name(f"{a.csv.stem}_a{rung:.1f}.csv"), dict(base, vx=vx, ax=ax, t=t), tm)
+        print(f"{rung:6.1f}{t:8.3f}s{vx.max():7.2f}   {out.name}")
+
+    print("\nGeometry is identical across all of them; only the speed profile changes.")
+    print("Run them in order. The first one the car cannot hold gives you the real grip limit.")
 
 
-# --- geometry, reused unchanged ---------------------------------------------
-D = np.loadtxt(src, delimiter=",")
-x, y, w_right, w_left = D[:, 1], D[:, 2], D[:, 5], D[:, 6]
-
-closed = np.vstack([np.column_stack([x, y]), [x[0], y[0]]])
-coeffs_x, coeffs_y, _, _ = tph.calc_splines.calc_splines(path=closed)
-el = tph.calc_spline_lengths.calc_spline_lengths(coeffs_x=coeffs_x, coeffs_y=coeffs_y)
-_, kappa = tph.calc_head_curv_an.calc_head_curv_an(
-    coeffs_x=coeffs_x, coeffs_y=coeffs_y, ind_spls=np.arange(len(coeffs_x)),
-    t_spls=np.zeros(len(coeffs_x)), calc_curv=True)
-
-s = np.concatenate([[0.0], np.cumsum(el)[:-1]])
-psi = np.arctan2(np.gradient(y), np.gradient(x))
-
-print(f"base: {src.name}  {len(x)} points, {el.sum():.2f} m, "
-      f"|kappa|max {np.abs(kappa).max():.3f}, margin {margin_of(x, y):+.3f} m")
-print(f"\n{'a_lat':>6}{'a_long':>7}{'v_max':>7}{'v peak':>8}{'lap':>9}{'gain':>8}   file")
-
-t_ref = None
-for a_lat, a_long, v_max in LADDER:
-    ggv = np.array([[0.0, a_long, a_lat], [v_max, a_long, a_lat]])
-    axm = np.array([[0.0, a_long], [v_max, a_long]])
-
-    vx = tph.calc_vel_profile.calc_vel_profile(
-        ax_max_machines=axm, kappa=kappa, el_lengths=el, closed=True,
-        drag_coeff=DRAG_COEFF, m_veh=MASS, ggv=ggv,
-        dyn_model_exp=DYN_MODEL_EXP, mu=None, v_max=v_max)
-
-    # calc_ax/t_profile want one more speed sample than segments
-    vx_open = np.append(vx, vx[0])
-    ax = tph.calc_ax_profile.calc_ax_profile(
-        vx_profile=vx_open, el_lengths=el, eq_length_output=False)
-    t = float(tph.calc_t_profile.calc_t_profile(
-        vx_profile=vx_open, ax_profile=ax, el_lengths=el)[-1])
-    if t_ref is None:
-        t_ref = t
-
-    out = HERE / f"{src.stem}_a{a_lat:g}.csv"
-    np.savetxt(out, np.column_stack([s, x, y, psi, kappa, w_right, w_left, vx]),
-               delimiter=",", fmt="%.5f",
-               header="s_m,x_m,y_m,psi_rad,kappa_radpm,w_right_m,w_left_m,v_mps",
-               comments="# ")
-    print(f"{a_lat:6.1f}{a_long:7.1f}{v_max:7.1f}{vx.max():8.2f}{t:8.3f}s"
-          f"{t - t_ref:+8.3f}   {out.name}")
-
-print("\nGeometry is identical across all of them -- only the speed profile changes.")
-print("Run them in order. The first one the car cannot hold gives you the real")
-print("grip limit; back off one step and use that.")
+if __name__ == "__main__":
+    main()

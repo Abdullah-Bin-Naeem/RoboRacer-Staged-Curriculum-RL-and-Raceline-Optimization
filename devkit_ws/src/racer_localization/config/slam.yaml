@@ -86,14 +86,80 @@ slam_toolbox:
     link_match_minimum_response_fine: 0.1
     link_scan_maximum_distance: 1.5
 
-    # Loop closure is a MAPPING concern -- it corrects a graph being built.
-    # In localization the graph is fixed, so this is off.
-    do_loop_closing: false
-    loop_search_maximum_distance: 3.0
+    # THE LINE THAT MAKES LOCALIZATION LOCALIZE, rather than quietly turn into
+    # open-loop scan-to-scan odometry.
+    #
+    # It used to be false, reasoning that "loop closure is a MAPPING concern --
+    # it corrects a graph being built, and in localization the graph is fixed."
+    # That is backwards. In localization mode karto's per-scan matcher runs
+    # against GetRunningScans() -- the rolling buffer of RECENT scans
+    # (scan_buffer_size, 10 of them, ~1 m of history at minimum_travel_distance
+    # 0.1). Matching a scan to the last metre of its own history is incremental
+    # odometry: locally excellent, globally unmoored. The stored graph is only
+    # consulted through the loop-closure path, and TryCloseLoop -> CorrectPoses
+    # is what actually re-anchors the estimate to the map that was loaded.
+    #
+    # With it off, MEASURED over 34 laps of RL driving (drift.csv):
+    #     map->odom yaw   -0.00 -> +385 deg, ~11 deg per lap, MONOTONIC
+    #     position error  mean 4.67 m, max 13.65 m
+    #     estimate range  x [-6.30, +6.12] m, on a map spanning x [-3.69, +1.56]
+    # First lap was fine (0.4-0.8 m) and every lap after it was worse, which is
+    # the signature of an estimate with nothing pulling it back. Correlation of
+    # the per-sample drift with yaw_rate was +0.005, so this is not a timing or
+    # cornering effect -- there is simply no global correction happening.
+    do_loop_closing: true
+
+    # 1.5, NOT the 3.0 default, and the number comes from the track rather than
+    # from taste. This is the radius within which loop closure will consider a
+    # stored vertex as "the same place". Porto doubles back on itself, so a
+    # vertex 3 m away in space can be 12 m away along the lap -- a different
+    # stretch of corridor that looks much the same. Measured on
+    # centerline_full.csv, the minimum euclidean distance between two points
+    # more than 6 m apart along the lap is 1.81 m, and the share of the lap that
+    # has such a confusable neighbour inside the search radius is:
+    #
+    #     1.50 m ->  0.0%      2.00 m -> 16.0%      3.00 m -> 46.8%
+    #
+    # So at 3.0 loop closure could propose a false match on nearly half the lap,
+    # and with the thresholds below it accepted some: the first run with loop
+    # closing on showed the estimate snapping -29.6 deg in a single 50 ms sample
+    # and the error spiking to 6.2 m before recovering. Staying under the track's
+    # own 1.81 m self-clearance makes those candidates geometrically impossible
+    # rather than merely unlikely.
+    #
+    # It is still ample for finding the RIGHT vertices: they sit every 0.1 m
+    # (minimum_travel_distance), so 1.5 m covers ~30 of them, well past
+    # loop_match_minimum_chain_size.
+    loop_search_maximum_distance: 1.5
     loop_match_minimum_chain_size: 10
     loop_match_maximum_variance_coarse: 3.0
-    loop_match_minimum_response_coarse: 0.35
-    loop_match_minimum_response_fine: 0.45
+
+    # LOWERED from the 0.35/0.45 defaults, and only safe because of the radius
+    # above. These are how good a match has to be before the map is allowed to
+    # correct the estimate; lower = corrections fire more often.
+    #
+    # Why they need to be lower here. The per-scan matcher does NOT score
+    # against the map -- in localization mode it scores against
+    # GetRunningScans(), the rolling buffer of the last scan_buffer_size scans.
+    # Once the estimate has rotated a few degrees, that recent history is
+    # rotated with it, so the current pose IS the best fit to what it is being
+    # compared against. The matcher is perfectly happy and has no reason to
+    # rotate back. Nothing in that loop can see the error.
+    #
+    # The ONLY thing that compares against the loaded map is this loop-closure
+    # path, so if it declines to fire, the rotation simply persists. Measured
+    # (drift6.csv, 2.4 laps of RL driving, moving samples):
+    #     scan-to-wall fit at the TRUE pose       0.014 m   <- map is correct
+    #     scan-to-wall fit at the ESTIMATED pose  0.170 m   <- ~12x worse
+    #     estimate fits worse than truth in 94.9% of samples
+    # A pose 12x better exists and the matcher is not being told to go there.
+    #
+    # Raising the acceptance rate normally means risking false matches, which
+    # is exactly what bit us at loop_search_maximum_distance: 3.0. It does not
+    # here: at 1.5 m no false candidate is geometrically reachable, so the
+    # geometry does the rejecting and the response threshold no longer has to.
+    loop_match_minimum_response_coarse: 0.25
+    loop_match_minimum_response_fine: 0.30
 
     # ---- The correlative scan matcher's search window ----
     # RAISED from the mapping value of 0.5. The matcher searches a box of this
@@ -118,35 +184,31 @@ slam_toolbox:
     # multiplies it into the match response, so a bigger variance weakens the
     # pull toward the prior.
     #
-    # POSITION AND HEADING ARE NOT THE SAME PRIOR. This block used to treat them
-    # as one -- "dead reckoning is the known-weak link, so keep both loose" --
-    # and that is only half true:
+    # THE PRIOR IS NOT THE IMU HEADING. It is tempting to tighten the angular
+    # pair on the grounds that dead_reckoning's heading is exact -- it reads
+    # /imu's absolute quaternion, which in the bridge is the same variable
+    # published as /odom's ground-truth orientation. That argument is wrong,
+    # and it was tried: it made things worse. karto's search centre is the LAST
+    # CORRECTED POSE propagated by the odometry delta,
     #
-    #   position   IS dead reckoning. Encoders overread under slip (measured up
-    #              to ~3x under hard acceleration), so it really is weak and the
-    #              matcher really does have to overrule it. Stays loose.
-    #   heading    is NOT dead reckoning. dead_reckoning.py never integrates
-    #              yaw; it reads /imu's absolute quaternion, and in the bridge
-    #              that is the SAME variable published as /odom's ground-truth
-    #              orientation (autodrive.orientation_quaternion). So the
-    #              heading prior has zero error by construction.
+    #     Transform lastTransform(pLastScan->GetOdometricPose(),
+    #                             pLastScan->GetCorrectedPose());
+    #     pScan->SetCorrectedPose(lastTransform.TransformPose(
+    #                             pScan->GetOdometricPose()));
     #
-    # Leaving the angular pair loose let the matcher rotate away from a heading
-    # that was already exact. Because `odom` is yaw-locked to `world` and the
-    # map was built against that same ground truth, correct map->odom is a PURE
-    # TRANSLATION -- any rotation in it is pure error, and it was accumulating
-    # anticlockwise: the estimate crabbed left and the scan rotated off the map.
+    # so the prior already carries every bit of accumulated drift. Tightening
+    # the penalty pulls each match harder onto that drifting history and leaves
+    # it LESS able to snap back to the stored map. Measured over 34 laps with
+    # the tightened values: map->odom yaw walked +385 deg, ~11 deg per lap,
+    # monotonically, and the estimate ended up 4.5 m outside a map 5.25 m wide.
     #
-    # minimum_angle_penalty was the bigger half. It clamps the angular penalty
-    # from below, so at 0.9 an angular disagreement could never cost more than
-    # 10% of the match response -- the matcher rotated essentially for free.
-    # These are the mapping run's values, and for the same reason it uses them:
-    # there, too, the heading prior was ground truth.
-    distance_variance_penalty: 0.5      # position: still weak, still overruled
-    angle_variance_penalty: 0.2         # heading: exact, so hold the matcher to it
+    # So these stay loose: the matcher has to be free to disagree with a prior
+    # that is drifting. What re-anchors it to the map is do_loop_closing, above.
+    distance_variance_penalty: 0.5
+    angle_variance_penalty: 1.0
     fine_search_angle_offset: 0.00349
     coarse_search_angle_offset: 0.349
     coarse_angle_resolution: 0.0349
-    minimum_angle_penalty: 0.5          # 0.9 made the angular penalty inert
+    minimum_angle_penalty: 0.9
     minimum_distance_penalty: 0.5
     use_response_expansion: true

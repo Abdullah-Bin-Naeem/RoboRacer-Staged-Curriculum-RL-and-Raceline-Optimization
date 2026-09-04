@@ -1,0 +1,268 @@
+[INFO] [launch]: All log files can be found below /home/theflash/.ros/log/2026-09-04-20-18-50-418461-theflash-ASUS-TUF-Gaming-F15-FX507ZI4-FX507ZI-42662
+[INFO] [launch]: Default logging verbosity is set to INFO
+[INFO] [launch.user]: [race] mode=dev  localizer=amcl  instruments=ON  bootstrap=truth
+[INFO] [autodrive_bridge-1]: process started with pid [42664]
+[INFO] [dead_reckoning-2]: process started with pid [42666]
+[INFO] [amcl-5]: process started with pid [42672]
+[INFO] [localization_bootstrap-7]: process started with pid [42676]
+[INFO] [localization_error-8]: process started with pid [42678]
+[INFO] [log_localization-9]: process started with pid [42680]
+[INFO] [static_transform_publisher-3]: process started with pid [42668]
+[INFO] [map_server-4]: process started with pid [42670]
+[INFO] [lifecycle_manager-6]: process started with pid [42674]
+[INFO] [static_transform_publisher-10]: process started with pid [42682]
+[static_transform_publisher-3] 1788535130.476856 [0] static_tra: selected interface "lo" is not multicast-capable: disabling multicast
+[static_transform_publisher-3] [INFO] [1788535130.479372586] [lidar_tf]: Spinning until stopped - publishing transform
+[static_transform_publisher-3] translation: ('0.273300', '0.000000', '0.096000')
+[static_transform_publisher-3] rotation: ('0.000000', '0.000000', '0.000000', '1.000000')
+[static_transform_publisher-3] from 'roboracer_1' to 'lidar'
+[static_transform_publisher-10] 1788535130.480567 [0] static_tra: selected interface "lo" is not multicast-capable: disabling multicast
+[amcl-5] 1788535130.480572 [0]       amcl: selected interface "lo" is not multicast-capable: disabling multicast
+[lifecycle_manager-6] 1788535130.480593 [0] lifecycle_: selected interface "lo" is not multicast-capable: disabling multicast
+[static_transform_publisher-10] [INFO] [1788535130.483973427] [map_world_tf]: Spinning until stopped - publishing transform
+[static_transform_publisher-10] translation: ('0.000000', '0.000000', '0.000000')
+[static_transform_publisher-10] rotation: ('0.000000', '0.000000', '0.000000', '1.000000')
+[static_transform_publisher-10] from 'map' to 'world'
+[lifecycle_manager-6] [INFO] [1788535130.484083689] [lifecycle_manager_localization]: Creating
+[lifecycle_manager-6] [INFO] [1788535130.485382107] [lifecycle_manager_localization]: [34m[1mCreating and initializing lifecycle service clients[0m[0m
+[amcl-5] [0m[INFO] [1788535130.486037190] [amcl]: 
+[amcl-5] 	amcl lifecycle node launched. 
+[amcl-5] 	Waiting on external lifecycle transitions to activate
+[amcl-5] 	See https://design.ros2.org/articles/node_lifecycle.html for more information.[0m
+[amcl-5] [0m[INFO] [1788535130.486624791] [amcl]: Creating[0m
+[map_server-4] 1788535130.489861 [0] map_server: selected interface "lo" is not multicast-capable: disabling multicast
+[map_server-4] [INFO] [1788535130.495567056] [map_server]: 
+[map_server-4] 	map_server lifecycle node launched. 
+[map_server-4] 	Waiting on external lifecycle transitions to activate
+[map_server-4] 	See https://design.ros2.org/articles/node_lifecycle.html for more information.
+[map_server-4] [INFO] [1788535130.495668611] [map_server]: Creating
+[lifecycle_manager-6] [INFO] [1788535130.495744623] [lifecycle_manager_localization]: [34m[1mStarting managed nodes bringup...[0m[0m
+[lifecycle_manager-6] [INFO] [1788535130.495777148] [lifecycle_manager_localization]: [34m[1mConfiguring map_server[0m[0m
+[map_server-4] [INFO] [1788535130.511928671] [map_server]: Configuring
+[map_server-4] [INFO] [1788535130.512004890] [map_io]: Loading yaml file: /home/theflash/Documents/roboracer/devkit_ws/src/racer_mapping/maps/track_clean.yaml
+[map_server-4] [INFO] [1788535130.512263350] [map_io]: resolution: 0.05
+[map_server-4] [INFO] [1788535130.512276810] [map_io]: origin[0]: -3.71
+[map_server-4] [INFO] [1788535130.512283227] [map_io]: origin[1]: -8.61
+[map_server-4] [INFO] [1788535130.512288787] [map_io]: origin[2]: 0
+[map_server-4] [INFO] [1788535130.512294502] [map_io]: free_thresh: 0.25
+[map_server-4] [INFO] [1788535130.512300152] [map_io]: occupied_thresh: 0.65
+[map_server-4] [INFO] [1788535130.512306373] [map_io]: mode: trinary
+[map_server-4] [INFO] [1788535130.512313167] [map_io]: negate: 0
+[map_server-4] [INFO] [1788535130.512478129] [map_io]: Loading image_file: /home/theflash/Documents/roboracer/devkit_ws/src/racer_mapping/maps/track_clean.pgm
+[map_server-4] [INFO] [1788535130.515723069] [map_io]: Read map /home/theflash/Documents/roboracer/devkit_ws/src/racer_mapping/maps/track_clean.pgm: 108 X 316 map @ 0.05 m/cell
+[lifecycle_manager-6] [INFO] [1788535130.519075383] [lifecycle_manager_localization]: [34m[1mConfiguring amcl[0m[0m
+[amcl-5] [0m[INFO] [1788535130.519223932] [amcl]: Configuring[0m
+[amcl-5] [0m[INFO] [1788535130.519314276] [amcl]: initTransforms[0m
+[amcl-5] [0m[INFO] [1788535130.530546334] [amcl]: initPubSub[0m
+[amcl-5] [0m[INFO] [1788535130.532951688] [amcl]: Subscribed to map topic.[0m
+[lifecycle_manager-6] [INFO] [1788535130.535955536] [lifecycle_manager_localization]: [34m[1mActivating map_server[0m[0m
+[amcl-5] [0m[INFO] [1788535130.537070622] [amcl]: Received a 108 X 316 map @ 0.050 m/pix[0m
+[map_server-4] [INFO] [1788535130.536749443] [map_server]: Activating
+[map_server-4] [INFO] [1788535130.536954731] [map_server]: Creating bond (map_server) to lifecycle manager.
+[lifecycle_manager-6] [INFO] [1788535130.638547725] [lifecycle_manager_localization]: Server map_server connected with bond.
+[lifecycle_manager-6] [INFO] [1788535130.638587343] [lifecycle_manager_localization]: [34m[1mActivating amcl[0m[0m
+[amcl-5] [0m[INFO] [1788535130.638769677] [amcl]: Activating[0m
+[amcl-5] [0m[INFO] [1788535130.638864855] [amcl]: initialPoseReceived[0m
+[amcl-5] [0m[INFO] [1788535130.639008257] [amcl]: Setting pose (1788535130.639008): 0.710 0.020 -1.599[0m
+[amcl-5] [0m[INFO] [1788535130.642078956] [amcl]: Creating bond (amcl) to lifecycle manager.[0m
+[lifecycle_manager-6] [INFO] [1788535130.745046633] [lifecycle_manager_localization]: Server amcl connected with bond.
+[lifecycle_manager-6] [INFO] [1788535130.745093092] [lifecycle_manager_localization]: [34m[1mManaged nodes are active[0m[0m
+[lifecycle_manager-6] [INFO] [1788535130.745110755] [lifecycle_manager_localization]: [34m[1mCreating bond timer...[0m[0m
+[dead_reckoning-2] 1788535130.777203 [0] dead_recko: selected interface "lo" is not multicast-capable: disabling multicast
+[localization_error-8] 1788535130.787593 [0] localizati: selected interface "lo" is not multicast-capable: disabling multicast
+[log_localization-9] 1788535130.801439 [0] log_locali: selected interface "lo" is not multicast-capable: disabling multicast
+[dead_reckoning-2] [0m[INFO] [1788535130.815330013] [dead_reckoning]: dead reckoning: odom -> roboracer_1, wheel r=0.0581 m, scale=1.0, 200 Hz, tf +20 ms, extrapolate yaw=True pos=True[0m
+[localization_bootstrap-7] 1788535130.816985 [0] localizati: selected interface "lo" is not multicast-capable: disabling multicast
+[localization_error-8] [31m[ERROR] [1788535130.826853165] [localization_error]: RESTRICTED TOPIC: reading /autodrive/roboracer_1/odom (simulator ground-truth pose and twist) -- continuous comparison against TF map -> roboracer_1. This run is NOT race-legal; any lap time from it is a development number. See racer_common/restricted.py.[0m
+[localization_error-8] [0m[INFO] [1788535130.827219789] [localization_error]: sampling starts 1.0 s after /localization_ready; bootstrap is excluded (require_ready:=false to include it)[0m
+[log_localization-9] [31m[ERROR] [1788535130.848484462] [log_localization]: RESTRICTED TOPIC: reading /autodrive/roboracer_1/ips (simulator ground-truth position) -- continuous logging against the estimate. This run is NOT race-legal; any lap time from it is a development number. See racer_common/restricted.py.[0m
+[log_localization-9] [31m[ERROR] [1788535130.848840646] [log_localization]: RESTRICTED TOPIC: reading /autodrive/roboracer_1/odom (simulator ground-truth pose and twist) -- continuous logging against the estimate. This run is NOT race-legal; any lap time from it is a development number. See racer_common/restricted.py.[0m
+[log_localization-9] [0m[INFO] [1788535130.849208010] [log_localization]: logging to /home/theflash/Documents/roboracer/run37_a70_confirm.csv at 50 Hz until Ctrl-C[0m
+[localization_bootstrap-7] [0m[INFO] [1788535130.859341808] [localization_bootstrap]: WARMUP SEED: reading /autodrive/roboracer_1/ips (simulator ground-truth position) ONCE -- initial pose seed. Legal: the first lap is warmup, this is read before the car moves, and it is released immediately after. Nothing reads ground truth afterwards.[0m
+[localization_bootstrap-7] [0m[INFO] [1788535130.859655424] [localization_bootstrap]: mode=truth: seeding the initial pose from /ips + /imu before the car moves, then releasing /ips. Tracking is lidar + map + dead reckoning from there on.[0m
+[localization_bootstrap-7] [0m[INFO] [1788535130.859835285] [localization_bootstrap]: waiting for amcl to reach the active state before sending anything[0m
+[localization_error-8] [0m[INFO] [1788535130.864105167] [localization_error]: waiting for TF map -> roboracer_1: Could not find a connection between 'map' and 'roboracer_1' because they are not part of the same tree.Tf has two or more unconnected trees.[0m
+[localization_bootstrap-7] [0m[INFO] [1788535130.911740973] [localization_bootstrap]: amcl is ACTIVE -- an initial pose will now be accepted[0m
+[autodrive_bridge-1] 1788535131.036545 [0] autodrive_: selected interface "lo" is not multicast-capable: disabling multicast
+[pure_pursuit] launch overrides: {'control_hz': 40.0}
+[INFO] [pure_pursuit-11]: process started with pid [42877]
+[pure_pursuit-11] 1788535132.769064 [0] pure_pursu: selected interface "lo" is not multicast-capable: disabling multicast
+[pure_pursuit-11] [0m[INFO] [1788535132.809307755] [pure_pursuit]: path: 400 points, 27.82 m lap, from /home/theflash/Documents/roboracer/raceline/raceline_a7.0.csv[0m
+[pure_pursuit-11] [0m[INFO] [1788535132.812013388] [pure_pursuit]: pose from TF map -> roboracer_1 (continuous); /amcl_pose kept as a fallback[0m
+[pure_pursuit-11] [0m[INFO] [1788535132.812879262] [pure_pursuit]: steering on /amcl_pose[0m
+[pure_pursuit-11] [0m[INFO] [1788535132.814393468] [pure_pursuit]: speed_source=tire  throttle_mode=slip  slip band [-0.08, +0.08]  u_launch 0.4 m/s  lookahead 0.8-2.2 m (k 0.55)  latency_comp 0.05 s[0m
+[pure_pursuit-11] [33m[WARN] [1788535132.814619642] [pure_pursuit]: dev_lap_telemetry ON: subscribing to RESTRICTED lap topics[0m
+[pure_pursuit-11] [0m[INFO] [1788535132.815409525] [pure_pursuit]: holding until /localization_ready[0m
+[localization_bootstrap-7] [0m[INFO] [1788535132.860701284] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_bootstrap-7] [0m[INFO] [1788535134.860478553] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_error-8] [0m[INFO] [1788535135.814562307] [localization_error]: waiting for TF map -> roboracer_1 ...[0m
+[localization_bootstrap-7] [0m[INFO] [1788535136.860619342] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_bootstrap-7] [0m[INFO] [1788535138.860384676] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_error-8] [0m[INFO] [1788535140.814611993] [localization_error]: waiting for TF map -> roboracer_1 ...[0m
+[localization_bootstrap-7] [0m[INFO] [1788535140.860373160] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_bootstrap-7] [0m[INFO] [1788535142.860354581] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_bootstrap-7] [0m[INFO] [1788535144.860408535] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_error-8] [0m[INFO] [1788535145.814579025] [localization_error]: waiting for TF map -> roboracer_1 ...[0m
+[localization_bootstrap-7] [0m[INFO] [1788535146.860645376] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_bootstrap-7] [0m[INFO] [1788535148.860416266] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_error-8] [0m[INFO] [1788535150.814539292] [localization_error]: waiting for TF map -> roboracer_1 ...[0m
+[localization_bootstrap-7] [0m[INFO] [1788535150.860489118] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_bootstrap-7] [0m[INFO] [1788535152.860370416] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_bootstrap-7] [0m[INFO] [1788535154.860735881] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_error-8] [0m[INFO] [1788535155.814545341] [localization_error]: waiting for TF map -> roboracer_1 ...[0m
+[localization_bootstrap-7] [0m[INFO] [1788535156.860598712] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_bootstrap-7] [0m[INFO] [1788535158.860360797] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_error-8] [0m[INFO] [1788535160.814612989] [localization_error]: waiting for TF map -> roboracer_1 ...[0m
+[localization_bootstrap-7] [0m[INFO] [1788535160.860595908] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_bootstrap-7] [0m[INFO] [1788535162.860636910] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_bootstrap-7] [0m[INFO] [1788535164.860671705] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_error-8] [0m[INFO] [1788535165.814738143] [localization_error]: waiting for TF map -> roboracer_1 ...[0m
+[localization_bootstrap-7] [0m[INFO] [1788535166.860458781] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_bootstrap-7] [0m[INFO] [1788535168.860428677] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_error-8] [0m[INFO] [1788535170.814753444] [localization_error]: waiting for TF map -> roboracer_1 ...[0m
+[localization_bootstrap-7] [0m[INFO] [1788535170.860599589] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_bootstrap-7] [0m[INFO] [1788535172.860599036] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_bootstrap-7] [0m[INFO] [1788535174.860562333] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_error-8] [0m[INFO] [1788535175.814553022] [localization_error]: waiting for TF map -> roboracer_1 ...[0m
+[localization_bootstrap-7] [0m[INFO] [1788535176.860565127] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_bootstrap-7] [0m[INFO] [1788535178.860605594] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_error-8] [0m[INFO] [1788535180.814756214] [localization_error]: waiting for TF map -> roboracer_1 ...[0m
+[localization_bootstrap-7] [0m[INFO] [1788535180.860686509] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_bootstrap-7] [0m[INFO] [1788535182.860412686] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_bootstrap-7] [0m[INFO] [1788535184.860686393] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_error-8] [0m[INFO] [1788535185.814605880] [localization_error]: waiting for TF map -> roboracer_1 ...[0m
+[localization_bootstrap-7] [0m[INFO] [1788535186.860359824] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_bootstrap-7] [0m[INFO] [1788535188.860343017] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_error-8] [0m[INFO] [1788535190.814780325] [localization_error]: waiting for TF map -> roboracer_1 ...[0m
+[localization_bootstrap-7] [0m[INFO] [1788535190.860368665] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_bootstrap-7] [0m[INFO] [1788535192.860410228] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_bootstrap-7] [0m[INFO] [1788535194.860617170] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_error-8] [0m[INFO] [1788535195.814545336] [localization_error]: waiting for TF map -> roboracer_1 ...[0m
+[localization_bootstrap-7] [0m[INFO] [1788535196.860682246] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_bootstrap-7] [0m[INFO] [1788535198.860440596] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_error-8] [0m[INFO] [1788535200.814533529] [localization_error]: waiting for TF map -> roboracer_1 ...[0m
+[localization_bootstrap-7] [0m[INFO] [1788535200.860668413] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_bootstrap-7] [0m[INFO] [1788535202.860347787] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_bootstrap-7] [0m[INFO] [1788535204.860610869] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_error-8] [0m[INFO] [1788535205.814616929] [localization_error]: waiting for TF map -> roboracer_1 ...[0m
+[localization_bootstrap-7] [0m[INFO] [1788535206.860346221] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_bootstrap-7] [0m[INFO] [1788535208.860583767] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_error-8] [0m[INFO] [1788535210.814757310] [localization_error]: waiting for TF map -> roboracer_1 ...[0m
+[localization_bootstrap-7] [0m[INFO] [1788535210.860609535] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_bootstrap-7] [0m[INFO] [1788535212.860656919] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_bootstrap-7] [0m[INFO] [1788535214.860417536] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_error-8] [0m[INFO] [1788535215.814535214] [localization_error]: waiting for TF map -> roboracer_1 ...[0m
+[localization_bootstrap-7] [0m[INFO] [1788535216.860699779] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_bootstrap-7] [0m[INFO] [1788535218.860615739] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_error-8] [0m[INFO] [1788535220.814531471] [localization_error]: waiting for TF map -> roboracer_1 ...[0m
+[localization_bootstrap-7] [0m[INFO] [1788535220.860599126] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[localization_bootstrap-7] [0m[INFO] [1788535222.860603034] [localization_bootstrap]: waiting for ground truth: ips=-- imu=--[0m
+[static_transform_publisher-10] [INFO] [1788535224.167870887] [rclcpp]: signal_handler(signum=2)
+[map_server-4] [INFO] [1788535224.167878398] [rclcpp]: signal_handler(signum=2)
+[amcl-5] [0m[INFO] [1788535224.167880206] [rclcpp]: signal_handler(signum=2)[0m
+[amcl-5] [0m[INFO] [1788535224.167993209] [amcl]: Running Nav2 LifecycleNode rcl preshutdown (amcl)[0m
+[amcl-5] [0m[INFO] [1788535224.168109151] [amcl]: Deactivating[0m
+[lifecycle_manager-6] [INFO] [1788535224.167881861] [rclcpp]: signal_handler(signum=2)
+[lifecycle_manager-6] [INFO] [1788535224.168007262] [lifecycle_manager_localization]: Running Nav2 LifecycleManager rcl preshutdown (lifecycle_manager_localization)
+[lifecycle_manager-6] [INFO] [1788535224.168075835] [lifecycle_manager_localization]: [34m[1mTerminating bond timer...[0m[0m
+[static_transform_publisher-3] [INFO] [1788535224.167887767] [rclcpp]: signal_handler(signum=2)
+[amcl-5] [0m[INFO] [1788535224.168126967] [amcl]: Destroying bond (amcl) to lifecycle manager.[0m
+[localization_error-8] 
+[localization_error-8] no samples collected (0 discarded before /localization_ready)
+[log_localization-9] 
+[log_localization-9]   wrote 0 rows to /home/theflash/Documents/roboracer/run37_a70_confirm.csv
+[autodrive_bridge-1] Traceback (most recent call last):
+[autodrive_bridge-1]   File "/home/theflash/.local/lib/python3.10/site-packages/socketio/client.py", line 25, in signal_handler
+[autodrive_bridge-1]     return original_signal_handler(sig, frame)
+[autodrive_bridge-1] TypeError: 'Handlers' object is not callable
+[autodrive_bridge-1] 2026-09-04T15:20:24Z
+[pure_pursuit-11] [33m[WARN] [1788535224.168630297] [pure_pursuit]: context already shut down; stop command not sent[0m
+[pure_pursuit-11] Failed to publish log message to rosout: publisher's context is invalid, at ./src/rcl/publisher.c:389
+[map_server-4] [INFO] [1788535224.168176733] [map_server]: Running Nav2 LifecycleNode rcl preshutdown (map_server)
+[map_server-4] [INFO] [1788535224.168271783] [map_server]: Deactivating
+[map_server-4] [INFO] [1788535224.168295479] [map_server]: Destroying bond (map_server) to lifecycle manager.
+[amcl-5] [0m[INFO] [1788535224.178431650] [amcl]: Cleaning up[0m
+[map_server-4] [INFO] [1788535224.178525159] [map_server]: Cleaning up
+[map_server-4] [INFO] [1788535224.178573324] [map_server]: Destroying bond (map_server) to lifecycle manager.
+[autodrive_bridge-1] Traceback (most recent call last):
+[autodrive_bridge-1]   File "/home/theflash/Documents/roboracer/devkit_ws/install/autodrive_roboracer/lib/autodrive_roboracer/autodrive_bridge", line 33, in <module>
+[autodrive_bridge-1]     sys.exit(load_entry_point('autodrive-roboracer==0.1.0', 'console_scripts', 'autodrive_bridge')())
+[autodrive_bridge-1]   File "/home/theflash/Documents/roboracer/devkit_ws/install/autodrive_roboracer/lib/python3.10/site-packages/autodrive_roboracer/autodrive_bridge.py", line 442, in main
+[autodrive_bridge-1]     pywsgi.WSGIServer(('', 4567), app, handler_class=WebSocketHandler).serve_forever() # Deploy as a gevent WSGI server
+[autodrive_bridge-1]   File "/home/theflash/.local/lib/python3.10/site-packages/gevent/baseserver.py", line 400, in serve_forever
+[autodrive_bridge-1]     self._stop_event.wait()
+[autodrive_bridge-1]   File "src/gevent/event.py", line 163, in gevent._gevent_cevent.Event.wait
+[autodrive_bridge-1]   File "src/gevent/_abstract_linkable.py", line 521, in gevent._gevent_c_abstract_linkable.AbstractLinkable._wait
+[autodrive_bridge-1]   File "src/gevent/_abstract_linkable.py", line 487, in gevent._gevent_c_abstract_linkable.AbstractLinkable._wait_core
+[autodrive_bridge-1]   File "src/gevent/_abstract_linkable.py", line 490, in gevent._gevent_c_abstract_linkable.AbstractLinkable._wait_core
+[autodrive_bridge-1]   File "src/gevent/_abstract_linkable.py", line 442, in gevent._gevent_c_abstract_linkable.AbstractLinkable._AbstractLinkable__wait_to_be_notified
+[autodrive_bridge-1]   File "src/gevent/_abstract_linkable.py", line 451, in gevent._gevent_c_abstract_linkable.AbstractLinkable._switch_to_hub
+[autodrive_bridge-1]   File "src/gevent/_greenlet_primitives.py", line 61, in gevent._gevent_c_greenlet_primitives.SwitchOutGreenletWithLoop.switch
+[autodrive_bridge-1]   File "src/gevent/_greenlet_primitives.py", line 65, in gevent._gevent_c_greenlet_primitives.SwitchOutGreenletWithLoop.switch
+[autodrive_bridge-1]   File "src/gevent/_gevent_c_greenlet_primitives.pxd", line 35, in gevent._gevent_c_greenlet_primitives._greenlet_switch
+[autodrive_bridge-1]   File "/home/theflash/.local/lib/python3.10/site-packages/socketio/client.py", line 25, in signal_handler
+[autodrive_bridge-1]     return original_signal_handler(sig, frame)
+[autodrive_bridge-1] TypeError: 'Handlers' object is not callable
+[amcl-5] [0m[INFO] [1788535224.196383829] [amcl]: Destroying bond (amcl) to lifecycle manager.[0m
+[map_server-4] [INFO] [1788535224.269853221] [map_server]: Destroying
+[lifecycle_manager-6] [INFO] [1788535224.274700214] [lifecycle_manager_localization]: Destroying lifecycle_manager_localization
+[amcl-5] [0m[INFO] [1788535224.275867460] [amcl]: Destroying[0m
+[INFO] [static_transform_publisher-3]: process has finished cleanly [pid 42668]
+[INFO] [static_transform_publisher-10]: process has finished cleanly [pid 42682]
+[localization_bootstrap-7] Traceback (most recent call last):
+[localization_bootstrap-7]   File "/home/theflash/Documents/roboracer/devkit_ws/install/racer_localization/lib/racer_localization/localization_bootstrap", line 33, in <module>
+[localization_bootstrap-7]     sys.exit(load_entry_point('racer-localization==0.1.0', 'console_scripts', 'localization_bootstrap')())
+[localization_bootstrap-7]   File "/home/theflash/Documents/roboracer/devkit_ws/install/racer_localization/lib/python3.10/site-packages/racer_localization/localization_bootstrap.py", line 746, in main
+[localization_bootstrap-7]     rclpy.spin(node)
+[localization_bootstrap-7]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/__init__.py", line 229, in spin
+[localization_bootstrap-7]     executor.spin_once()
+[localization_bootstrap-7]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 773, in spin_once
+[localization_bootstrap-7]     self._spin_once_impl(timeout_sec)
+[localization_bootstrap-7]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 762, in _spin_once_impl
+[localization_bootstrap-7]     handler, entity, node = self.wait_for_ready_callbacks(timeout_sec=timeout_sec)
+[localization_bootstrap-7]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 745, in wait_for_ready_callbacks
+[localization_bootstrap-7]     return next(self._cb_iter)
+[localization_bootstrap-7]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 646, in _wait_for_ready_callbacks
+[localization_bootstrap-7]     raise ExternalShutdownException()
+[localization_bootstrap-7] rclpy.executors.ExternalShutdownException
+[localization_error-8] Traceback (most recent call last):
+[localization_error-8]   File "/home/theflash/Documents/roboracer/devkit_ws/install/racer_localization/lib/racer_localization/localization_error", line 33, in <module>
+[localization_error-8]     sys.exit(load_entry_point('racer-localization==0.1.0', 'console_scripts', 'localization_error')())
+[localization_error-8]   File "/home/theflash/Documents/roboracer/devkit_ws/install/racer_localization/lib/python3.10/site-packages/racer_localization/localization_error.py", line 291, in main
+[localization_error-8]     rclpy.spin(node)
+[localization_error-8]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/__init__.py", line 229, in spin
+[localization_error-8]     executor.spin_once()
+[localization_error-8]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 773, in spin_once
+[localization_error-8]     self._spin_once_impl(timeout_sec)
+[localization_error-8]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 762, in _spin_once_impl
+[localization_error-8]     handler, entity, node = self.wait_for_ready_callbacks(timeout_sec=timeout_sec)
+[localization_error-8]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 745, in wait_for_ready_callbacks
+[localization_error-8]     return next(self._cb_iter)
+[localization_error-8]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 646, in _wait_for_ready_callbacks
+[localization_error-8]     raise ExternalShutdownException()
+[localization_error-8] rclpy.executors.ExternalShutdownException
+[dead_reckoning-2] Traceback (most recent call last):
+[dead_reckoning-2]   File "/home/theflash/Documents/roboracer/devkit_ws/install/racer_localization/lib/racer_localization/dead_reckoning", line 33, in <module>
+[dead_reckoning-2]     sys.exit(load_entry_point('racer-localization==0.1.0', 'console_scripts', 'dead_reckoning')())
+[dead_reckoning-2]   File "/home/theflash/Documents/roboracer/devkit_ws/install/racer_localization/lib/python3.10/site-packages/racer_localization/dead_reckoning.py", line 308, in main
+[dead_reckoning-2]     rclpy.spin(node)
+[dead_reckoning-2]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/__init__.py", line 229, in spin
+[dead_reckoning-2]     executor.spin_once()
+[dead_reckoning-2]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 773, in spin_once
+[dead_reckoning-2]     self._spin_once_impl(timeout_sec)
+[dead_reckoning-2]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 762, in _spin_once_impl
+[dead_reckoning-2]     handler, entity, node = self.wait_for_ready_callbacks(timeout_sec=timeout_sec)
+[dead_reckoning-2]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 745, in wait_for_ready_callbacks
+[dead_reckoning-2]     return next(self._cb_iter)
+[dead_reckoning-2]   File "/opt/ros/humble/local/lib/python3.10/dist-packages/rclpy/executors.py", line 646, in _wait_for_ready_callbacks
+[dead_reckoning-2]     raise ExternalShutdownException()
+[dead_reckoning-2] rclpy.executors.ExternalShutdownException
+[INFO] [pure_pursuit-11]: process has finished cleanly [pid 42877]
+[INFO] [log_localization-9]: process has finished cleanly [pid 42680]
+[ERROR] [localization_bootstrap-7]: process has died [pid 42676, exit code 1, cmd '/home/theflash/Documents/roboracer/devkit_ws/install/racer_localization/lib/racer_localization/localization_bootstrap --ros-args -r __node:=localization_bootstrap --params-file /tmp/launch_params_jb29yd2r'].
+[ERROR] [localization_error-8]: process has died [pid 42678, exit code 1, cmd '/home/theflash/Documents/roboracer/devkit_ws/install/racer_localization/lib/racer_localization/localization_error --ros-args -r __node:=localization_error --params-file /tmp/launch_params_2u9chpmz'].
+[ERROR] [dead_reckoning-2]: process has died [pid 42666, exit code 1, cmd '/home/theflash/Documents/roboracer/devkit_ws/install/racer_localization/lib/racer_localization/dead_reckoning --ros-args -r __node:=dead_reckoning --params-file /tmp/launch_params_y88kn35g'].
+[INFO] [lifecycle_manager-6]: process has finished cleanly [pid 42674]
+[INFO] [amcl-5]: process has finished cleanly [pid 42672]
+[INFO] [map_server-4]: process has finished cleanly [pid 42670]
+[ERROR] [autodrive_bridge-1]: process has died [pid 42664, exit code 1, cmd '/home/theflash/Documents/roboracer/devkit_ws/install/autodrive_roboracer/lib/autodrive_roboracer/autodrive_bridge --ros-args -r __node:=autodrive_bridge -r /tf:=/tf_ground_truth'].

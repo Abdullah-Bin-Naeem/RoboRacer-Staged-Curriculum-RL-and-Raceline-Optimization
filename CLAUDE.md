@@ -171,13 +171,25 @@ the shared half of the two localizers was copy-pasted into both.
   pose, workspace paths (`frames.py`), and the competition restricted-topic list
   with its runtime warning (`restricted.py`). Also owns `cyclonedds.xml`.
   Everything else imports from here instead of repeating literals.
-- `racer_localization/` — `dead_reckoning` (encoders + IMU → `odom→roboracer_1`),
+- `racer_localization/` — `dead_reckoning` (encoders + IMU → `odom→roboracer_1`,
+  heading and position carried forward to each stamp, `VEHICLE_MODEL.md` §5.4),
   `localization_bootstrap`, `localization_error`, and the two interchangeable
   localizers. `chassis.launch.py` is the half both share; `amcl.launch.py` and
   `slam.launch.py` contain *only* their localizer; `instruments.launch.py` holds
   every node that reads a restricted topic, so legality is one inclusion.
 - `racer_control/` — `pure_pursuit`, `calibrate_steering`. Control only; the
-  name is now true.
+  name is now true. `pure_pursuit` estimates the car's speed by running the
+  sim's own tire curve on the measured wheel speed (`speed_source: tire`, a
+  contracting observer with bounded error, p90 0.15–0.22 m/s against ground
+  truth) and commands throttle as a wheel speed inside a ±0.08 slip band placed
+  one measured round trip ahead, 175 ms here (`throttle_mode: slip`,
+  `cmd_delay_auto`), because in this sim the
+  encoders report the throttle command, not the car, and the command reaches
+  the wheel one bridge round trip late (`raceline/VEHICLE_MODEL.md` §3.1, §3.6).
+  `encoder` / `legacy` keep the old law for A/B; `fused` (IMU + pose) is kept
+  for reference and does not work here, see §5.3. It publishes `~/status` every tick; `log_localization` records it as
+  `pp_*` columns and `raceline/analyze_run.py run.csv` turns a log into lap
+  times, tracking error, corner bias, weave, estimator error and encoder ratio.
 - `racer_mapping/` — slam_toolbox mapping config, `map_publisher`, and the
   committed Porto map. Scan matching is **on** (karto only adds graph vertices
   inside that branch, so a map built without it is unusable for localization);
@@ -193,12 +205,22 @@ the remap to `/tf_ground_truth`.
 
 ### Raceline (`raceline/`)
 
-Notebooks extract the centerline from the SLAM map and solve minimum-curvature
-lines two ways (scipy, TUM `tph`); the CSVs (`s,x,y,psi,kappa,w_r,w_l[,v_mps]`)
-are the deliverable that `pure_pursuit` consumes. `make_speed_variants.py`
-re-profiles an existing line's *geometry* at a ladder of grip limits —
-geometry does not depend on grip, only the velocity profile does — so `a_lat_max`
-can be measured on the car instead of guessed.
+`optimize_raceline.py` is the pipeline: map → centerline → minimum-curvature
+line → velocity profile → CSVs (`s,x,y,psi,kappa,w_r,w_l[,v_mps]`) that
+`pure_pursuit` consumes. Run it from `.venv-rl`. It rebuilds the centerline when
+the CSV is missing and exports `raceline_a4.0/4.5/4.9.csv`: the same geometry at
+three lateral limits, so grip is stepped up on the car instead of guessed.
+Geometry does not depend on grip, only the velocity profile does. The notebooks
+import from it for plots; `make_speed_variants.py` re-profiles any other line
+under the same physics.
+
+Every number about the car is in `raceline/VEHICLE_MODEL.md`, derived from the
+simulator's Unity source, with references. The three that change decisions:
+throttle commands a wheel speed (25.25 m/s per unit), so encoders read the
+command, not the car; the tire's robust limits are the friction-curve
+asymptotes, 4.55 m/s² longitudinal and 4.90 lateral, and demands between the
+asymptote and the peak are what makes the car drift; drag is linear, 0.273·v.
+Read it before changing a limit.
 
 ## Competition legality
 

@@ -42,7 +42,15 @@ RACELINE_DIR = os.path.join(REPO, 'raceline')
 DEFAULT_MAP_YAML = os.path.join(MAPS_DIR, 'track_clean.yaml')
 # BASE PATH, NO EXTENSION -- slam_toolbox appends .posegraph and .data itself.
 DEFAULT_POSE_GRAPH = os.path.join(MAPS_DIR, 'track_sm')
-DEFAULT_RACELINE = os.path.join(RACELINE_DIR, 'raceline_scipy_a8.csv')
+# Built by raceline/optimize_raceline.py: min-curvature geometry with extra left
+# margin on the straight after R1 and on the S-exit approach (--margin-zones
+# 2.5:6:L:0.10,17:21.5:L:0.15), 0.15 m body-to-wall margin elsewhere, velocity
+# profile at a_lat 6.5 m/s^2. That is over the tire's 4.90 asymptote and is held
+# by the follower's curvature cap (steer_a_lat_max): measured clean on the car,
+# 13 laps at 17.5 Hz, 6.85 s best. raceline_a6.0.csv is the safe rung,
+# raceline_a7.0.csv the record attempt (6.65 s best); same geometry, ladder in
+# VEHICLE_MODEL.md section 7.
+DEFAULT_RACELINE = os.path.join(RACELINE_DIR, 'raceline_a6.5.csv')
 
 # ---- Vehicle ---------------------------------------------------------------
 NS = '/autodrive/roboracer_1'

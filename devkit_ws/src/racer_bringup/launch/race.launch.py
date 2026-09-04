@@ -80,9 +80,26 @@ from racer_common.frames import (DEFAULT_MAP_YAML, DEFAULT_POSE_GRAPH,
 # CSV, speed is derived from the worst curvature within this distance. Braking
 # 8.0 -> 1.8 m/s takes ~6 m, so a 1 m preview means the car meets the corner at
 # full speed. Irrelevant when the path carries its own velocity profile.
-TUNABLES = ('lookahead_min', 'lookahead_max', 'lookahead_k',
+#
+# KEEP IN STEP with racer_control/launch/follower.launch.py: a name here that it
+# does not declare is dropped silently on the way through.
+TUNABLES = ('lookahead_min', 'lookahead_max', 'lookahead_k', 'lookahead_curv_gain', 'lookahead_sag_frac',
+            'lookahead_delay_ref', 'derate_delay_from', 'derate_delay_to', 'derate_a_lat',
+            'steer_a_lat_max',
             'v_max', 'a_lat_max', 'throttle_max', 'steering_gain',
-            'curvature_preview_m')
+            'curvature_preview_m',
+            # Slip throttle and fused speed estimate (pure_pursuit.py docstring).
+            # Tunable from the command line for the same reason as the rest:
+            # limits are measured on the car, and a rebuild per attempt is tedious.
+            'slip_accel', 'slip_brake', 'u_launch', 'u_per_throttle', 'v_slip_den', 'tire_rise_slope',
+            'cmd_delay_s', 'slip_kp', 'target_lead_s',
+            # control loop rate; 20 matches the 17.5 Hz sim tick seen here, raise it
+            # with the tick (headless sim, faster machine) so the loop is not the limit
+            'control_hz',
+            'pose_speed_window', 'pose_speed_gain', 'pose_corr_max', 'imu_lever_arm', 'latency_comp_s',
+            'speed_source', 'throttle_mode',
+            # legacy launch ramp (throttle_mode:=legacy only)
+            'a_long_launch', 'a_long_launch_v')
 
 # Everything that differs between the two localizers, in one table. Adding a
 # third localizer means adding a row here and one launch file -- not editing
@@ -220,12 +237,22 @@ def _launch(context, *args, **kwargs):
                      else 'false')
 
     # 4. instruments -- every restricted reader, together, omitted in race mode
+    #    log_csv lives here because the CSV logger reads ground truth
+    #    continuously, which is the pattern mode:=race must exclude wholesale.
+    if cfg('log_csv') and measure_error == 'false':
+        actions.append(LogInfo(msg=(
+            f'[race] NOTE: log_csv:={cfg("log_csv")} is ignored -- the CSV '
+            'logger reads ground truth continuously, so it lives in '
+            'instruments.launch.py, which this mode omits. Use mode:=dev.')))
+
     actions.append(IncludeLaunchDescription(
         src(loc_share, 'instruments.launch.py'),
         launch_arguments={
             'use_tf': use_tf_pose,
             'require_ready': ready_latched,
             'wall_margin': cfg('wall_margin'),
+            'log_csv': cfg('log_csv'),
+            'log_rate': cfg('log_rate'),
         }.items(),
         condition=IfCondition(measure_error),
     ))
@@ -311,8 +338,14 @@ def generate_launch_description():
                         'never confirmed'),
         # Body-to-wall clearance at the tightest point of the line being driven,
         # with the 0.27 m car width subtracted:
-        #   centerline_full.csv 0.367     raceline_scipy_a6/a8  0.089
-        DeclareLaunchArgument('wall_margin', default_value='0.089'),
+        #   centerline_full.csv 0.367     raceline_a4.5.csv  0.15 (optimize_raceline.py --safety)
+        DeclareLaunchArgument(
+            'log_csv', default_value='',
+            description='write ground truth vs estimate to this CSV, one row '
+                        'per sample; empty disables it. dev mode only'),
+        DeclareLaunchArgument('log_rate', default_value='20.0',
+                              description='CSV samples per second'),
+        DeclareLaunchArgument('wall_margin', default_value='0.15'),
         DeclareLaunchArgument(
             'follower_delay', default_value='2.0',
             description='fallback delay; with an AMCL bootstrap the follower '

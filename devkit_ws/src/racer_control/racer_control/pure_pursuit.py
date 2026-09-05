@@ -92,6 +92,7 @@ TIRE_S_PEAK, TIRE_MU_PEAK = 0.15, 0.72
 TIRE_S_ASYM, TIRE_MU_ASYM = 0.25, 0.464
 DRAG_LIN = 0.273
 G = 9.81
+TRACK_WIDTH = 0.236                     # [m] between left and right contact patches (VEHICLE_MODEL 2)
 
 # What the launch ramp releases towards. It only shapes the tail of the ramp
 # between standstill and a_long_launch_v -- above that speed the limit is off
@@ -178,6 +179,16 @@ class PurePursuit(Node):
         # speed, which is bounded-error by construction. 'fused' (IMU integral +
         # pose blend) is kept for reference only; it failed twice in the sim.
         p('speed_source', 'tire')
+        # 1: the observer simulates one wheel at the car's speed. 4: four contact
+        # speeds -- inner/outer offset by yaw_rate * track/2, fronts faster by
+        # 1/cos(steer) along their steered direction -- all spun at the same u.
+        # The curve is concave, so four wheels at spread slips deliver LESS force
+        # than one at the mean slip, and the one-wheel model reads high exactly
+        # where that spread is large: ICRA run 13, +0.15-0.19 m/s at the hairpin
+        # apexes and 0 on the straights, the car 10 % slower than the follower
+        # believed. Replayed offline on that log, 4 takes the apex bias to ~0.
+        # Float so it passes through the launch files like the other tunables.
+        p('observer_wheels', 1.0)
         # Initial slope of the rising branch of the friction curve, as a multiple
         # of the smoothstep's (which is zero). Unity does not document it; the
         # top-speed datum implies ~2 and the offline fit against ground truth
@@ -338,6 +349,9 @@ class PurePursuit(Node):
         self.wheel_r = g('wheel_radius')
         self.speed_source = str(g('speed_source')).lower()
         self.throttle_mode = str(g('throttle_mode')).lower()
+        self.obs_wheels = int(round(float(g('observer_wheels'))))
+        if self.obs_wheels not in (1, 4):
+            raise RuntimeError(f'observer_wheels must be 1 or 4, not {self.obs_wheels}')
         if self.speed_source not in ('tire', 'fused', 'encoder'):
             raise RuntimeError(f"speed_source must be 'tire', 'fused' or 'encoder', not {self.speed_source!r}")
         self.tire_m = float(g('tire_rise_slope'))
@@ -371,6 +385,7 @@ class PurePursuit(Node):
         self.v_enc = 0.0                # wheel surface speed from the encoders
         self.v_pose = float('nan')      # speed implied by the pose over pose_win
         self.yaw_rate = 0.0             # IMU gyro z, for latency compensation
+        self.steer_angle = 0.0          # last commanded steer [rad], for the 4-wheel observer
         self._imu_t = None
         self._imu_seen = False
         self._pose_hist = []            # (stamp, x, y, v_est) of the poses steered on
@@ -627,10 +642,24 @@ class PurePursuit(Node):
             return
         u, h = self.v_enc, dt / 5.0
         for _ in range(5):
-            S = (u - self.v_est) / max(self.v_est, self.v_slip_den)
-            a = math.copysign(self._mu(S) * G, S) - DRAG_LIN * self.v_est
+            if self.obs_wheels == 4:
+                # Four contact speeds along each wheel's rolling direction, one
+                # wheel speed u, equal loads: a = (g/4) sum mu(S_i). See the
+                # observer_wheels parameter for why this differs from one wheel.
+                w = self.yaw_rate * TRACK_WIDTH / 2.0
+                vf = self.v_est / max(math.cos(self.steer_angle), 0.5)
+                a = 0.25 * sum(self._wheel_accel(u, vc)
+                               for vc in (self.v_est - w, self.v_est + w, vf - w, vf + w))
+                a -= DRAG_LIN * self.v_est
+            else:
+                a = self._wheel_accel(u, self.v_est) - DRAG_LIN * self.v_est
             self.v_est = max(0.0, self.v_est + a * h)
         self.a_est = a                            # for the command-delay prediction
+
+    def _wheel_accel(self, u, vc):
+        """g * mu at one wheel: rim speed u, contact-patch speed vc (PhysX slip)."""
+        S = (u - vc) / max(vc, self.v_slip_den)
+        return math.copysign(self._mu(S) * G, S)
 
     def _note_pose(self, t, x, y):
         """Record a pose sample, stamped AT ITS SOURCE, for the speed correction.
@@ -1001,6 +1030,7 @@ class PurePursuit(Node):
             kappa_cmd = max(-k_cap, min(k_cap, kappa_cmd))
         delta = math.atan(kappa_cmd * self.wheelbase)          # bicycle model
         steering = float(np.clip(self.steer_gain * delta / self.max_steer, -1.0, 1.0))
+        self.steer_angle = steering * self.max_steer
 
         step = self.lap_len / n
 

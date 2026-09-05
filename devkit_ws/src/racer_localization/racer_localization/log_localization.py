@@ -317,8 +317,11 @@ class Logger(Node):
         ly = y + LIDAR_X * math.sin(yaw)
         ex = lx + rng * np.cos(yaw + ang)
         ey = ly + rng * np.sin(yaw + ang)
-        col = ((ex - self.ox) / self.res).astype(int)
-        row = (self.mh - 1 - (ey - self.oy) / self.res).astype(int)
+        # floor to the cell index FIRST, then flip the row. Writing this as
+        # int(mh - 1 - v) floors after the subtraction, which is the same as
+        # rounding v UP, and lands one row (5 cm) high on 99.8 % of points.
+        col = np.floor((ex - self.ox) / self.res).astype(int)
+        row = (self.mh - 1) - np.floor((ey - self.oy) / self.res).astype(int)
         inside = ((row >= 0) & (row < self.mh) & (col >= 0) & (col < self.mw))
         if inside.sum() < 20:
             return float('nan')

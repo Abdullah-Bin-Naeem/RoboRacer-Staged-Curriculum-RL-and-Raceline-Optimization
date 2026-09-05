@@ -230,7 +230,7 @@ asset is scoped by name:
 |---|---|
 | occupancy grid, pose graph | `devkit_ws/src/racer_mapping/maps/<track>/` |
 | centreline, raceline ladder | `raceline/<track>/` |
-| spawn, default line, margin zones | `racer_common.frames.TRACKS['<track>']` |
+| spawn, default line, margin zones, lateral zones | `racer_common.frames.TRACKS['<track>']` |
 
 `racer_common/frames.py` is the registry and the only place that resolves a
 track to paths (`map_yaml()`, `pose_graph()`, `raceline()`, `spawn()`). Pick one
@@ -264,6 +264,11 @@ python3 raceline/analyze_run.py run.csv --path raceline/<track>/raceline_a4.0.cs
 
 Only once a rung runs clean do the margin zones get placed, from where
 `analyze_run.py` reports the corner bias and the wall contacts, not guessed.
+The same goes for **lateral zones** (`--lat-zones s0:s1:a_lat`, exported as the
+`z` lines): a per-corner grip limit for corners so tight that the rung's
+lateral demand leaves no headroom for the delay's speed error. On ICRA 2026
+the two hairpins (curvature 1.37) hit twice in 46 laps at the 6.5 rung with
+8 % of headroom; capped at 6.0 they keep 14 %, the rest of the lap keeps 6.5.
 
 **Two grids per track when the walls are hollow.** Tracks built from ducting
 map as two thin faces with an unknown strip between, and rays enter the

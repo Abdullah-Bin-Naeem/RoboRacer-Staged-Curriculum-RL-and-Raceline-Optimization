@@ -289,6 +289,9 @@ def _launch(context, *args, **kwargs):
         'bootstrap_seconds': bootstrap_seconds,
     }
     follower_args.update({n: cfg(n) for n in TUNABLES if cfg(n) != ''})
+    # The track's validated speed cap unless v_max:= was given explicitly.
+    if cfg('v_max') == '':
+        follower_args['v_max'] = frames.v_max(track)
     actions.append(TimerAction(
         period=float(cfg('follower_delay')),
         actions=[IncludeLaunchDescription(

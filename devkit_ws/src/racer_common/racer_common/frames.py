@@ -66,6 +66,10 @@ TRACKS = {
         # The argument that built this track's ladder. Per track by
         # construction: these are s-ranges on THIS centreline.
         'margin_zones': '2.5:6:L:0.10,17:21.5:L:0.15',
+        'lat_zones': '',
+        # Follower speed cap, the highest validated on this track: Porto's
+        # straights top out at 7.3 in the profile and the car reached 7.24.
+        'v_max': '8.0',
     },
     'icra2026': {
         # The pose the simulator resets the car to, read by the bootstrap on
@@ -74,9 +78,17 @@ TRACKS = {
         # read /ips right after a reset, not after driving. Coincides with
         # Porto's spawn; the scenes share a spawn point.
         'spawn': ('0.800', '3.158', '-1.5707'),
-        # Lowest rung until the ladder has been climbed on the car; raise this
-        # to the highest rung that runs clean, exactly as Porto's was.
-        'raceline': 'raceline_a4.0.csv',
+        # Climbed 4.0 -> 7.0 on the car (VEHICLE_MODEL section 7, ICRA runs
+        # 2-9). 7.0 is the tire's limit, 6.5 ran 2 hits in 46 laps, both at
+        # the two hairpins whose curvature (1.37, Porto's tightest is 0.92)
+        # leaves only 8 % of lateral headroom at that rung. The submission
+        # line is 6.5 with the hairpins capped at 6.0 by lat_zones below:
+        # about 14 % headroom there, the rest of the lap untouched.
+        'raceline': 'raceline_a6.5z.csv',
+        # Per-corner lateral limits (--lat-zones s0:s1:a_lat), the 'z' lines.
+        # Both hairpins: apex demand at 6.5 was measured up to 7.23 m/s^2
+        # against a tire that gives 7.0.
+        'lat_zones': '37.5:43.5:6.0,43:47:6.0',
         # Placed from measurement, exactly as Porto's were: on the first logged
         # run (a4.0, 13 laps) the car exited the right-hand hairpin round the
         # left leg's tip 0.10-0.13 m to the left of the line on EVERY lap, and
@@ -96,6 +108,10 @@ TRACKS = {
         # 0.10 (the line is already 0.33 m off the tip, above the 0.285 m the
         # solver requires); ~0.22 would be needed to move the line there.
         'margin_zones': '45.5:51.5:L:0.30,34:38.5:R:0.15,43:45:R:0.10',
+        # 7.0, not the profile's 8.0: the 8 m/s run bought 0.03 s (7 % of the
+        # lap above 7 m/s) and made the approach to the middle-wall hairpin
+        # fast enough to push its lateral demand to 7.23; both hits were at 8.
+        'v_max': '7.0',
     },
 }
 
@@ -131,6 +147,11 @@ def raceline(track=None, name=None):
     """A line for this track: the registry's default, or `name` within it."""
     t = _track(track)
     return os.path.join(RACELINE_DIR, t, name or TRACKS[t]['raceline'])
+
+
+def v_max(track=None):
+    """The follower's validated speed cap for this track, as a string."""
+    return TRACKS[_track(track)].get('v_max', '8.0')
 
 
 def spawn(track=None):

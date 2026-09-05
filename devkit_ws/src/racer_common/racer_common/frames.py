@@ -67,9 +67,11 @@ TRACKS = {
         # construction: these are s-ranges on THIS centreline.
         'margin_zones': '2.5:6:L:0.10,17:21.5:L:0.15',
         'lat_zones': '',
-        # Follower speed cap, the highest validated on this track: Porto's
-        # straights top out at 7.3 in the profile and the car reached 7.24.
-        'v_max': '8.0',
+        # Follower arguments this track was validated with; race.launch.py applies
+        # them unless the same name is given on the command line. v_max 8.0:
+        # Porto's straights top out at 7.3 in the profile and the car reached
+        # 7.24. target_lead_s 0.08 is Porto's tuned value (short braking zones).
+        'follower': {'v_max': '8.0', 'target_lead_s': '0.08'},
     },
     'icra2026': {
         # The pose the simulator resets the car to, read by the bootstrap on
@@ -84,7 +86,10 @@ TRACKS = {
         # leaves only 8 % of lateral headroom at that rung. The submission
         # line is 6.5 with the hairpins capped at 6.0 by lat_zones below:
         # about 14 % headroom there, the rest of the lap untouched.
-        'raceline': 'raceline_a6.5z.csv',
+        # a6.5zv: the z line with the main straight (s 7.5-18.5) at 8 m/s and
+        # the rest held at 7 by the LINE, not the follower cap (--v-zones).
+        # Validated run 13: 12 clean laps, 12.15 best / 12.22 mean.
+        'raceline': 'raceline_a6.5zv.csv',
         # Per-corner lateral limits (--lat-zones s0:s1:a_lat), the 'z' lines.
         # Both hairpins: apex demand at 6.5 was measured up to 7.23 m/s^2
         # against a tire that gives 7.0.
@@ -108,10 +113,13 @@ TRACKS = {
         # 0.10 (the line is already 0.33 m off the tip, above the 0.285 m the
         # solver requires); ~0.22 would be needed to move the line there.
         'margin_zones': '45.5:51.5:L:0.30,34:38.5:R:0.15,43:45:R:0.10',
-        # 7.0, not the profile's 8.0: the 8 m/s run bought 0.03 s (7 % of the
-        # lap above 7 m/s) and made the approach to the middle-wall hairpin
-        # fast enough to push its lateral demand to 7.23; both hits were at 8.
-        'v_max': '7.0',
+        # v_max 8.0 is safe HERE ONLY because the zv line itself holds every
+        # section but the main straight at 7: a global 8 (run 9) bought 0.03 s
+        # and pushed the middle-wall hairpin's demand to 7.23, both hits were
+        # at 8. lookahead_max 2.6 goes with 8 m/s. target_lead_s 0.0: the
+        # 0.08 tuned on Porto put the speed target 1.8 m ahead in this track's
+        # 7.8 m braking zones and cost 0.28 s a lap (runs 11 vs 13).
+        'follower': {'v_max': '8.0', 'lookahead_max': '2.6', 'target_lead_s': '0.0'},
     },
 }
 
@@ -149,9 +157,15 @@ def raceline(track=None, name=None):
     return os.path.join(RACELINE_DIR, t, name or TRACKS[t]['raceline'])
 
 
+def follower_args(track=None):
+    """Follower arguments this track was validated with, name -> string.
+    race.launch.py applies each unless the same name was given explicitly."""
+    return dict(TRACKS[_track(track)].get('follower', {}))
+
+
 def v_max(track=None):
     """The follower's validated speed cap for this track, as a string."""
-    return TRACKS[_track(track)].get('v_max', '8.0')
+    return follower_args(track).get('v_max', '8.0')
 
 
 def spawn(track=None):

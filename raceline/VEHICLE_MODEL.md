@@ -406,6 +406,7 @@ for slam_toolbox, whose ±0.5 m correlative search has less room than AMCL's
 | pricing | hairpins capped at a_lat 5.5 (scratch) | | | 12.07 predicted at 6.5 | +0.33 s, the whole 6.5-to-6.0 gap: the hairpins' ramps extend beyond the apex. Both hits were at v_max 8 (approach lane faster, middle-wall demand 7.23); at v_max 7 that hairpin never exceeded 6.43 but the left-leg one reached 6.75. Chosen: hairpins at 6.0, rest 6.5, v_max 7 -> ~14 % headroom, ~0.16 s |
 | z line | ladder regenerated with `--lat-zones 37.5:43.5:6.0,43:47:6.0` on the same geometry | | | 11.90 predicted at 6.5z | identical geometry; profile changed over s 33-50 only; hairpin apexes 2.26 -> 2.17 and 2.17 -> 2.08 m/s, planned demand 6.0. `raceline_a6.5z.csv` is the ICRA submission line; v_max 7.0 now in the registry |
 | icra 10 | a6.5z (hairpins 6.0), v_max 7.0 | 13 | 12.35 / 12.43 | clean, 0 respawns; hairpin peak demand mean 5.8, worst 6.08 / 6.27 (was mean 6.4, worst 7.23); nothing under 0.17 m anywhere; zones 0.18 / 0.27; bias +0.05. The 0.15 s priced for the cap is exactly what it cost. SUBMISSION CONFIGURATION for ICRA 2026 |
+| icra 11 | a6.5zv (hairpins 6.0, straight s 7.5-18.5 at 8.0, rest 7.0), follower v_max 8 | 3 | 12.25 / 12.27 | clean; reached 7.87 on the straight; hairpin demand 6.02 / 6.08 unchanged from run 10; min clearance 0.17 at s 10 as before. Predicted gain 0.085, measured 0.10 best / 0.16 mean. First `--v-zones` line: per-region speed ceiling, solved at the top ceiling then swept for feasibility |
 
 ### Porto
 

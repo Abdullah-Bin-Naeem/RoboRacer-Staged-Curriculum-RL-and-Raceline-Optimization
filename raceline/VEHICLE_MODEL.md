@@ -410,6 +410,7 @@ for slam_toolbox, whose ±0.5 m correlative search has less room than AMCL's
 | floor | PHYSICS FLOOR, ICRA 2026: margin 0.10, a_lat 7.0 everywhere, a_long 5.5, v_max 8, no zones, instant commands | | | 11.36 predicted | at a_lat 7.6 (the tire's peak, zero headroom) 11.03. Sub-11 s is below what the tire allows on this geometry; the real car adds the controller gap on top |
 | a7.0zv | 7.0 rung, hairpins 6.0, straight 8 | | | 11.75 predicted | the fast-line candidate; run 8's plain 7.0 drove 12.05 |
 | gap | where run 11's 0.30 s over the profile goes | | | | 0.28 s in the two braking zones (0.18 into the MW hairpin, 0.10 into T2); the hairpins, the straight and every other section within 0.05. The car does NOT brake early (onset +0.2..+0.6 m after the profile's, decel at or above plan); it runs 0.5-1.0 m/s under the profile through the zone and undershoots the apex 0.2 m/s. Cause: the speed target is read v*(cmd_delay + target_lead 0.08) + 0.10 m = 1.8 m ahead (best fit 1.5 m); the comment's intent is cmd_delay alone, 1.2 m. The extra 0.6 m of lead in a zone with slope 0.62 m/s per m puts the target 0.4 m/s under the landing speed, the P law saturates the brake side of the band, and the car brakes at ~2x the plan at zone entry |
+| icra 12 | a6.5zv, target_lead_s 0.0 | 4 | 13.05 / 13.16 | INVALID: a background geometry solve (--objective time) shared the CPU; frame gap 1.35 s, estimator p90 0.68 m/s, delay estimate 0.207 s so the derate engaged. Says nothing about the lead; rerun as 13 |
 
 ### Porto
 

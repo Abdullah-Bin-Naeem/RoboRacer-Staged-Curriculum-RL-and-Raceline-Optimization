@@ -65,11 +65,14 @@ hairpins, capped at 6.0 by lateral zones.
 
 | line | simulator | tick | laps | best | mean | note |
 |---|---|---|---|---|---|---|
-| 6.5, hairpins 6.0 (`raceline_a6.5z.csv`) | graphics | 17.7 Hz | 13 clean | **12.35 s** | 12.43 s | run 10; **submission**; hairpin demand ≤ 6.3 m/s², nothing under 0.17 m |
+| 6.5, hairpins 6.0, straight 8 (`raceline_a6.5zv.csv`), `target_lead_s 0` | graphics | 17.7 Hz | 12 clean | **12.15 s** | 12.22 s | run 13; **submission**, the `track:=icra2026` default; hairpin demand ≤ 6.2 m/s², nothing under 0.16 m |
+| same line, `target_lead_s 0.08` | graphics | 17.4 Hz | 3 clean | 12.25 s | 12.27 s | run 11; the lead cost 0.1 s in this track's 7.8 m braking zones |
+| 6.5, hairpins 6.0 (`raceline_a6.5z.csv`) | graphics | 17.7 Hz | 13 clean | 12.35 s | 12.43 s | run 10; hairpin demand ≤ 6.3 m/s², nothing under 0.17 m |
 | 6.5 | graphics | 17.2 Hz | 8 clean | 12.20 s | 12.33 s | run 7; 2 hits in 46 laps at this rung over later runs, both hairpins |
 | 7.0 | graphics | 17.0 Hz | 8 clean | 12.05 s | 12.09 s | run 8; the tire's limit, fast line |
 | 4.0 | graphics | 17.7 Hz | 13 clean | 14.70 s | 14.75 s | run 2; first drive, stack unchanged from Porto |
 | profile prediction, 6.5z | | | | 11.90 s | | assumes instant commands |
+| physics floor: margin 0.10, 7.0 everywhere, 8 m/s, instant commands | | | | 11.36 s | | sub-11 s is below what the tire allows on this geometry |
 
 The 8 m/s speed cap was tried and dropped: 7 % of the lap is above 7 m/s, it
 bought 0.03 s, and the extra approach speed is what pushed the middle-wall

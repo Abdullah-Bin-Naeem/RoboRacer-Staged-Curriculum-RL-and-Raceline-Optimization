@@ -154,9 +154,13 @@ trade the derate is for.
 ## 7. The ceiling, and the one lever left
 
 The real lap (6.50 on the fast line) sits 0.14 s above the profile's ideal
-(6.36). That gap is the 175 ms round trip: the car brakes early and runs 2-3 %
-under the profile through the two tight corners because it is reasoning about a
-car 175 ms in the past. Nothing on the car side moves it.
+(6.36). That gap is the 175 ms round trip: the car runs 2-3 % under the profile
+through the two tight corners because it is reasoning about a car 175 ms in the
+past. Measured precisely on the second track (section 9), the gap has two named
+parts, and neither is "braking early": the speed target is read further ahead
+than the delay alone requires, and the speed observer reads high in tight
+corners. Removing the first bought 0.1 s there; removing the second bought
+nothing and cost exit margin. Nothing on the car side moves the rest.
 
 The only thing that beats 6.46 is spending wall margin. Cutting the safety
 buffer from 0.15 to 0.10 m widens the corridor, lowers curvature, and raises
@@ -227,6 +231,33 @@ through their open ends, so the raceline needs a sealed geometry map while AMCL
 keeps the sensor map; the centreline extractor's greedy skeleton walk failed on
 a switchback and now orders the ring by BFS; the logger and the bootstrap still
 read Porto's constants and are now track-scoped.
+
+**The controller gap, taken apart (runs 11-14).** With the hairpins zoned
+and the main straight at 8 m/s the real lap sat 0.30 s over its profile, and
+0.28 of it was in the two braking zones. The car did not brake early: onset
+was 0.2-0.6 m *after* the profile's. It ran 0.5-1.0 m/s under the profile all
+the way down because the speed target is read `v x (delay + target_lead_s
+0.08) + 0.10 m` ahead, 1.8 m at 7 m/s where the delay alone puts it at 1.2, and
+in a zone falling 0.62 m/s per metre the extra lead saturates the brake side
+of the slip band. `target_lead_s` was tuned on Porto's short braking zones;
+zero here took the hairpin-approach loss from 0.18 to 0.07 s and is the ICRA
+registry default (run 13, 12 clean laps, 12.15 best / 12.22 mean).
+
+The second part is the speed observer: it simulates one wheel at the car's
+speed, while a hairpin's four wheels see four contact speeds on a concave
+friction curve, and it reads 0.15-0.19 m/s high at the apexes, zero on the
+straights. A four-wheel observer (`observer_wheels: 4`) removes the bias, on
+the car as in the offline replay, and it stays **off**: it gained no lap time,
+the hairpin sections were already on the profile's time, and with the true
+speed in hand the follower asked for more acceleration out of the left-leg
+apex at full steering lock, exit tire slip up 60 %, heading error up 50 %, and
+on the fourth lap the front tires ran out of grip and the car understeered
+into the exit wall, exactly run 9b's signature. The old observer's optimism
+had been the throttle limiter at that corner. The principled fix is a
+friction-circle allocation of the acceleration slip band; it is not built,
+because the remaining 0.26 s is spread across the lap and the physics floor
+for this configuration is 11.7 s ideal, 11.36 with every margin spent. Sub-11
+is not available from this car on this track; sub-12 is, on the 7.0 line.
 
 **Still open:** a wall contact respawns the car at a checkpoint and nothing
 re-localizes it. One time AMCL re-converged on its own in 25 s; another time it

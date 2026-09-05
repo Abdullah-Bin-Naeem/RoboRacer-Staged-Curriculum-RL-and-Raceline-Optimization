@@ -186,7 +186,13 @@ class PurePursuit(Node):
         # than one at the mean slip, and the one-wheel model reads high exactly
         # where that spread is large: ICRA run 13, +0.15-0.19 m/s at the hairpin
         # apexes and 0 on the straights, the car 10 % slower than the follower
-        # believed. Replayed offline on that log, 4 takes the apex bias to ~0.
+        # believed. Replayed offline on that log, 4 takes the apex bias to ~0,
+        # and did so on the car (run 14: +0.02, p90 0.14). It STAYS 1: no lap
+        # gain, and with the true speed in hand the follower asked for more out
+        # of the left-leg apex at full lock (exit slip +60 %), the front tires
+        # lost lateral grip to it, and the car understeered into the exit wall.
+        # The one-wheel optimism was doubling as the throttle limiter there; the
+        # principled replacement is a friction-circle scaling of slip_accel.
         # Float so it passes through the launch files like the other tunables.
         p('observer_wheels', 1.0)
         # Initial slope of the rising branch of the friction curve, as a multiple

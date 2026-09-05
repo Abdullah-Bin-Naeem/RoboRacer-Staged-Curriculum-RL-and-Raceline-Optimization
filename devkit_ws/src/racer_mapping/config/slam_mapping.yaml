@@ -6,8 +6,13 @@
 # world on top. Nothing in autodrive_devkit has to change.
 #
 # The simulator's world -> roboracer_1 transform comes from the IPS and is
-# ground truth, so it does not drift. That is why scan matching and loop closure
-# are off below -- see the notes on those keys.
+# ground truth, so it does not drift. That argued for switching scan matching
+# and loop closure off, and both were off originally. They are ON now: the
+# argument is right about the occupancy GRID, which is rasterised from the scans
+# at those true poses, and wrong about the pose GRAPH, which karto only builds
+# inside the scan-matching branch. See the notes on those keys. If you only ever
+# want a grid for AMCL, mapping.launch.py scan_matching:=false is the honest
+# way to say so.
 
 slam_toolbox:
   ros__parameters:

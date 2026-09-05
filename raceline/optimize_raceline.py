@@ -42,6 +42,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 
+import math
 import numpy as np
 import trajectory_planning_helpers as tph
 import yaml
@@ -279,6 +280,42 @@ def velocity_profile(kappa, el, lim: ProfileLimits, phys: SimPhysics = PHYS, mu=
     ax = tph.calc_ax_profile.calc_ax_profile(vx_profile=vx_cl, el_lengths=el, eq_length_output=False)
     t = tph.calc_t_profile.calc_t_profile(vx_profile=vx_cl, ax_profile=ax, el_lengths=el)
     return vx, ax, float(t[-1])
+
+
+def apply_v_zones(vx, el, s, zones, lim: ProfileLimits, phys: SimPhysics = PHYS):
+    """Per-zone speed ceiling, then re-impose longitudinal feasibility.
+
+    --lat-zones lowers GRIP in a corner; this lowers the SPEED CEILING over an
+    s-range, which is the only thing that binds on a straight (there kappa is
+    ~0, so no lateral limit is active and the profile simply runs to v_max).
+
+    Capping alone would leave a step in the profile that no car can follow, so
+    a forward/backward sweep re-imposes the tire's longitudinal limit against
+    the sim's linear drag: braking is helped by drag, accelerating is hindered
+    by it. The loop is closed, so it is swept a few times to wrap.
+    """
+    if not zones:
+        return vx
+    # A per-point CEILING, not a cap: inside a zone the zone's value applies,
+    # outside it the global --v-max does. The caller must have solved the base
+    # profile at the highest ceiling in play, since this can only ever reduce
+    # a speed -- solve at 7 and no zone can raise the straight to 8.
+    v = np.asarray(vx, float).copy()
+    ceiling = np.full(len(v), float(lim.v_max))
+    for s0, s1, vc in zones:
+        ceiling[(s >= s0) & (s <= s1)] = vc
+    v = np.minimum(v, ceiling)
+    n = len(v)
+    for _ in range(3):
+        for i in range(n):                                  # forward: acceleration
+            j = (i + 1) % n
+            a = max(lim.a_long - phys.drag_lin * v[i], 0.1)
+            v[j] = min(v[j], math.sqrt(v[i] ** 2 + 2.0 * a * el[i]))
+        for i in range(n - 1, -1, -1):                      # backward: braking
+            j = (i + 1) % n
+            a = lim.a_long + phys.drag_lin * v[j]
+            v[i] = min(v[i], math.sqrt(v[j] ** 2 + 2.0 * a * el[i]))
+    return v
 
 
 def steering_rate_required(kappa, el, vx, phys: SimPhysics = PHYS):
@@ -683,6 +720,10 @@ def main(argv=None):
                    help="extra one-sided wall margin in s-ranges of the line, 's0:s1:L|R:extra[,...]'; e.g. "
                         "'17:21.5:L:0.15' keeps 0.30 m instead of 0.15 from the LEFT wall on the S-exit "
                         "approach, where the car arrives wide out of the previous right-hander (two touches).")
+    p.add_argument("--v-zones", default="",
+                   help="per-zone SPEED ceiling s0:s1:v_max,... (the 'v' lines). Overrides "
+                        "--v-max inside the range; use it to let only the real straights run "
+                        "fast while corner approaches stay capped")
     p.add_argument("--lat-zones", default="",
                    help="per-segment lateral limits on top of each rung, 's0:s1:a_lat[,...]' in metres "
                         "along the exported line; e.g. '12.5:17:6.0' holds the S entry at 6.0 while the "
@@ -771,6 +812,7 @@ def main(argv=None):
     # car by stepping up until it runs wide, exactly as make_speed_variants did.
     print(f"\n{'a_lat':>6}{'lap':>9}{'v max':>7}   file")
     zones = [tuple(float(v) for v in z.split(":")) for z in a.lat_zones.split(",") if z]
+    vzones = [tuple(float(v) for v in z.split(":")) for z in a.v_zones.split(",") if z]
     s_win = np.concatenate([[0.0], np.cumsum(win["el"])[:-1]])
     for rung in [float(v) for v in a.ladder.split(",")]:
         lr = ProfileLimits(a_lat=rung, a_long=a.a_long, v_max=a.v_max)
@@ -779,10 +821,22 @@ def main(argv=None):
             mu = np.ones(len(s_win))
             for s0, s1, a_zone in zones:
                 mu[(s_win >= s0) & (s_win <= s1)] = min(a_zone, rung) / rung
-        vx, ax, t = velocity_profile(win["kappa"], win["el"], lr, mu=mu)
+        if vzones:
+            # Solve at the highest ceiling any zone asks for, then impose the
+            # per-region ceilings and re-establish longitudinal feasibility.
+            top = ProfileLimits(a_lat=rung, a_long=a.a_long,
+                                v_max=max(lr.v_max, max(z[2] for z in vzones)))
+            vx, _, _ = velocity_profile(win["kappa"], win["el"], top, mu=mu)
+            vx = apply_v_zones(vx, win["el"], s_win, vzones, lr)
+            ax = np.gradient(vx ** 2) / (2.0 * np.maximum(win["el"], 1e-6))
+            t = float(np.sum(2.0 * win["el"] / (vx + np.roll(vx, -1))))
+        else:
+            vx, ax, t = velocity_profile(win["kappa"], win["el"], lr, mu=mu)
         rr = dict(win, vx=vx, ax=ax, t=t)
-        out = export_csv(a.out / f"{prefix}a{rung:.1f}{'z' if zones else ''}.csv", rr, tm)
-        print(f"{rung:6.1f}{t:8.3f}s{vx.max():7.2f}   {out.name}" + (f"   zones {a.lat_zones}" if zones else ""))
+        suffix = ('z' if zones else '') + ('v' if vzones else '')
+        out = export_csv(a.out / f"{prefix}a{rung:.1f}{suffix}.csv", rr, tm)
+        print(f"{rung:6.1f}{t:8.3f}s{vx.max():7.2f}   {out.name}"
+              + (f"   lat {a.lat_zones}" if zones else "") + (f"   v {a.v_zones}" if vzones else ""))
 
     # Baseline with a speed column, so the centerline can be raced under the same physics.
     export_csv(a.out / "centerline_speed.csv", base, tm)

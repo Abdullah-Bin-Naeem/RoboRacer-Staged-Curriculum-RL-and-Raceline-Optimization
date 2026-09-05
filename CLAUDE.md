@@ -269,6 +269,16 @@ The same goes for **lateral zones** (`--lat-zones s0:s1:a_lat`, exported as the
 lateral demand leaves no headroom for the delay's speed error. On ICRA 2026
 the two hairpins (curvature 1.37) hit twice in 46 laps at the 6.5 rung with
 8 % of headroom; capped at 6.0 they keep 14 %, the rest of the lap keeps 6.5.
+`--v-zones s0:s1:v_max` is the same idea for the SPEED ceiling, which is the
+only limit that binds on a straight (kappa is ~0 there, so no lateral limit is
+active and the profile simply runs to v_max). The zone's value applies inside
+the range and `--v-max` outside it; the pipeline solves the base profile at the
+highest ceiling in play and then re-imposes longitudinal feasibility, so the
+braking out of a fast zone is real rather than a step. Exported as the `v`
+lines. Use it to let a genuine straight run fast while a corner approach stays
+capped: on ICRA 2026 a global 8 m/s bought 0.03 s and made the approach to the
+middle-wall hairpin fast enough to cause a hit, while 8 m/s on the main
+straight alone predicts 0.085 s with the approach untouched.
 
 **Two grids per track when the walls are hollow.** Tracks built from ducting
 map as two thin faces with an unknown strip between, and rays enter the

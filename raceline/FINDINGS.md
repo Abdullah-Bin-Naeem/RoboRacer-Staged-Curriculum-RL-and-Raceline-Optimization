@@ -197,3 +197,40 @@ source ros_env.sh
 ros2 launch racer_bringup race.launch.py localizer:=amcl track:=porto log_csv:=run.csv
 python3 raceline/analyze_run.py run.csv --path raceline/porto/raceline_a6.5.csv
 ```
+
+---
+
+## 9. Second track: what transferred and what did not
+
+The ICRA 2026 competition track was mapped and climbed in ten runs on the
+branch `multi-track`, with the controller untouched. It confirmed the split
+predicted in section 2 exactly.
+
+**Transferred unchanged:** the tire observer, the slip-band throttle, the
+delay measurement, the derate, the curvature cap, both localization timing
+fixes. The first drive on the new map ran 13 clean laps with tracking error
+0.062 m and equal-time localization 0.115 m, Porto's numbers.
+
+**Did not transfer, and had to be re-derived:** the spawn (read after a reset,
+not after driving), the margin zones (three, each placed from a per-sample
+reading of where the car ran wide, never from a section average, which misled
+once), and the grip rung. The track's two hairpins have curvature 1.37 against
+Porto's 0.92, which puts the apex at 2.2 m/s; there the same ±0.2 m/s of
+delay-induced speed error is a 13 % lateral overload where on Porto it was 7 %.
+The 6.5 rung hit twice in 46 laps, both understeer at the tire's limit on a
+hairpin exit, traced tick by tick. The fix is a per-corner grip limit
+(`--lat-zones`), capping only the hairpins at 6.0: 0.15 s a lap, and the
+measured peak demand fell from 7.23 to 6.27 m/s².
+
+**Found on the way:** the map's duct walls are hollow and the LiDAR sees
+through their open ends, so the raceline needs a sealed geometry map while AMCL
+keeps the sensor map; the centreline extractor's greedy skeleton walk failed on
+a switchback and now orders the ring by BFS; the logger and the bootstrap still
+read Porto's constants and are now track-scoped.
+
+**Still open:** a wall contact respawns the car at a checkpoint and nothing
+re-localizes it. One time AMCL re-converged on its own in 25 s; another time it
+never did and the car drove blind for half an hour. As the stack stands, one
+contact can end a run. The legal fix, detect the respawn, stop, call AMCL's
+global relocalization, creep until converged, is scoped but not built.
+

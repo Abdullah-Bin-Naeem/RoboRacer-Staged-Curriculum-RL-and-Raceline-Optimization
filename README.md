@@ -54,6 +54,28 @@ frames (175 ms at 17.6 Hz).
 | 6.5 m/s² | headless | 19.8 Hz | 32 clean | 6.65 s | 6.71 s | run 40; the safe default, 5.0 profile, corner bias −0.01 |
 | profile prediction, 7.0 | | | | 6.36 s | | at the 5.0 longitudinal limit; assumes instant commands |
 
+#### ICRA 2026 track (branch `multi-track`)
+
+Mapped from the competition simulator and climbed the same ladder in ten
+runs. Its two hairpins (curvature 1.37, against Porto's tightest 0.92) are
+where this track differs: at the 6.5 rung the profile asks the tire for
+essentially its full 7.0 m/s² there, and the delay's speed error tipped it over
+twice in 46 laps. The submission line keeps 6.5 everywhere except the two
+hairpins, capped at 6.0 by lateral zones.
+
+| line | simulator | tick | laps | best | mean | note |
+|---|---|---|---|---|---|---|
+| 6.5, hairpins 6.0 (`raceline_a6.5z.csv`) | graphics | 17.7 Hz | 13 clean | **12.35 s** | 12.43 s | run 10; **submission**; hairpin demand ≤ 6.3 m/s², nothing under 0.17 m |
+| 6.5 | graphics | 17.2 Hz | 8 clean | 12.20 s | 12.33 s | run 7; 2 hits in 46 laps at this rung over later runs, both hairpins |
+| 7.0 | graphics | 17.0 Hz | 8 clean | 12.05 s | 12.09 s | run 8; the tire's limit, fast line |
+| 4.0 | graphics | 17.7 Hz | 13 clean | 14.70 s | 14.75 s | run 2; first drive, stack unchanged from Porto |
+| profile prediction, 6.5z | | | | 11.90 s | | assumes instant commands |
+
+The 8 m/s speed cap was tried and dropped: 7 % of the lap is above 7 m/s, it
+bought 0.03 s, and the extra approach speed is what pushed the middle-wall
+hairpin over. `track:=icra2026` launches this configuration with no other
+arguments.
+
 The track's best known lap is 6.46 s. What remains is the round trip: the car
 brakes early to keep the tire on the line in the two tightest corners and
 runs 2–3 % under the profile through them. On a slower machine the follower

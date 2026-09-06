@@ -232,6 +232,19 @@ class PurePursuit(Node):
         # under the 7.06 peak, with the encoders about 0.3 m/s high while it binds.
         p('slip_accel', 0.08)
         p('slip_brake', 0.08)
+        # Friction-circle band. > 0 replaces slip_accel/slip_brake with this
+        # value at zero lateral load, scaled by sqrt(1 - (a_lat/steer_a_lat_max)^2)
+        # where a_lat = v^2 * |kappa| of the path at the car. ICRA run 17: only
+        # 4 % of the lap is grip-limited and 78 % is acceleration or braking,
+        # the +-0.08 band saturated 28 % of the time and the tire ran at slip
+        # 0.03 while its curve is flat-topped at 6.8-7.1 m/s^2 over 0.10-0.18.
+        # 0.12 puts a straight on that top; a hairpin exit at a_lat 6 gets
+        # 0.06, LESS than 0.08, which is what run 14's understeer asked for.
+        p('slip_circle', 0.0)
+        # Feed the slip that produces the PLAN's acceleration forward through
+        # the inverse tire curve, instead of waiting for a speed error to ask
+        # for it: the car delivered 91 % of its plan on run 17 (both ways).
+        p('accel_ff', False)
         # Loop delay from publishing a throttle to seeing it on the wheel. MEASURED
         # 0.15 s (see _throttle_slip). Everything in the band is predicted this far
         # ahead with the observer's acceleration. 0 = the old behaviour.
@@ -377,6 +390,11 @@ class PurePursuit(Node):
             raise RuntimeError(f"throttle_mode must be 'slip' or 'legacy', not {self.throttle_mode!r}")
         self.u_per_thr = float(g('u_per_throttle'))
         self.slip_accel, self.slip_brake = float(g('slip_accel')), float(g('slip_brake'))
+        self.slip_circle = float(g('slip_circle'))
+        self.accel_ff = bool(g('accel_ff'))
+        # mu is monotone on [0, S_PEAK]: tabulate it once for the inverse.
+        self._s_tab = np.linspace(0.0, TIRE_S_PEAK, 151)
+        self._mu_tab = np.array([self._mu(float(S)) for S in self._s_tab])
         self.u_launch = float(g('u_launch'))
         self.v_slip_den = float(g('v_slip_den'))
         self.imu_lever = float(g('imu_lever_arm'))
@@ -818,7 +836,7 @@ class PurePursuit(Node):
         self._v_cmd = min(v_target, self._v_cmd + a_allowed * dt)
         return self._v_cmd
 
-    def _throttle_slip(self, v_target, a_plan=0.0):
+    def _throttle_slip(self, v_target, a_plan=0.0, a_lat=0.0):
         """Command a WHEEL speed, bounded to the tire's peak-force slip band.
 
         The sim spins the wheel to u = u_per_throttle * throttle regardless of
@@ -860,8 +878,22 @@ class PurePursuit(Node):
         # 1.76x the speed error. Commanding u = v_t alone tracked the target 0.15
         # m/s low against legacy's 0.07 (run 5 vs run 4); the same gain, applied
         # to the error at landing time, closes that. The band still bounds the slip.
-        u = v_target + self.slip_kp * (v_target - v_land)
-        u = min(max(u, v_land - self.slip_brake * den), v_land + self.slip_accel * den)
+        if self.slip_circle > 0.0:
+            cap = self.steer_a_lat_max if self.steer_a_lat_max > 0.0 else 7.0
+            f = math.sqrt(max(0.0, 1.0 - (a_lat / cap) ** 2))
+            s_acc = s_brk = max(self.slip_circle * f, 0.02)
+        else:
+            s_acc, s_brk = self.slip_accel, self.slip_brake
+        if self.accel_ff:
+            # The slip that delivers the plan's (gated) acceleration at landing,
+            # gross of drag; the proportional term then only corrects the lag.
+            gross = a_pred + DRAG_LIN * v_land
+            mu_need = min(abs(gross) / G, 0.95 * TIRE_MU_PEAK)
+            s_ff = math.copysign(float(np.interp(mu_need, self._mu_tab, self._s_tab)), gross)
+            u = v_land + s_ff * den + self.slip_kp * (v_target - v_land)
+        else:
+            u = v_target + self.slip_kp * (v_target - v_land)
+        u = min(max(u, v_land - s_brk * den), v_land + s_acc * den)
         if v_target > v and u < self.u_launch:
             u = self.u_launch
         self.v_land = v_land
@@ -1071,7 +1103,8 @@ class PurePursuit(Node):
                                      self.v_min, self.v_max))
 
         if self.throttle_mode == 'slip':
-            throttle = self._throttle_slip(v_target, float(self.path_a[near]))
+            throttle = self._throttle_slip(v_target, float(self.path_a[near]),
+                                           max(self.speed, 0.0) ** 2 * abs(float(self.kappa[near])))
         else:
             v_target = self._limit_accel(v_target)
             err = v_target - self.speed

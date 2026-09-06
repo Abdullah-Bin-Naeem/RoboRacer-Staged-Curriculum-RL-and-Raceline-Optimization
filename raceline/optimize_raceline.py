@@ -305,15 +305,24 @@ def apply_v_zones(vx, el, s, zones, lim: ProfileLimits, phys: SimPhysics = PHYS)
     for s0, s1, vc in zones:
         ceiling[(s >= s0) & (s <= s1)] = vc
     v = np.minimum(v, ceiling)
-    n = len(v)
+    return enforce_long(v, el, lim.a_long, lim.a_long, phys)
+
+
+def enforce_long(vx, el, a_acc, a_brk, phys: SimPhysics = PHYS):
+    """Re-impose longitudinal feasibility with SEPARATE accel and brake
+    budgets (tire force before drag): drag hinders acceleration and helps
+    braking. Only ever lowers a speed; swept a few times to wrap the loop.
+    Used for --a-brake, so the acceleration budget can climb while the braking
+    zones into the hairpins stay exactly as validated."""
+    v = np.asarray(vx, float).copy(); n = len(v)
     for _ in range(3):
         for i in range(n):                                  # forward: acceleration
             j = (i + 1) % n
-            a = max(lim.a_long - phys.drag_lin * v[i], 0.1)
+            a = max(a_acc - phys.drag_lin * v[i], 0.1)
             v[j] = min(v[j], math.sqrt(v[i] ** 2 + 2.0 * a * el[i]))
         for i in range(n - 1, -1, -1):                      # backward: braking
             j = (i + 1) % n
-            a = lim.a_long + phys.drag_lin * v[j]
+            a = a_brk + phys.drag_lin * v[j]
             v[i] = min(v[i], math.sqrt(v[j] ** 2 + 2.0 * a * el[i]))
     return v
 
@@ -715,6 +724,9 @@ def main(argv=None):
                    help="tire longitudinal limit before drag; 4.55 is held at any slip (wheels may spin at "
                         "corner exit), ~3.5 keeps slip under 10 %% for cleaner encoders")
     p.add_argument("--v-max", type=float, default=8.0)
+    p.add_argument("--a-brake", type=float, default=None,
+                   help="braking budget [m/s^2, tire force before drag] when it differs from --a-long; "
+                        "applied as a backward sweep after the profile so the accel side can climb alone")
     p.add_argument("--ladder", default="4.0,4.5,4.9", help="a_lat rungs exported for the winning geometry")
     p.add_argument("--margin-zones", default="",
                    help="extra one-sided wall margin in s-ranges of the line, 's0:s1:L|R:extra[,...]'; e.g. "
@@ -821,13 +833,18 @@ def main(argv=None):
             mu = np.ones(len(s_win))
             for s0, s1, a_zone in zones:
                 mu[(s_win >= s0) & (s_win <= s1)] = min(a_zone, rung) / rung
-        if vzones:
+        resweep = bool(vzones) or (a.a_brake is not None and abs(a.a_brake - a.a_long) > 1e-9)
+        if resweep:
             # Solve at the highest ceiling any zone asks for, then impose the
-            # per-region ceilings and re-establish longitudinal feasibility.
+            # per-region ceilings and re-establish longitudinal feasibility,
+            # with the brake budget separate when --a-brake says so.
             top = ProfileLimits(a_lat=rung, a_long=a.a_long,
-                                v_max=max(lr.v_max, max(z[2] for z in vzones)))
+                                v_max=max(lr.v_max, max([z[2] for z in vzones] or [lr.v_max])))
             vx, _, _ = velocity_profile(win["kappa"], win["el"], top, mu=mu)
-            vx = apply_v_zones(vx, win["el"], s_win, vzones, lr)
+            if vzones:
+                vx = apply_v_zones(vx, win["el"], s_win, vzones, lr)
+            if a.a_brake is not None:
+                vx = enforce_long(vx, win["el"], a.a_long, a.a_brake)
             ax = np.gradient(vx ** 2) / (2.0 * np.maximum(win["el"], 1e-6))
             t = float(np.sum(2.0 * win["el"] / (vx + np.roll(vx, -1))))
         else:

@@ -32,8 +32,13 @@ class Logger(Node):
         self.w = csv.writer(self.f)
         self.w.writerow(COLS)
         self.x = self.y = self.v = float('nan')
-        self.coll = 0
+        # None until the sim has actually told us. Writing rows with a made-up
+        # 0 before the first message makes the run look like it opened with
+        # however many collisions the PREVIOUS run left on the cumulative
+        # counter -- that is not a collision, it is the counter arriving.
+        self.coll = None
         self.lap = 0
+        self.coll0 = 0
         self._printed_lap = -1
         self.best = float('nan')
         self.status = [float('nan')] * len(PP)
@@ -59,8 +64,11 @@ class Logger(Node):
         self.v = math.sqrt(t.x * t.x + t.y * t.y)
 
     def _coll(self, m):
-        if m.data != self.coll:
-            self.get_logger().warn(f'COLLISION -> count {m.data}')
+        if self.coll is None:
+            self.coll0 = m.data
+            self.get_logger().info(f'collision counter starts at {m.data} (cumulative since sim start)')
+        elif m.data != self.coll:
+            self.get_logger().warn(f'COLLISION -> count {m.data}  (+{m.data - self.coll0} this run)')
         self.coll = m.data
 
     def _lapc(self, m):
@@ -82,6 +90,8 @@ class Logger(Node):
             self.status = list(m.data[:len(PP)])
 
     def _tick(self):
+        if self.coll is None:
+            return                      # counter not yet received; see _coll
         now = self.get_clock().now().nanoseconds * 1e-9
         if self.t0 is None:
             self.t0 = now

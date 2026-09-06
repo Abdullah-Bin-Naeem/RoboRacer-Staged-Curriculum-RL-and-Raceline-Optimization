@@ -89,7 +89,8 @@ def sections(grid, kappa_grid, L):
     return out
 
 
-def analyze(path, line_path, out_dir, tol, lo, hi, ds, cmd_delay, slip_circle, cap, lead_min):
+def analyze(path, line_path, out_dir, tol, lo, hi, ds, cmd_delay, slip_circle, cap, lead_min,
+            slip_accel, slip_brake):
     log = ar.load_log(path)
     line = ar.load_line(line_path) if line_path else ar.pick_line(
         log, log['speed'] > 0.8, None)
@@ -123,9 +124,18 @@ def analyze(path, line_path, out_dir, tol, lo, hi, ds, cmd_delay, slip_circle, c
             # load, so a fixed threshold reads "never pinned" in exactly the
             # corners where it is tightest. a_lat as _throttle_slip computes it,
             # from the speed the follower steered on and the path curvature.
-            a_lat_s = log['pp_v_est'][sl] ** 2 * np.abs(log['pp_kappa'][sl])
-            band_s = np.maximum(slip_circle * np.sqrt(
-                np.clip(1.0 - (a_lat_s / cap) ** 2, 0.0, None)), 0.02)
+            if slip_circle > 0.0:
+                a_lat_s = log['pp_v_est'][sl] ** 2 * np.abs(log['pp_kappa'][sl])
+                band_s = np.maximum(slip_circle * np.sqrt(
+                    np.clip(1.0 - (a_lat_s / cap) ** 2, 0.0, None)), 0.02)
+            else:
+                # Circle off: the band is the FIXED pair, and which half applies
+                # depends on the sign of the slip being commanded. Scoring a
+                # fixed band against the circle formula with slip_circle = 0
+                # gives max(0, 0.02) = 0.02 and reports ~90 % pinned everywhere,
+                # which is an artefact, not a saturated controller.
+                sgn = np.sign(log['pp_slip'][sl])
+                band_s = np.where(sgn < 0, slip_brake, slip_accel)
             stack['band'].append(resample(s_t[sl], band_s, grid))
     M = {k: np.array(v) for k, v in stack.items() if v}
 
@@ -303,13 +313,15 @@ def main():
     ap.add_argument('--lap-hi', type=float, default=None, help='explicit clean-lap window, high [s]')
     ap.add_argument('--ds', type=float, default=0.05, help='s grid spacing [m]')
     ap.add_argument('--cmd-delay', type=float, default=0.15, help='throttle round trip, for the band preview [s]')
+    ap.add_argument('--slip-accel', type=float, default=0.16, help="the run's slip_accel (used when slip_circle is 0)")
+    ap.add_argument('--slip-brake', type=float, default=0.08, help="the run's slip_brake (used when slip_circle is 0)")
     ap.add_argument('--lead-min', type=float, default=0.10, help="the run's lead_min_m")
     ap.add_argument('--slip-circle', type=float, default=0.12, help='the run\'s slip_circle')
     ap.add_argument('--a-lat-cap', type=float, default=7.0, help="the run's steer_a_lat_max")
     a = ap.parse_args()
     for p in a.logs:
         analyze(p, a.path, a.out, a.tol, a.lap_lo, a.lap_hi, a.ds, a.cmd_delay,
-                a.slip_circle, a.a_lat_cap, a.lead_min)
+                a.slip_circle, a.a_lat_cap, a.lead_min, a.slip_accel, a.slip_brake)
 
 
 if __name__ == '__main__':

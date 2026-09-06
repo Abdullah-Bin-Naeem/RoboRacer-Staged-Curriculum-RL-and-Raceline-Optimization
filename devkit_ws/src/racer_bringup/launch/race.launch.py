@@ -92,6 +92,7 @@ TUNABLES = ('lookahead_min', 'lookahead_max', 'lookahead_k', 'lookahead_curv_gai
             # Tunable from the command line for the same reason as the rest:
             # limits are measured on the car, and a rebuild per attempt is tedious.
             'slip_accel', 'slip_brake', 'u_launch', 'u_per_throttle', 'v_slip_den', 'tire_rise_slope',
+            'enc_window_s',
             'observer_wheels', 'slip_circle', 'accel_ff',
             'cmd_delay_s', 'slip_kp', 'target_lead_s',
             # control loop rate; 20 matches the 17.5 Hz sim tick seen here, raise it

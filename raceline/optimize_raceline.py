@@ -832,7 +832,11 @@ def main(argv=None):
         if zones:
             mu = np.ones(len(s_win))
             for s0, s1, a_zone in zones:
-                mu[(s_win >= s0) & (s_win <= s1)] = min(a_zone, rung) / rung
+                # Above the rung is allowed: a corner whose OUTER wall is far can be
+                # planned past the tire's sustained limit, because understeer there
+                # runs wide into room (ICRA T3: 0.45 m outside the line, 0.41 measured).
+                # The follower's steer_a_lat_max must be raised to match or it clips it.
+                mu[(s_win >= s0) & (s_win <= s1)] = a_zone / rung
         resweep = bool(vzones) or (a.a_brake is not None and abs(a.a_brake - a.a_long) > 1e-9)
         if resweep:
             # Solve at the highest ceiling any zone asks for, then impose the

@@ -244,7 +244,9 @@ class PurePursuit(Node):
         # Feed the slip that produces the PLAN's acceleration forward through
         # the inverse tire curve, instead of waiting for a speed error to ask
         # for it: the car delivered 91 % of its plan on run 17 (both ways).
-        p('accel_ff', False)
+        # Float, like observer_wheels: the launch files cast every tunable to
+        # float, so accel_ff:=1.0 on, 0.0 off.
+        p('accel_ff', 0.0)
         # Loop delay from publishing a throttle to seeing it on the wheel. MEASURED
         # 0.15 s (see _throttle_slip). Everything in the band is predicted this far
         # ahead with the observer's acceleration. 0 = the old behaviour.
@@ -391,7 +393,7 @@ class PurePursuit(Node):
         self.u_per_thr = float(g('u_per_throttle'))
         self.slip_accel, self.slip_brake = float(g('slip_accel')), float(g('slip_brake'))
         self.slip_circle = float(g('slip_circle'))
-        self.accel_ff = bool(g('accel_ff'))
+        self.accel_ff = float(g('accel_ff')) > 0.5
         # mu is monotone on [0, S_PEAK]: tabulate it once for the inverse.
         self._s_tab = np.linspace(0.0, TIRE_S_PEAK, 151)
         self._mu_tab = np.array([self._mu(float(S)) for S in self._s_tab])

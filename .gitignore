@@ -1,0 +1,12 @@
+# colcon output. The image builds the workspace itself; a host build tree in the
+# context would only slow it down.
+devkit_ws/build/
+devkit_ws/install/
+devkit_ws/log/
+
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Run logs written by the entrypoint inside the container.
+*.log

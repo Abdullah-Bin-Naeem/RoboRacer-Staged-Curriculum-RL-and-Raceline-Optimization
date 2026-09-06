@@ -1,0 +1,151 @@
+# slam_toolbox async mapping config for the AutoDRIVE RoboRacer.
+#
+# Frame plumbing: the devkit broadcasts world -> roboracer_1 -> lidar, with no
+# map or odom frame. Rather than renaming devkit frames, slam_toolbox is pointed
+# straight at them: it treats "world" as the odom frame and publishes map ->
+# world on top. Nothing in autodrive_devkit has to change.
+#
+# The simulator's world -> roboracer_1 transform comes from the IPS and is
+# ground truth, so it does not drift. That is why scan matching and loop closure
+# are off below -- see the notes on those keys.
+
+slam_toolbox:
+  ros__parameters:
+
+    # ---- Plugins ----
+    solver_plugin: solver_plugins::CeresSolver
+    ceres_linear_solver: SPARSE_NORMAL_CHOLESKY
+    ceres_preconditioner: SCHUR_JACOBI
+    ceres_trust_strategy: LEVENBERG_MARQUARDT
+    ceres_dogleg_type: TRADITIONAL_DOGLEG
+    # HuberLoss, not None. Loop closure is what first makes Ceres actually MOVE
+    # nodes, so a single bad closure now warps the map instead of merely adding a
+    # weak constraint. A robust loss caps how far one outlier constraint can drag
+    # the solution. Set back to None if you want the unrobustified behaviour.
+    ceres_loss_function: HuberLoss
+
+    # ---- Frames and topics ----
+    odom_frame: world           # devkit's ground-truth parent frame
+    map_frame: map
+    base_frame: roboracer_1     # devkit's vehicle frame (center of rear axle)
+    scan_topic: /autodrive/roboracer_1/lidar
+    mode: mapping
+
+    # The devkit stamps messages with the wall clock and publishes no /clock.
+    use_sim_time: false
+
+    debug_logging: false
+    throttle_scans: 1
+    transform_publish_period: 0.02
+    map_update_interval: 0.5    # Lower than default: faster feedback while driving
+    enable_interactive_mode: true
+
+    # ---- Map geometry ----
+    # 0.05 m/cell is the standard tradeoff. Drop to 0.025 for a crisper map to
+    # optimize a raceline against; the file gets 4x bigger and SLAM runs slower.
+    resolution: 0.05
+
+    # The devkit LIDAR maxes out at 10.0 m. Readings at or beyond this value are
+    # traced as free space rather than marked as obstacles, so max-range "no
+    # return" rays do not become a ring of phantom walls.
+    max_laser_range: 9.5
+
+    minimum_time_interval: 0.1
+    transform_timeout: 0.2
+    tf_buffer_duration: 30.0
+    stack_size_to_use: 40000000
+
+    # ---- When a new scan gets added to the map ----
+    # Defaults (0.5 m / 0.5 rad) are tuned for room-scale robots and leave gaps
+    # on a tight track. These add a keyframe every 10 cm or ~6 degrees, which
+    # densely covers the walls at the cost of a larger pose graph.
+    minimum_travel_distance: 0.1
+    minimum_travel_heading: 0.1
+
+    # ---- Scan matching and loop closure ----
+    # SCAN MATCHING IS ON, AND IT IS NOT OPTIONAL.
+    #
+    # It was false here originally, on the reasoning that odom is simulator
+    # ground truth so there is no drift to correct. That reasoning is right
+    # about the GRID and fatally wrong about the GRAPH: karto's Mapper::Process
+    # only calls m_pGraph->AddVertex()/AddEdges() inside the
+    # `if (use_scan_matching)` branch. With it false you get a complete set of
+    # scans and a pose graph with ZERO vertices.
+    #
+    # That is invisible while mapping -- the .pgm comes out perfect, because the
+    # grid is rasterised from the scans, not from the graph. It only shows up
+    # when slam_toolbox is later run in localization mode against the serialized
+    # graph, where it SEGFAULTS on the first scan:
+    #     [WARN] CeresSolver: Ceres was called when there are no nodes.
+    #     AddEdge: At least one vertex is invalid.
+    #     karto::MapperGraph::LinkChainToScan -> SIGSEGV
+    # ProcessAgainstNodesNearBy asks the graph for a vertex near the pose, gets
+    # NULL back, and dereferences it.
+    #
+    # The original worry -- that matching would slide scans along a feature-poor
+    # corridor and warp a perfect trajectory -- is handled by pinning the matcher
+    # to the odometry prior instead of by switching it off. See the tightened
+    # correlation window and variance penalties below.
+    use_scan_matching: true
+    use_scan_barycenter: true
+    # Loop closure ON. It was off on the argument that ground-truth odom leaves
+    # no drift to correct, but the graph is not built from odom -- karto seeds
+    # each scan with the PREVIOUS scan's correction composed with the odom delta,
+    # so the scan matcher's per-node slop integrates. Measured on a 3.6-lap run
+    # (471 nodes), radial error against lap 0 at matched track position:
+    #     lap 1  +0.023 m     lap 2  +0.108 m     lap 3  +0.750 m
+    # Super-linear, because once the reference map smears, matching against it
+    # degrades, which smears it further. This is what closes that seam.
+    #
+    # Needs REVISITS to have anything to do: with a single lap there is nothing
+    # to close against until you drive ~10 nodes (~2 m) past the start. Two laps
+    # or more.
+    do_loop_closing: true
+
+    scan_buffer_size: 30
+    scan_buffer_maximum_scan_distance: 10.0
+    link_match_minimum_response_fine: 0.1
+    link_scan_maximum_distance: 1.5
+    loop_search_maximum_distance: 3.0
+    loop_match_minimum_chain_size: 10
+    loop_match_maximum_variance_coarse: 3.0
+    loop_match_minimum_response_coarse: 0.35
+    loop_match_minimum_response_fine: 0.45
+
+    # TIGHTENED from the 0.5 default. The prior handed to the matcher is
+    # ground-truth odometry, so the correction needed is ~0; this box is a clamp,
+    # not a search. 0.2 lets a node move at most +-0.1 m off the true pose.
+    # Karto feeds each new scan the PREVIOUS scan's correction plus the odom
+    # delta, so corrections integrate -- keeping the per-node bound small is what
+    # keeps drift from accumulating over a lap without loop closure.
+    correlation_search_space_dimension: 0.2
+    correlation_search_space_resolution: 0.01
+    correlation_search_space_smear_deviation: 0.1
+
+    # REDUCED from the 8.0 default, which is a room-scale number: the whole track
+    # is only 5.4 m wide, so an 8 m coarse search box spans it end to end and can
+    # happily match the wrong wall. The prior error this has to cover is under a
+    # metre (see the per-lap figures above), so 4.0 keeps ample margin, quarters
+    # the false-match surface, and is 4x cheaper -- cost is quadratic in this.
+    loop_search_space_dimension: 4.0
+    loop_search_space_resolution: 0.05
+    loop_search_space_smear_deviation: 0.03
+
+    # These are VARIANCES IN A DENOMINATOR, so LOWER = trusts odometry more:
+    # karto scores  penalty = 1 - GAIN * squaredOffset / variance_penalty  and
+    # multiplies it into the match response. Lowered from the 0.5/1.0 defaults
+    # so a match that disagrees with the ground-truth prior is scored down hard.
+    distance_variance_penalty: 0.1
+    angle_variance_penalty: 0.2
+    fine_search_angle_offset: 0.00349
+    coarse_search_angle_offset: 0.349
+    coarse_angle_resolution: 0.0349
+    # FLOORS on the penalty multipliers -- and they were quietly defeating the
+    # variance penalties above. karto computes
+    #     penalty = max(1 - GAIN * squaredOffset / variance, minimum_penalty)
+    # so at the stock 0.9 an angular disagreement could never cost more than 10%
+    # of the match response no matter how wrong it was, which made tightening
+    # angle_variance_penalty almost inert. Lowered so the penalties can bite.
+    minimum_angle_penalty: 0.5
+    minimum_distance_penalty: 0.1
+    use_response_expansion: true

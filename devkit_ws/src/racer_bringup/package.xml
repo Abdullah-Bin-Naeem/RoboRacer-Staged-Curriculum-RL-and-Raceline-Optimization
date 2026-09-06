@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>racer_bringup</name>
+  <version>0.1.0</version>
+  <description>Composition root for the RoboRacer classical stack. The ONLY
+  package that composes others: bridge + chassis + a chosen localizer + the
+  follower. Every other package launches its own subsystem and nothing else.</description>
+  <maintainer email="abdullahbinnaeempro@gmail.com">Abdullah Bin Naeem</maintainer>
+  <license>BSD</license>
+
+  <exec_depend>racer_common</exec_depend>
+  <exec_depend>racer_localization</exec_depend>
+  <exec_depend>racer_control</exec_depend>
+  <exec_depend>racer_mapping</exec_depend>
+  <exec_depend>autodrive_roboracer</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+
+  <export><build_type>ament_python</build_type></export>
+</package>

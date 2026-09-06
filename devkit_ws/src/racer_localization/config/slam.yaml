@@ -1,0 +1,214 @@
+# slam_toolbox in LOCALIZATION mode -- the alternative to amcl.yaml.
+#
+# Frames:  map -> odom -> roboracer_1 -> lidar
+#          slam_toolbox publishes map->odom (same link AMCL publishes);
+#          racer_control/dead_reckoning publishes odom->roboracer_1;
+#          a static publisher supplies roboracer_1->lidar.
+#
+# Unlike AMCL this reads NO .pgm. It deserializes the pose graph written by the
+# mapping run (track.posegraph + track.data) and scan-matches the live scan
+# against the stored scans. It publishes its own /map from that graph, so there
+# is no nav2_map_server and no lifecycle_manager in the launch.
+#
+# THE ONE LINE THAT MATTERS MOST
+# ------------------------------
+# `use_scan_matching: true`. Here scan matching IS the correction mechanism;
+# with it off this node would do nothing at all.
+#
+# It also has to have been true FOR THE MAPPING RUN, for a different reason:
+# karto only adds vertices and edges to the pose graph inside that branch, so a
+# map built with it false deserializes into a graph with zero nodes and this
+# node segfaults on the first scan. `track` is such a map; use `track_sm`.
+#
+# Note that slam_toolbox re-applies every mapper parameter from THIS file onto
+# the deserialized mapper (loadSerializedPoseGraph -> SMapper::configure), so
+# nothing here is inherited from the mapping config. What the mapping run does
+# fix permanently is the data: the vertex poses and their spacing.
+
+slam_toolbox:
+  ros__parameters:
+
+    # ---- Solver (same as the mapping run) ----
+    solver_plugin: solver_plugins::CeresSolver
+    ceres_linear_solver: SPARSE_NORMAL_CHOLESKY
+    ceres_preconditioner: SCHUR_JACOBI
+    ceres_trust_strategy: LEVENBERG_MARQUARDT
+    ceres_dogleg_type: TRADITIONAL_DOGLEG
+    ceres_loss_function: None
+
+    # ---- Mode and map ----
+    mode: localization
+    # BASE PATH, NO EXTENSION. slam_toolbox appends .posegraph and .data itself;
+    # passing `track.posegraph` fails in a way that looks like a missing file.
+    # Overridden by the launch file.
+    map_file_name: ''
+    # Where to start the pose graph. Same spawn the AMCL config falls back to.
+    # NOT (0,0,0) -- that cell is a wall. If this is ignored or wrong, RViz's
+    # "2D Pose Estimate" tool publishes /initialpose, which this node also
+    # accepts, so you can always seed by hand.
+    map_start_pose: [0.71, 0.02, -1.599]
+
+    # ---- Frames ----
+    odom_frame: odom            # NOT `world` -- that was ground truth, and is
+                                # restricted at race time. This is
+                                # dead_reckoning's frame.
+    map_frame: map
+    base_frame: roboracer_1
+    scan_topic: /autodrive/roboracer_1/lidar
+    use_sim_time: false
+
+    # ---- Rates ----
+    # Scans land at the measured ~18 Hz, not the advertised 40. transform_publish
+    # matches the mapping run; map_update_interval is slower because in
+    # localization the grid is only for looking at.
+    debug_logging: false
+    throttle_scans: 1
+    transform_publish_period: 0.02
+    map_update_interval: 1.0
+    resolution: 0.05            # must match the map that was built
+    max_laser_range: 9.5        # must match the mapping run and amcl.yaml
+    minimum_time_interval: 0.05
+    transform_timeout: 0.2
+    tf_buffer_duration: 30.0
+    stack_size_to_use: 40000000
+    enable_interactive_mode: false
+
+    # ---- Scan matching: ON, and load-bearing ----
+    use_scan_matching: true
+    use_scan_barycenter: true
+    # Node spacing. 0.1 m matches the graph that was built.
+    minimum_travel_distance: 0.1
+    minimum_travel_heading: 0.1
+    # Rolling buffer of live scans kept in localization mode. Smaller than the
+    # mapping value: nothing is being accumulated into a permanent graph.
+    scan_buffer_size: 10
+    scan_buffer_maximum_scan_distance: 10.0
+    link_match_minimum_response_fine: 0.1
+    link_scan_maximum_distance: 1.5
+
+    # THE LINE THAT MAKES LOCALIZATION LOCALIZE, rather than quietly turn into
+    # open-loop scan-to-scan odometry.
+    #
+    # It used to be false, reasoning that "loop closure is a MAPPING concern --
+    # it corrects a graph being built, and in localization the graph is fixed."
+    # That is backwards. In localization mode karto's per-scan matcher runs
+    # against GetRunningScans() -- the rolling buffer of RECENT scans
+    # (scan_buffer_size, 10 of them, ~1 m of history at minimum_travel_distance
+    # 0.1). Matching a scan to the last metre of its own history is incremental
+    # odometry: locally excellent, globally unmoored. The stored graph is only
+    # consulted through the loop-closure path, and TryCloseLoop -> CorrectPoses
+    # is what actually re-anchors the estimate to the map that was loaded.
+    #
+    # With it off, MEASURED over 34 laps of RL driving (drift.csv):
+    #     map->odom yaw   -0.00 -> +385 deg, ~11 deg per lap, MONOTONIC
+    #     position error  mean 4.67 m, max 13.65 m
+    #     estimate range  x [-6.30, +6.12] m, on a map spanning x [-3.69, +1.56]
+    # First lap was fine (0.4-0.8 m) and every lap after it was worse, which is
+    # the signature of an estimate with nothing pulling it back. Correlation of
+    # the per-sample drift with yaw_rate was +0.005, so this is not a timing or
+    # cornering effect -- there is simply no global correction happening.
+    do_loop_closing: true
+
+    # 1.5, NOT the 3.0 default, and the number comes from the track rather than
+    # from taste. This is the radius within which loop closure will consider a
+    # stored vertex as "the same place". Porto doubles back on itself, so a
+    # vertex 3 m away in space can be 12 m away along the lap -- a different
+    # stretch of corridor that looks much the same. Measured on
+    # centerline_full.csv, the minimum euclidean distance between two points
+    # more than 6 m apart along the lap is 1.81 m, and the share of the lap that
+    # has such a confusable neighbour inside the search radius is:
+    #
+    #     1.50 m ->  0.0%      2.00 m -> 16.0%      3.00 m -> 46.8%
+    #
+    # So at 3.0 loop closure could propose a false match on nearly half the lap,
+    # and with the thresholds below it accepted some: the first run with loop
+    # closing on showed the estimate snapping -29.6 deg in a single 50 ms sample
+    # and the error spiking to 6.2 m before recovering. Staying under the track's
+    # own 1.81 m self-clearance makes those candidates geometrically impossible
+    # rather than merely unlikely.
+    #
+    # It is still ample for finding the RIGHT vertices: they sit every 0.1 m
+    # (minimum_travel_distance), so 1.5 m covers ~30 of them, well past
+    # loop_match_minimum_chain_size.
+    loop_search_maximum_distance: 1.5
+    loop_match_minimum_chain_size: 10
+    loop_match_maximum_variance_coarse: 3.0
+
+    # LOWERED from the 0.35/0.45 defaults, and only safe because of the radius
+    # above. These are how good a match has to be before the map is allowed to
+    # correct the estimate; lower = corrections fire more often.
+    #
+    # Why they need to be lower here. The per-scan matcher does NOT score
+    # against the map -- in localization mode it scores against
+    # GetRunningScans(), the rolling buffer of the last scan_buffer_size scans.
+    # Once the estimate has rotated a few degrees, that recent history is
+    # rotated with it, so the current pose IS the best fit to what it is being
+    # compared against. The matcher is perfectly happy and has no reason to
+    # rotate back. Nothing in that loop can see the error.
+    #
+    # The ONLY thing that compares against the loaded map is this loop-closure
+    # path, so if it declines to fire, the rotation simply persists. Measured
+    # (drift6.csv, 2.4 laps of RL driving, moving samples):
+    #     scan-to-wall fit at the TRUE pose       0.014 m   <- map is correct
+    #     scan-to-wall fit at the ESTIMATED pose  0.170 m   <- ~12x worse
+    #     estimate fits worse than truth in 94.9% of samples
+    # A pose 12x better exists and the matcher is not being told to go there.
+    #
+    # Raising the acceptance rate normally means risking false matches, which
+    # is exactly what bit us at loop_search_maximum_distance: 3.0. It does not
+    # here: at 1.5 m no false candidate is geometrically reachable, so the
+    # geometry does the rejecting and the response threshold no longer has to.
+    loop_match_minimum_response_coarse: 0.25
+    loop_match_minimum_response_fine: 0.30
+
+    # ---- The correlative scan matcher's search window ----
+    # RAISED from the mapping value of 0.5. The matcher searches a box of this
+    # size centred on the odometry guess; if the true pose falls outside, it
+    # cannot be found at any resolution.
+    #
+    # At 8 m/s and 18 Hz the car covers 0.44 m between scans. A 0.5 m box is
+    # +-0.25 m, so with perfectly clean odometry the truth already sits at the
+    # edge. Encoders overread under slip, so 1.0 buys margin for the transient.
+    # Cost is quadratic in this value -- if CPU becomes a problem, lower it and
+    # fix the odometry instead.
+    correlation_search_space_dimension: 1.0
+    correlation_search_space_resolution: 0.01
+    # Blurs the reference grid before scoring so the cost surface is smooth
+    # rather than spiky. Same role as sigma_hit in AMCL's likelihood field.
+    correlation_search_space_smear_deviation: 0.1
+
+    # ---- Scan matcher penalties ----
+    # How much the matcher is allowed to disagree with the odometry prior.
+    # These are VARIANCES IN A DENOMINATOR, so HIGHER = trusts odometry LESS:
+    # karto scores  penalty = 1 - GAIN * squaredOffset / variance_penalty  and
+    # multiplies it into the match response, so a bigger variance weakens the
+    # pull toward the prior.
+    #
+    # THE PRIOR IS NOT THE IMU HEADING. It is tempting to tighten the angular
+    # pair on the grounds that dead_reckoning's heading is exact -- it reads
+    # /imu's absolute quaternion, which in the bridge is the same variable
+    # published as /odom's ground-truth orientation. That argument is wrong,
+    # and it was tried: it made things worse. karto's search centre is the LAST
+    # CORRECTED POSE propagated by the odometry delta,
+    #
+    #     Transform lastTransform(pLastScan->GetOdometricPose(),
+    #                             pLastScan->GetCorrectedPose());
+    #     pScan->SetCorrectedPose(lastTransform.TransformPose(
+    #                             pScan->GetOdometricPose()));
+    #
+    # so the prior already carries every bit of accumulated drift. Tightening
+    # the penalty pulls each match harder onto that drifting history and leaves
+    # it LESS able to snap back to the stored map. Measured over 34 laps with
+    # the tightened values: map->odom yaw walked +385 deg, ~11 deg per lap,
+    # monotonically, and the estimate ended up 4.5 m outside a map 5.25 m wide.
+    #
+    # So these stay loose: the matcher has to be free to disagree with a prior
+    # that is drifting. What re-anchors it to the map is do_loop_closing, above.
+    distance_variance_penalty: 0.5
+    angle_variance_penalty: 1.0
+    fine_search_angle_offset: 0.00349
+    coarse_search_angle_offset: 0.349
+    coarse_angle_resolution: 0.0349
+    minimum_angle_penalty: 0.9
+    minimum_distance_penalty: 0.5
+    use_response_expansion: true

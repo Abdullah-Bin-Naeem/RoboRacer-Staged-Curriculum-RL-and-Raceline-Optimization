@@ -1,0 +1,14 @@
+# The devkit is committed on this branch for reference (the bridge source is
+# what documents the topic names and QoS our nodes match), but the base image
+# already ships it built at /home/autodrive_devkit and the rules forbid
+# modifying it. Keeping it out of the build context makes that structural
+# rather than a promise -- no COPY can pick it up by accident.
+devkit_ws/src/autodrive_devkit/
+
+devkit_ws/build/
+devkit_ws/install/
+devkit_ws/log/
+**/__pycache__/
+**/*.pyc
+**/*.egg-info/
+.git/

@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>racer_control</name>
+  <version>0.1.0</version>
+  <description>Control for the AutoDRIVE RoboRacer: pure pursuit path
+  following and steering calibration. Localization moved to racer_localization;
+  this package is now only what its name says.</description>
+  <maintainer email="abdullahbinnaeempro@gmail.com">Abdullah Bin Naeem</maintainer>
+  <license>BSD</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>racer_common</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>visualization_msgs</exec_depend>
+
+  <export><build_type>ament_python</build_type></export>
+</package>

@@ -93,7 +93,14 @@ TRACKS = {
         # left-leg entry tip (s 43.8, unchanged on every line since run 8).
         # raceline_a6.5zv.csv is the previous submission (run 13, 12.15/12.22)
         # and the fallback if the fast line ever shows contact.
-        'raceline': 'raceline_a7.0zv_hard.csv',
+        # Run 20: the hardened fast line re-profiled with the LONGITUDINAL
+        # budget climbed to accel 5.5 / brake 5.0 (--a-long 5.5 --a-brake 5.0)
+        # and the follower's circle band + acceleration feedforward: 10 clean
+        # laps, 11.80 best / 11.87 mean, tightest 0.13 m at the left-leg entry
+        # tip. raceline_a7.0zv_hard.csv (run 17, 12.00/12.05) is the fallback
+        # if the feedforward is ever suspect: it needs neither flag.
+        'raceline': 'raceline_a7.0zv_hard_l5.5.csv',
+        'a_long': '5.5', 'a_brake': '5.0',     # the profile's budgets, for regeneration
         # Per-corner lateral limits (--lat-zones s0:s1:a_lat), the 'z' lines.
         # Both hairpins: apex demand at 6.5 was measured up to 7.23 m/s^2
         # against a tire that gives 7.0.
@@ -130,7 +137,13 @@ TRACKS = {
         # at 8. lookahead_max 2.6 goes with 8 m/s. target_lead_s 0.0: the
         # 0.08 tuned on Porto put the speed target 1.8 m ahead in this track's
         # 7.8 m braking zones and cost 0.28 s a lap (runs 11 vs 13).
-        'follower': {'v_max': '8.0', 'lookahead_max': '2.6', 'target_lead_s': '0.0'},
+        # slip_circle 0.12: the band on the tire curve's flat top on straights,
+        # scaled down by the friction circle in corners (0.06 at the hairpin
+        # exits, less than the fixed 0.08). accel_ff: plan-acceleration
+        # feedforward, acceleration side only (run 18 showed the brake side
+        # costs apex speed). Together: plan delivery 91 -> 95-99 %.
+        'follower': {'v_max': '8.0', 'lookahead_max': '2.6', 'target_lead_s': '0.0',
+                     'slip_circle': '0.12', 'accel_ff': '1.0'},
     },
 }
 

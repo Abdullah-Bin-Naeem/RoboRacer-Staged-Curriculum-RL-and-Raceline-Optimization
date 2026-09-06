@@ -92,6 +92,7 @@ TIRE_S_PEAK, TIRE_MU_PEAK = 0.15, 0.72
 TIRE_S_ASYM, TIRE_MU_ASYM = 0.25, 0.464
 DRAG_LIN = 0.273
 G = 9.81
+TRACK_WIDTH = 0.236                     # [m] between left and right contact patches (VEHICLE_MODEL 2)
 
 # What the launch ramp releases towards. It only shapes the tail of the ramp
 # between standstill and a_long_launch_v -- above that speed the limit is off
@@ -178,6 +179,22 @@ class PurePursuit(Node):
         # speed, which is bounded-error by construction. 'fused' (IMU integral +
         # pose blend) is kept for reference only; it failed twice in the sim.
         p('speed_source', 'tire')
+        # 1: the observer simulates one wheel at the car's speed. 4: four contact
+        # speeds -- inner/outer offset by yaw_rate * track/2, fronts faster by
+        # 1/cos(steer) along their steered direction -- all spun at the same u.
+        # The curve is concave, so four wheels at spread slips deliver LESS force
+        # than one at the mean slip, and the one-wheel model reads high exactly
+        # where that spread is large: ICRA run 13, +0.15-0.19 m/s at the hairpin
+        # apexes and 0 on the straights, the car 10 % slower than the follower
+        # believed. Replayed offline on that log, 4 takes the apex bias to ~0,
+        # and did so on the car (run 14: +0.02, p90 0.14). It STAYS 1: no lap
+        # gain, and with the true speed in hand the follower asked for more out
+        # of the left-leg apex at full lock (exit slip +60 %), the front tires
+        # lost lateral grip to it, and the car understeered into the exit wall.
+        # The one-wheel optimism was doubling as the throttle limiter there; the
+        # principled replacement is a friction-circle scaling of slip_accel.
+        # Float so it passes through the launch files like the other tunables.
+        p('observer_wheels', 1.0)
         # Initial slope of the rising branch of the friction curve, as a multiple
         # of the smoothstep's (which is zero). Unity does not document it; the
         # top-speed datum implies ~2 and the offline fit against ground truth
@@ -215,6 +232,22 @@ class PurePursuit(Node):
         # under the 7.06 peak, with the encoders about 0.3 m/s high while it binds.
         p('slip_accel', 0.08)
         p('slip_brake', 0.08)
+        # Friction-circle band. > 0 replaces slip_accel/slip_brake with this
+        # value at zero lateral load, scaled by sqrt(1 - (a_lat/steer_a_lat_max)^2)
+        # where a_lat = v^2 * |kappa| of the path at the car. ICRA run 17: only
+        # 4 % of the lap is grip-limited and 78 % is acceleration or braking,
+        # the +-0.08 band saturated 28 % of the time and the tire ran at slip
+        # 0.03 while its curve is flat-topped at 6.8-7.1 m/s^2 over 0.10-0.18.
+        # 0.12 puts a straight on that top; a hairpin exit at a_lat 6 gets
+        # 0.06, LESS than 0.08, which is what run 14's understeer asked for.
+        p('slip_circle', 0.0)
+        # Feed the slip that produces the PLAN's acceleration forward through
+        # the inverse tire curve, instead of waiting for a speed error to ask
+        # for it: the car delivered 91 % of its plan on run 17. Acceleration
+        # only; see _throttle_slip for what the brake side did on run 18.
+        # Float, like observer_wheels: the launch files cast every tunable to
+        # float, so accel_ff:=1.0 on, 0.0 off.
+        p('accel_ff', 0.0)
         # Loop delay from publishing a throttle to seeing it on the wheel. MEASURED
         # 0.15 s (see _throttle_slip). Everything in the band is predicted this far
         # ahead with the observer's acceleration. 0 = the old behaviour.
@@ -343,6 +376,9 @@ class PurePursuit(Node):
         self.wheel_r = g('wheel_radius')
         self.speed_source = str(g('speed_source')).lower()
         self.throttle_mode = str(g('throttle_mode')).lower()
+        self.obs_wheels = int(round(float(g('observer_wheels'))))
+        if self.obs_wheels not in (1, 4):
+            raise RuntimeError(f'observer_wheels must be 1 or 4, not {self.obs_wheels}')
         if self.speed_source not in ('tire', 'fused', 'encoder'):
             raise RuntimeError(f"speed_source must be 'tire', 'fused' or 'encoder', not {self.speed_source!r}")
         self.tire_m = float(g('tire_rise_slope'))
@@ -362,6 +398,11 @@ class PurePursuit(Node):
             raise RuntimeError(f"throttle_mode must be 'slip' or 'legacy', not {self.throttle_mode!r}")
         self.u_per_thr = float(g('u_per_throttle'))
         self.slip_accel, self.slip_brake = float(g('slip_accel')), float(g('slip_brake'))
+        self.slip_circle = float(g('slip_circle'))
+        self.accel_ff = float(g('accel_ff')) > 0.5
+        # mu is monotone on [0, S_PEAK]: tabulate it once for the inverse.
+        self._s_tab = np.linspace(0.0, TIRE_S_PEAK, 151)
+        self._mu_tab = np.array([self._mu(float(S)) for S in self._s_tab])
         self.u_launch = float(g('u_launch'))
         self.v_slip_den = float(g('v_slip_den'))
         self.imu_lever = float(g('imu_lever_arm'))
@@ -376,6 +417,7 @@ class PurePursuit(Node):
         self.v_enc = 0.0                # wheel surface speed from the encoders
         self.v_pose = float('nan')      # speed implied by the pose over pose_win
         self.yaw_rate = 0.0             # IMU gyro z, for latency compensation
+        self.steer_angle = 0.0          # last commanded steer [rad], for the 4-wheel observer
         self._imu_t = None
         self._imu_seen = False
         self._pose_hist = []            # (stamp, x, y, v_est) of the poses steered on
@@ -480,6 +522,11 @@ class PurePursuit(Node):
             f'slip band [-{self.slip_brake:g}, +{self.slip_accel:g}]  u_launch {self.u_launch:g} m/s  '
             f'lookahead {self.ld_min:g}-{self.ld_max:g} m (k {self.ld_k:g})  '
             f'latency_comp {self.latency:g} s')
+        if self.slip_circle > 0.0 or self.accel_ff:
+            self.get_logger().info(
+                (f'slip band: circle {self.slip_circle:.2f} x sqrt(1 - (a_lat/{self.steer_a_lat_max:g})^2), '
+                 'replacing the fixed band above' if self.slip_circle > 0.0 else 'slip band: fixed')
+                + ('  |  plan-acceleration feedforward ON' if self.accel_ff else ''))
         if self.dev_lap:
             # RESTRICTED topics -- never enable this for an evaluation run.
             self.get_logger().warn('dev_lap_telemetry ON: subscribing to RESTRICTED lap topics')
@@ -664,10 +711,24 @@ class PurePursuit(Node):
             return
         u, h = self.v_enc, dt / 5.0
         for _ in range(5):
-            S = (u - self.v_est) / max(self.v_est, self.v_slip_den)
-            a = math.copysign(self._mu(S) * G, S) - DRAG_LIN * self.v_est
+            if self.obs_wheels == 4:
+                # Four contact speeds along each wheel's rolling direction, one
+                # wheel speed u, equal loads: a = (g/4) sum mu(S_i). See the
+                # observer_wheels parameter for why this differs from one wheel.
+                w = self.yaw_rate * TRACK_WIDTH / 2.0
+                vf = self.v_est / max(math.cos(self.steer_angle), 0.5)
+                a = 0.25 * sum(self._wheel_accel(u, vc)
+                               for vc in (self.v_est - w, self.v_est + w, vf - w, vf + w))
+                a -= DRAG_LIN * self.v_est
+            else:
+                a = self._wheel_accel(u, self.v_est) - DRAG_LIN * self.v_est
             self.v_est = max(0.0, self.v_est + a * h)
         self.a_est = a                            # for the command-delay prediction
+
+    def _wheel_accel(self, u, vc):
+        """g * mu at one wheel: rim speed u, contact-patch speed vc (PhysX slip)."""
+        S = (u - vc) / max(vc, self.v_slip_den)
+        return math.copysign(self._mu(S) * G, S)
 
     def _note_pose(self, t, x, y):
         """Record a pose sample, stamped AT ITS SOURCE, for the speed correction.
@@ -820,7 +881,7 @@ class PurePursuit(Node):
         self._v_cmd = min(v_target, self._v_cmd + a_allowed * dt)
         return self._v_cmd
 
-    def _throttle_slip(self, v_target, a_plan=0.0):
+    def _throttle_slip(self, v_target, a_plan=0.0, a_lat=0.0):
         """Command a WHEEL speed, bounded to the tire's peak-force slip band.
 
         The sim spins the wheel to u = u_per_throttle * throttle regardless of
@@ -862,8 +923,28 @@ class PurePursuit(Node):
         # 1.76x the speed error. Commanding u = v_t alone tracked the target 0.15
         # m/s low against legacy's 0.07 (run 5 vs run 4); the same gain, applied
         # to the error at landing time, closes that. The band still bounds the slip.
-        u = v_target + self.slip_kp * (v_target - v_land)
-        u = min(max(u, v_land - self.slip_brake * den), v_land + self.slip_accel * den)
+        if self.slip_circle > 0.0:
+            cap = self.steer_a_lat_max if self.steer_a_lat_max > 0.0 else 7.0
+            f = math.sqrt(max(0.0, 1.0 - (a_lat / cap) ** 2))
+            s_acc = s_brk = max(self.slip_circle * f, 0.02)
+        else:
+            s_acc, s_brk = self.slip_accel, self.slip_brake
+        if self.accel_ff and a_pred > 0.0:
+            # ACCELERATION ONLY. The slip that delivers the plan's (gated)
+            # acceleration at landing, gross of drag; the proportional term then
+            # corrects the lag. Fed forward on the BRAKE side too (ICRA run 18)
+            # it made the car track the plan's deceleration instead of its
+            # speed: a car entering a braking zone slightly slow no longer
+            # braked less and caught up, every apex came in 0.1 m/s lower, and
+            # the lap was 0.09 s slower; braking delivery did not improve (91 %
+            # either way). Accel delivery went 91 -> 98 %, so that half stays.
+            gross = a_pred + DRAG_LIN * v_land
+            mu_need = min(abs(gross) / G, 0.95 * TIRE_MU_PEAK)
+            s_ff = math.copysign(float(np.interp(mu_need, self._mu_tab, self._s_tab)), gross)
+            u = v_land + s_ff * den + self.slip_kp * (v_target - v_land)
+        else:
+            u = v_target + self.slip_kp * (v_target - v_land)
+        u = min(max(u, v_land - s_brk * den), v_land + s_acc * den)
         if v_target > v and u < self.u_launch:
             u = self.u_launch
         self.v_land = v_land
@@ -1038,6 +1119,7 @@ class PurePursuit(Node):
             kappa_cmd = max(-k_cap, min(k_cap, kappa_cmd))
         delta = math.atan(kappa_cmd * self.wheelbase)          # bicycle model
         steering = float(np.clip(self.steer_gain * delta / self.max_steer, -1.0, 1.0))
+        self.steer_angle = steering * self.max_steer
 
         step = self.lap_len / n
 
@@ -1072,7 +1154,8 @@ class PurePursuit(Node):
                                      self.v_min, self.v_max))
 
         if self.throttle_mode == 'slip':
-            throttle = self._throttle_slip(v_target, float(self.path_a[near]))
+            throttle = self._throttle_slip(v_target, float(self.path_a[near]),
+                                           max(self.speed, 0.0) ** 2 * abs(float(self.kappa[near])))
         else:
             v_target = self._limit_accel(v_target)
             err = v_target - self.speed

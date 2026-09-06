@@ -154,9 +154,13 @@ trade the derate is for.
 ## 7. The ceiling, and the one lever left
 
 The real lap (6.50 on the fast line) sits 0.14 s above the profile's ideal
-(6.36). That gap is the 175 ms round trip: the car brakes early and runs 2-3 %
-under the profile through the two tight corners because it is reasoning about a
-car 175 ms in the past. Nothing on the car side moves it.
+(6.36). That gap is the 175 ms round trip: the car runs 2-3 % under the profile
+through the two tight corners because it is reasoning about a car 175 ms in the
+past. Measured precisely on the second track (section 9), the gap has two named
+parts, and neither is "braking early": the speed target is read further ahead
+than the delay alone requires, and the speed observer reads high in tight
+corners. Removing the first bought 0.1 s there; removing the second bought
+nothing and cost exit margin. Nothing on the car side moves the rest.
 
 The only thing that beats 6.46 is spending wall margin. Cutting the safety
 buffer from 0.15 to 0.10 m widens the corridor, lowers curvature, and raises
@@ -197,3 +201,87 @@ source ros_env.sh
 ros2 launch racer_bringup race.launch.py localizer:=amcl track:=porto log_csv:=run.csv
 python3 raceline/analyze_run.py run.csv --path raceline/porto/raceline_a6.5.csv
 ```
+
+---
+
+## 9. Second track: what transferred and what did not
+
+The ICRA 2026 competition track was mapped and climbed in ten runs on the
+branch `multi-track`, with the controller untouched. It confirmed the split
+predicted in section 2 exactly.
+
+**Transferred unchanged:** the tire observer, the slip-band throttle, the
+delay measurement, the derate, the curvature cap, both localization timing
+fixes. The first drive on the new map ran 13 clean laps with tracking error
+0.062 m and equal-time localization 0.115 m, Porto's numbers.
+
+**Did not transfer, and had to be re-derived:** the spawn (read after a reset,
+not after driving), the margin zones (three, each placed from a per-sample
+reading of where the car ran wide, never from a section average, which misled
+once), and the grip rung. The track's two hairpins have curvature 1.37 against
+Porto's 0.92, which puts the apex at 2.2 m/s; there the same ±0.2 m/s of
+delay-induced speed error is a 13 % lateral overload where on Porto it was 7 %.
+The 6.5 rung hit twice in 46 laps, both understeer at the tire's limit on a
+hairpin exit, traced tick by tick. The fix is a per-corner grip limit
+(`--lat-zones`), capping only the hairpins at 6.0: 0.15 s a lap, and the
+measured peak demand fell from 7.23 to 6.27 m/s².
+
+**Found on the way:** the map's duct walls are hollow and the LiDAR sees
+through their open ends, so the raceline needs a sealed geometry map while AMCL
+keeps the sensor map; the centreline extractor's greedy skeleton walk failed on
+a switchback and now orders the ring by BFS; the logger and the bootstrap still
+read Porto's constants and are now track-scoped.
+
+**The controller gap, taken apart (runs 11-14).** With the hairpins zoned
+and the main straight at 8 m/s the real lap sat 0.30 s over its profile, and
+0.28 of it was in the two braking zones. The car did not brake early: onset
+was 0.2-0.6 m *after* the profile's. It ran 0.5-1.0 m/s under the profile all
+the way down because the speed target is read `v x (delay + target_lead_s
+0.08) + 0.10 m` ahead, 1.8 m at 7 m/s where the delay alone puts it at 1.2, and
+in a zone falling 0.62 m/s per metre the extra lead saturates the brake side
+of the slip band. `target_lead_s` was tuned on Porto's short braking zones;
+zero here took the hairpin-approach loss from 0.18 to 0.07 s and is the ICRA
+registry default (run 13, 12 clean laps, 12.15 best / 12.22 mean).
+
+The second part is the speed observer: it simulates one wheel at the car's
+speed, while a hairpin's four wheels see four contact speeds on a concave
+friction curve, and it reads 0.15-0.19 m/s high at the apexes, zero on the
+straights. A four-wheel observer (`observer_wheels: 4`) removes the bias, on
+the car as in the offline replay, and it stays **off**: it gained no lap time,
+the hairpin sections were already on the profile's time, and with the true
+speed in hand the follower asked for more acceleration out of the left-leg
+apex at full steering lock, exit tire slip up 60 %, heading error up 50 %, and
+on the fourth lap the front tires ran out of grip and the car understeered
+into the exit wall, exactly run 9b's signature. The old observer's optimism
+had been the throttle limiter at that corner. The principled fix is a
+friction-circle allocation of the acceleration slip band; it is not built,
+because the remaining 0.26 s is spread across the lap and the physics floor
+for this configuration is 11.7 s ideal, 11.36 with every margin spent. Sub-11
+is not available from this car on this track. The floor line was driven once
+and hit within eight seconds at a gentle corner with 4.6 m/s² of demand: the
+margin was the limit there, not the tire. The 7.0 line, hardened from its own
+samples with a margin zone at the T1 exit and T2 capped at 6.5, ran ten clean
+laps at 12.00 best / 12.05 mean.
+
+**The longitudinal lever (runs 17-23).** Only 4 % of that lap was
+grip-limited and 18 % at the speed cap; 78 % was the car accelerating or
+braking on a plan of `a_long` 5.0, a Porto number never revisited, while the
+tire's curve is flat-topped at 6.8-7.1 m/s² over slip 0.10-0.18 and the car
+ran at slip 0.03 delivering 91 % of a plan asking 2.5 m/s². Three changes:
+a slip band on the flat top (0.12) scaled by the friction circle so hairpin
+exits get *less* than before; a feedforward of the plan's acceleration through
+the inverse tire curve (acceleration only: fed forward on braking it tracked
+the plan's deceleration instead of its speed and cost every apex 0.1 m/s);
+and a separate brake budget so acceleration climbs while the braking zones
+into the hairpins stay as validated. Rungs 5.5 then 6.0, the straight to 9,
+T2 back to 7.0 and T3 to 7.5 into its 0.45 m of outer room, two more margin
+zones from the samples: 11.60 best / 11.66 mean over eleven clean laps, the
+ICRA submission, 0.55 s a lap under the day's starting point. The ladder tops
+out at 6.0: at 8 m/s drag eats the tire and delivery falls to 89 %.
+
+**Still open:** a wall contact respawns the car at a checkpoint and nothing
+re-localizes it. One time AMCL re-converged on its own in 25 s; another time it
+never did and the car drove blind for half an hour. As the stack stands, one
+contact can end a run. The legal fix, detect the respawn, stop, call AMCL's
+global relocalization, creep until converged, is scoped but not built.
+

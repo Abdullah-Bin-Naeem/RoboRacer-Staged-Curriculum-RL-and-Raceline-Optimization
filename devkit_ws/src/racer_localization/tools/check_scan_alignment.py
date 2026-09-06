@@ -104,8 +104,9 @@ class Check(Node):
         ly = y + LIDAR_X * math.sin(yaw)
         ex = lx + rng * np.cos(yaw + ang)
         ey = ly + rng * np.sin(yaw + ang)
-        col = ((ex - self.ox) / self.res).astype(int)
-        row = (self.h - 1 - (ey - self.oy) / self.res).astype(int)
+        # floor first, then flip -- see log_localization._fit
+        col = np.floor((ex - self.ox) / self.res).astype(int)
+        row = (self.h - 1) - np.floor((ey - self.oy) / self.res).astype(int)
         ok = (row >= 0) & (row < self.h) & (col >= 0) & (col < self.w)
         if ok.sum() < 20:
             return None

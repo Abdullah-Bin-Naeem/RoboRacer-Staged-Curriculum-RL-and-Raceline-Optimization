@@ -92,6 +92,7 @@ TUNABLES = ('lookahead_min', 'lookahead_max', 'lookahead_k', 'lookahead_curv_gai
             # Tunable from the command line for the same reason as the rest:
             # limits are measured on the car, and a rebuild per attempt is tedious.
             'slip_accel', 'slip_brake', 'u_launch', 'u_per_throttle', 'v_slip_den', 'tire_rise_slope',
+            'observer_wheels', 'slip_circle', 'accel_ff',
             'cmd_delay_s', 'slip_kp', 'target_lead_s',
             # control loop rate; 20 matches the 17.5 Hz sim tick seen here, raise it
             # with the tick (headless sim, faster machine) so the loop is not the limit
@@ -289,6 +290,11 @@ def _launch(context, *args, **kwargs):
         'bootstrap_seconds': bootstrap_seconds,
     }
     follower_args.update({n: cfg(n) for n in TUNABLES if cfg(n) != ''})
+    # The track's validated follower arguments (frames.TRACKS[...]['follower']),
+    # each unless the same name was given explicitly on the command line.
+    for name, value in frames.follower_args(track).items():
+        if name in TUNABLES and cfg(name) == '':
+            follower_args[name] = value
     actions.append(TimerAction(
         period=float(cfg('follower_delay')),
         actions=[IncludeLaunchDescription(

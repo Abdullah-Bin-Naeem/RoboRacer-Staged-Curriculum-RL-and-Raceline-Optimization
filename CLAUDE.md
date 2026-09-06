@@ -338,19 +338,15 @@ Keep this separation intact when adding code:
   checks, and `pure_pursuit`'s `pose_topic` DEFAULTED to ground-truth `/odom`, so
   development runs produced lap times that read as race-legal and were not.
 
-`mode:=race` seeds the localizer with `bootstrap_mode:=spawn`: the registry's
-spawn constant, pushed through the same confirm-and-settle handshake as a
-truth seed, with no restricted topic read at all. The one-shot `/ips` seed
-(`bootstrap_mode:=truth`, the dev default) was once defended as "inside the
-warmup window", but the 2026 rulebook forbids "utilizing simulation ground
-truth data" and the Technical Guide says restricted topics "should not be used
-while autonomously racing at run-time", and neither grants a warmup exception,
-so race mode converts `truth` to `spawn`; an explicit `global` is honoured.
-The constant is right because the simulator resets the car to it (read `/ips`
-right after a reset when adding a track), and if it is wrong on the day the
-confirm step fails and the bootstrap refuses to hand over rather than drive on
-a bad pose. slam_toolbox has no global relocalization, so for `localizer:=slam`
-the spawn seed is also the only thing that makes a race run work.
+`mode:=race` deliberately does **not** force `bootstrap_mode:=global` any more.
+It used to, and that was a bug rather than caution: slam_toolbox has no global
+relocalization at all, so `mode:=race localizer:=slam` fell through to the
+hardcoded `frames.SPAWN_*` — and slam seeds with a ±0.5 m correlative search, so
+a wrong constant could never be recovered and stayed frozen for the whole timed
+run. The warmup seed is both legal and the only thing that makes that
+combination work. `SPAWN_*` is now only the fallback for `bootstrap:=false` and
+`bootstrap_mode:=global`; the bootstrap prints the measured spawn whenever the
+constant disagrees with it.
 
 ## Measured simulator constants
 

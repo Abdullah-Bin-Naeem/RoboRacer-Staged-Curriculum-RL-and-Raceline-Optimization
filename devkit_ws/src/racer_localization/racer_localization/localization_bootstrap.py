@@ -111,7 +111,7 @@ import tf2_ros
 from geometry_msgs.msg import Point, PoseWithCovarianceStamped
 from lifecycle_msgs.msg import State
 from lifecycle_msgs.srv import GetState
-from racer_common import frames, restricted
+from racer_common import restricted
 from racer_common.frames import NS as COMMON_NS
 from rclpy.node import Node
 from rclpy.qos import (QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile,
@@ -186,7 +186,6 @@ class LocalizationBootstrap(Node):
         self.timeout = g('timeout_s')
         self.wheel_r = g('wheel_radius')
         self.mode = str(g('mode')).lower()
-        self.track = str(g('track'))
         self.settle_s = g('settle_s')
         self.localizer_wait = float(g('localizer_wait_s'))
         self.est_topic = str(g('estimate_topic'))
@@ -246,20 +245,6 @@ class LocalizationBootstrap(Node):
             self._ips_sub = self.create_subscription(
                 Point, f'{NS}/ips', self._cb_ips, QOS)
             self.create_subscription(Imu, f'{NS}/imu', self._cb_imu, QOS)
-        elif self.mode == 'spawn':
-            # The RACE mode. Same seed -> confirm -> settle handshake as 'truth',
-            # but the seed is the registry's spawn constant, read from no topic
-            # at all. The rulebook forbids "utilizing simulation ground truth
-            # data" and the guide says restricted topics "should not be used
-            # while autonomously racing at run-time"; neither grants a warmup
-            # exception, so the one-shot /ips read is not something to defend.
-            # The constant is prior knowledge like the map, and it is right
-            # because the simulator resets the car to it (frames.TRACKS notes
-            # how each was measured). If it is wrong on the day the confirm
-            # step fails and this node refuses to hand over, as with 'truth'.
-            sx, sy, syaw = (float(v) for v in frames.spawn(self.track or None))
-            self.truth_pos = (sx, sy)
-            self.truth_quat = (0.0, 0.0, math.sin(syaw / 2.0), math.cos(syaw / 2.0))
 
         # TF is needed to notice slam_toolbox coming up (ready_check=tf) and to
         # read the estimate the follower actually drives on (verify_via_tf).
@@ -288,11 +273,6 @@ class LocalizationBootstrap(Node):
                               if self.nudge_srv else None)
 
         self._announce(False)
-        if self.mode == 'spawn':
-            self.get_logger().info(
-                f'mode=spawn: seeding the initial pose from the registry constant '
-                f'({self.truth_pos[0]:.3f}, {self.truth_pos[1]:.3f}); no ground '
-                'truth is read. Tracking is lidar + map + dead reckoning.')
         if self.mode == 'truth':
             restricted.seed(self, f'{COMMON_NS}/ips', 'initial pose seed')
             self.get_logger().info(
@@ -609,7 +589,7 @@ class LocalizationBootstrap(Node):
                         'come up?')
             return
 
-        if self.mode in ('truth', 'spawn'):
+        if self.mode == 'truth':
             self._tick_truth(now)
         else:
             self._tick_global(now)
@@ -748,7 +728,7 @@ class LocalizationBootstrap(Node):
                 f'waiting for ground truth: ips={"ok" if self.truth_pos else "--"} '
                 f'imu={"ok" if self.truth_quat else "--"}')
             return
-        if self.mode in ('truth', 'spawn'):
+        if self.mode == 'truth':
             source = (f'TF {self.map_frame} -> {self.base_frame}'
                       if self.verify_via_tf else self.est_topic)
             self.get_logger().info(

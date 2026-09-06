@@ -16,17 +16,10 @@ calls `warn(self, topic, why)` and the terminal says so, once, in red.
 
 THE WARMUP WINDOW
 -----------------
-"Restricted" was first read here as being about WHEN and HOW OFTEN: the first
-lap is a warmup and the timer starts after it, so a one-shot read before the
-car moves looked permitted. The 2026 texts do not say that. The rulebook:
-"utilizing simulation ground truth data or controlling aspects other than the
-vehicle actuators is not allowed." The Technical Guide: restricted topics "may
-be used for debugging, training AI models, etc. However, these topics should
-not be used while autonomously racing at run-time." No warmup exception is
-written anywhere, so the race configuration reads NONE of them, ever
-(localization_bootstrap mode 'spawn' seeds from the registry constant). The
-seed/warn distinction below is kept for DEVELOPMENT runs, where a truth seed
-is convenient and the terminal still says exactly what was read.
+"Restricted" is about WHEN and HOW OFTEN, not only about which topic. The first
+lap is a warmup and the timer starts after it, so these topics are readable up
+to that point. What is not acceptable is a node that keeps reading ground truth
+into the timed laps.
 
 So there are two access patterns, and they get two functions:
 

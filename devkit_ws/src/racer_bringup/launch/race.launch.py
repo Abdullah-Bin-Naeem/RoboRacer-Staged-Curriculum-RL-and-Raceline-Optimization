@@ -161,11 +161,14 @@ def _launch(context, *args, **kwargs):
     dev_lap = 'false' if race_mode else cfg('dev_lap_telemetry')
     bootstrap_seconds = '0.0' if race_mode else cfg('bootstrap_seconds')
     use_tf_pose = 'true' if race_mode else cfg('use_tf_pose')
-    # NOT forced. bootstrap_mode:=truth is race-legal: the first lap is a warmup
-    # and the timer starts after it, so the one-shot /ips read that seeds the
-    # localizer happens inside the permitted window, and localization_bootstrap
-    # destroys the subscription the moment the seed resolves. See
-    # racer_common/restricted.py, THE WARMUP WINDOW.
+    # bootstrap_mode:=truth (the dev default, a one-shot /ips read before the
+    # car moves) is NOT used in race mode. The 2026 rulebook forbids "utilizing
+    # simulation ground truth data" and the Technical Guide says restricted
+    # topics "should not be used while autonomously racing at run-time";
+    # neither text grants a warmup-lap exception, whatever the timer does. Race
+    # mode therefore seeds from the registry's spawn constant instead
+    # (bootstrap_mode:=spawn): the same confirm-and-settle handshake, no topic
+    # read. An explicit bootstrap_mode:=global is honoured.
     #
     # Forcing 'global' here was the bug. slam_toolbox has NO global search, so
     # `mode:=race localizer:=slam` silently fell back to the hardcoded
@@ -173,6 +176,8 @@ def _launch(context, *args, **kwargs):
     # wrong constant was frozen for the entire timed run. The seed is both legal
     # and the only thing that makes that combination work.
     bootstrap_mode = cfg('bootstrap_mode')
+    if race_mode and bootstrap_mode == 'truth':
+        bootstrap_mode = 'spawn'
 
     loc_share = get_package_share_directory('racer_localization')
     ctl_share = get_package_share_directory('racer_control')
@@ -185,9 +190,9 @@ def _launch(context, *args, **kwargs):
               f'bootstrap={bootstrap_mode}')
     if race_mode:
         banner += ('  -- RACE MODE: nothing reads ground truth continuously'
-                   + ('; the initial pose is seeded once from /ips inside the '
-                      'warmup window, then released'
-                      if bootstrap_mode == 'truth' and
+                   + ('; the initial pose is the registry spawn constant, '
+                      'confirmed against the localizer, no topic read'
+                      if bootstrap_mode == 'spawn' and
                       cfg('bootstrap').lower() == 'true'
                       else '; no ground truth at all'))
 
@@ -223,7 +228,7 @@ def _launch(context, *args, **kwargs):
         # Warn only when nothing will seed this localizer: no global search AND
         # no one-shot truth seed leaves it on the hardcoded constant, which
         # slam_toolbox's +-0.5 m search cannot correct.
-        seeded = (cfg('bootstrap').lower() == 'true' and bootstrap_mode == 'truth')
+        seeded = (cfg('bootstrap').lower() == 'true' and bootstrap_mode in ('truth', 'spawn'))
         if not spec['has_global'] and not seeded:
             actions.append(LogInfo(msg=(
                 f'[race] WARNING: {localizer} has no global relocalization and '

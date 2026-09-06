@@ -261,7 +261,23 @@ is not available from this car on this track. The floor line was driven once
 and hit within eight seconds at a gentle corner with 4.6 m/s² of demand: the
 margin was the limit there, not the tire. The 7.0 line, hardened from its own
 samples with a margin zone at the T1 exit and T2 capped at 6.5, ran ten clean
-laps at 12.00 best / 12.05 mean and is the ICRA submission.
+laps at 12.00 best / 12.05 mean.
+
+**The longitudinal lever (runs 17-23).** Only 4 % of that lap was
+grip-limited and 18 % at the speed cap; 78 % was the car accelerating or
+braking on a plan of `a_long` 5.0, a Porto number never revisited, while the
+tire's curve is flat-topped at 6.8-7.1 m/s² over slip 0.10-0.18 and the car
+ran at slip 0.03 delivering 91 % of a plan asking 2.5 m/s². Three changes:
+a slip band on the flat top (0.12) scaled by the friction circle so hairpin
+exits get *less* than before; a feedforward of the plan's acceleration through
+the inverse tire curve (acceleration only: fed forward on braking it tracked
+the plan's deceleration instead of its speed and cost every apex 0.1 m/s);
+and a separate brake budget so acceleration climbs while the braking zones
+into the hairpins stay as validated. Rungs 5.5 then 6.0, the straight to 9,
+T2 back to 7.0 and T3 to 7.5 into its 0.45 m of outer room, two more margin
+zones from the samples: 11.60 best / 11.66 mean over eleven clean laps, the
+ICRA submission, 0.55 s a lap under the day's starting point. The ladder tops
+out at 6.0: at 8 m/s drag eats the tire and delivery falls to 89 %.
 
 **Still open:** a wall contact respawns the car at a checkpoint and nothing
 re-localizes it. One time AMCL re-converged on its own in 25 s; another time it

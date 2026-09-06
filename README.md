@@ -65,7 +65,9 @@ hairpins, capped at 6.0 by lateral zones.
 
 | line | simulator | tick | laps | best | mean | note |
 |---|---|---|---|---|---|---|
-| 7.0, hairpins 6.0, T2 6.5, straight 8, T1-exit margin (`raceline_a7.0zv_hard.csv`) | graphics | 17.8 Hz | 10 clean | **12.00 s** | 12.05 s | run 17; **submission**, the `track:=icra2026` default; T2 demand ≤ 6.5, nothing under 0.15 m |
+| 7.0, hairpins 6.0, T3 7.5, longitudinal 6.0/5.0, straight 9, five margin zones (`raceline_a7.0zv_hard_l6.0_corners_h.csv`), circle band + feedforward | graphics | 17.7 Hz | 11 clean | **11.60 s** | 11.66 s | run 23; **submission**, the `track:=icra2026` default; nothing under 0.18 m, hairpin demand ≤ 6.1 |
+| same at longitudinal 5.5/5.0, straight 8 (`raceline_a7.0zv_hard_l5.5.csv`) | graphics | 17.8 Hz | 10 clean | 11.80 s | 11.87 s | run 20; first longitudinal rung |
+| 7.0, hairpins 6.0, T2 6.5, straight 8, T1-exit margin (`raceline_a7.0zv_hard.csv`) | graphics | 17.8 Hz | 10 clean | 12.00 s | 12.05 s | run 17; the flag-free fallback |
 | 7.0, hairpins 6.0, straight 8 (`raceline_a7.0zv.csv`) | graphics | 17.8 Hz | 11 clean | 12.00 s | 12.05 s | run 15; 0.11 m at the T1 exit and T2 at 7.06, hence the hardening |
 | 6.5, hairpins 6.0, straight 8 (`raceline_a6.5zv.csv`), `target_lead_s 0` | graphics | 17.7 Hz | 12 clean | 12.15 s | 12.22 s | run 13; the fallback line |
 | same line, `target_lead_s 0.08` | graphics | 17.4 Hz | 3 clean | 12.25 s | 12.27 s | run 11; the lead cost 0.1 s in this track's 7.8 m braking zones |

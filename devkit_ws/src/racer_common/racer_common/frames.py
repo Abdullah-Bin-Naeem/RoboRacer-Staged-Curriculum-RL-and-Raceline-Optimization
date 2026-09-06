@@ -99,14 +99,28 @@ TRACKS = {
         # laps, 11.80 best / 11.87 mean, tightest 0.13 m at the left-leg entry
         # tip. raceline_a7.0zv_hard.csv (run 17, 12.00/12.05) is the fallback
         # if the feedforward is ever suspect: it needs neither flag.
-        'raceline': 'raceline_a7.0zv_hard_l5.5.csv',
-        'a_long': '5.5', 'a_brake': '5.0',     # the profile's budgets, for regeneration
+        # Run 23 (the submission): the 6.0 / 5.0 longitudinal rung with the main
+        # straight at 9 m/s, T2 back to 7.0 and T3 zoned to 7.5 (its outer wall
+        # is 0.45 m off the line, so understeer there runs into room), plus the
+        # left-leg exit and T2 inner-wall margin zones: 11 clean laps, 11.60
+        # best / 11.66 mean, nothing under 0.18 m, hairpin demand <= 6.1.
+        # Regenerate with: --a-long 6.0 --a-brake 5.0 --v-max 7.0 --v-zones
+        # 7.5:18.5:9.0 and the zones below. Fallbacks, all validated clean:
+        # raceline_a7.0zv_hard_l5.5.csv (run 20, 11.80/11.87) and
+        # raceline_a7.0zv_hard.csv (run 17, 12.00/12.05, needs no flags).
+        'raceline': 'raceline_a7.0zv_hard_l6.0_corners_h.csv',
+        'a_long': '6.0', 'a_brake': '5.0', 'v_zones': '7.5:18.5:9.0',
         # Per-corner lateral limits (--lat-zones s0:s1:a_lat), the 'z' lines.
         # Both hairpins: apex demand at 6.5 was measured up to 7.23 m/s^2
         # against a tire that gives 7.0.
         # T2 (s 17.5-24) at 6.5: on the plain 7.0 rung its measured demand
         # reached 7.06, the tire's limit, run 15.
-        'lat_zones': '37.5:43.5:6.0,43:47:6.0,17.5:24:6.5',
+        # T3 (s 24-30) at 7.5, above the rung: its outer wall is 0.45 m off the
+        # line and the car measured 0.42-0.53 there, so understeer runs into
+        # room; the combined limit settles it at 6.74 planned. T2's 6.5 cap
+        # came off once its inner-wall margin zone gave it 0.26 m (it measured
+        # 6.84 max at 0.27 m, run 23).
+        'lat_zones': '37.5:43.5:6.0,43:47:6.0,24:30:7.5',
         # Placed from measurement, exactly as Porto's were: on the first logged
         # run (a4.0, 13 laps) the car exited the right-hand hairpin round the
         # left leg's tip 0.10-0.13 m to the left of the line on EVERY lap, and
@@ -130,7 +144,12 @@ TRACKS = {
         # the plain 7.0 line (run 15). 0.15 did not bite (the line sat 0.47 m
         # from that wall, above what 0.15 asks); 0.35 moved it 0.127 m and the
         # car has 0.27 m there now (run 17).
-        'margin_zones': '45.5:51.5:L:0.30,34:38.5:R:0.15,43:45:R:0.10,8.5:11.5:L:0.35',
+        # Left-leg exit deepened 0.30 -> 0.45 after the 6.0 rung touched there on
+        # run 21's warm-up lap (understeer wide, lateral +0.53): the line moved
+        # 0.155 m and the car reads 0.42 (run 23). Entry tip R 0.10 -> 0.25 (the
+        # amount that bites; the tip went 0.13 -> 0.18). T2 R 0.15 at s 21.5-23.5:
+        # the line sat 0.13 m from T2's INNER wall, now 0.26, car 0.27.
+        'margin_zones': '45.5:51.5:L:0.45,34:38.5:R:0.15,43:45:R:0.25,8.5:11.5:L:0.35,21.5:23.5:R:0.15',
         # v_max 8.0 is safe HERE ONLY because the zv line itself holds every
         # section but the main straight at 7: a global 8 (run 9) bought 0.03 s
         # and pushed the middle-wall hairpin's demand to 7.23, both hits were

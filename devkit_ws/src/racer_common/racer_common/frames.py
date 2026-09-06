@@ -86,14 +86,20 @@ TRACKS = {
         # leaves only 8 % of lateral headroom at that rung. The submission
         # line is 6.5 with the hairpins capped at 6.0 by lat_zones below:
         # about 14 % headroom there, the rest of the lap untouched.
-        # a6.5zv: the z line with the main straight (s 7.5-18.5) at 8 m/s and
-        # the rest held at 7 by the LINE, not the follower cap (--v-zones).
-        # Validated run 13: 12 clean laps, 12.15 best / 12.22 mean.
-        'raceline': 'raceline_a6.5zv.csv',
+        # The hardened fast line: 7.0 rung, hairpins capped at 6.0 and T2 at
+        # 6.5 (lat_zones), the main straight at 8 m/s and the rest held at 7 by
+        # the LINE (--v-zones), plus a left margin zone at the T1 exit. Run 17:
+        # 10 clean laps, 12.00 best / 12.05 mean, tightest 0.15 m at the
+        # left-leg entry tip (s 43.8, unchanged on every line since run 8).
+        # raceline_a6.5zv.csv is the previous submission (run 13, 12.15/12.22)
+        # and the fallback if the fast line ever shows contact.
+        'raceline': 'raceline_a7.0zv_hard.csv',
         # Per-corner lateral limits (--lat-zones s0:s1:a_lat), the 'z' lines.
         # Both hairpins: apex demand at 6.5 was measured up to 7.23 m/s^2
         # against a tire that gives 7.0.
-        'lat_zones': '37.5:43.5:6.0,43:47:6.0',
+        # T2 (s 17.5-24) at 6.5: on the plain 7.0 rung its measured demand
+        # reached 7.06, the tire's limit, run 15.
+        'lat_zones': '37.5:43.5:6.0,43:47:6.0,17.5:24:6.5',
         # Placed from measurement, exactly as Porto's were: on the first logged
         # run (a4.0, 13 laps) the car exited the right-hand hairpin round the
         # left leg's tip 0.10-0.13 m to the left of the line on EVERY lap, and
@@ -112,7 +118,12 @@ TRACKS = {
         # rather than a gamble. NOTE: the entry zone at 43:45 does not bite at
         # 0.10 (the line is already 0.33 m off the tip, above the 0.285 m the
         # solver requires); ~0.22 would be needed to move the line there.
-        'margin_zones': '45.5:51.5:L:0.30,34:38.5:R:0.15,43:45:R:0.10',
+        # Fourth zone, left, s 8.5-11.5, the T1 exit onto the straight: at
+        # 7 m/s the car drifts 0.19-0.23 m left of the line and had 0.11 m on
+        # the plain 7.0 line (run 15). 0.15 did not bite (the line sat 0.47 m
+        # from that wall, above what 0.15 asks); 0.35 moved it 0.127 m and the
+        # car has 0.27 m there now (run 17).
+        'margin_zones': '45.5:51.5:L:0.30,34:38.5:R:0.15,43:45:R:0.10,8.5:11.5:L:0.35',
         # v_max 8.0 is safe HERE ONLY because the zv line itself holds every
         # section but the main straight at 7: a global 8 (run 9) bought 0.03 s
         # and pushed the middle-wall hairpin's demand to 7.23, both hits were

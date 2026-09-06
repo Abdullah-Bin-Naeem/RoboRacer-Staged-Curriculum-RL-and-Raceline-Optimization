@@ -257,7 +257,11 @@ had been the throttle limiter at that corner. The principled fix is a
 friction-circle allocation of the acceleration slip band; it is not built,
 because the remaining 0.26 s is spread across the lap and the physics floor
 for this configuration is 11.7 s ideal, 11.36 with every margin spent. Sub-11
-is not available from this car on this track; sub-12 is, on the 7.0 line.
+is not available from this car on this track. The floor line was driven once
+and hit within eight seconds at a gentle corner with 4.6 m/s² of demand: the
+margin was the limit there, not the tire. The 7.0 line, hardened from its own
+samples with a margin zone at the T1 exit and T2 capped at 6.5, ran ten clean
+laps at 12.00 best / 12.05 mean and is the ICRA submission.
 
 **Still open:** a wall contact respawns the car at a checkpoint and nothing
 re-localizes it. One time AMCL re-converged on its own in 25 s; another time it

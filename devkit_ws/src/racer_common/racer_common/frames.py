@@ -150,18 +150,21 @@ TRACKS = {
         # amount that bites; the tip went 0.13 -> 0.18). T2 R 0.15 at s 21.5-23.5:
         # the line sat 0.13 m from T2's INNER wall, now 0.26, car 0.27.
         'margin_zones': '45.5:51.5:L:0.45,34:38.5:R:0.15,43:45:R:0.25,8.5:11.5:L:0.35,21.5:23.5:R:0.15',
-        # v_max 9.0 matches the LINE. The zv line holds every section but the
-        # main straight at 7 by itself, and run 23 re-profiled that straight to
-        # 9 (--v-zones 7.5:18.5:9.0) -- but the follower's cap stayed at 8.0 and
-        # clipped it, so the 9 m/s straight has never actually been driven: the
-        # plan asks 8.02-9.00 over s 11.1-16.5 and the car was held at 8.00.
-        # Integrating the line against the cap prices it at 0.052 s a lap, and
-        # the clipped stretch is the main straight, |kappa| ~ 0, so nothing here
-        # touches lateral grip -- this is not the global 8 that run 9 rejected
-        # (that raised the HAIRPINS' ceiling too and took their demand to 7.23).
-        # What it does change is the entry to T2: the car now arrives on the
-        # line's own 9 m/s braking distance, and brake delivery measures ~91 %,
-        # so T2's clearance is the thing to watch on the validation run.
+        # v_max 8.0, and the 9 m/s the LINE asks for over s 11.1-16.5 is
+        # therefore clipped away -- worth 0.052 s a lap, measured by integrating
+        # the line against the cap. TRIED AND REVERTED (run 24, macOS host):
+        # v_max 9.0 does unclip it, the car reached 8.90 against 8.07, and it
+        # put SIX collisions on the board, every one of them at T2 (s 21.5-23.2)
+        # and every one running wide, 0.31-0.69 m off the line. The mechanism is
+        # visible in the speed trace: the band pins 48 % of the main straight on
+        # this host, so the car only makes ~8.2 of the planned 9.0 -- but the
+        # PLAN's braking point is placed for a car that reached 9.0 and is
+        # already shedding speed, so the car arrives at T2 above the profile and
+        # understeers out of it. Unclipping the straight needs the acceleration
+        # to actually arrive first (slip_circle, which is 0.12 here against the
+        # 0.16 measured optimum at zero lateral load), or a line re-profiled
+        # with an earlier T2 braking point. Not a lateral-grip problem: |kappa|
+        # is ~0 where the clip bites.
         # lookahead_max 2.6 goes with it. target_lead_s 0.0: the
         # 0.08 tuned on Porto put the speed target 1.8 m ahead in this track's
         # 7.8 m braking zones and cost 0.28 s a lap (runs 11 vs 13).
@@ -170,7 +173,7 @@ TRACKS = {
         # exits, less than the fixed 0.08). accel_ff: plan-acceleration
         # feedforward, acceleration side only (run 18 showed the brake side
         # costs apex speed). Together: plan delivery 91 -> 95-99 %.
-        'follower': {'v_max': '9.0', 'lookahead_max': '2.6', 'target_lead_s': '0.0',
+        'follower': {'v_max': '8.0', 'lookahead_max': '2.6', 'target_lead_s': '0.0',
                      'slip_circle': '0.12', 'accel_ff': '1.0'},
     },
 }

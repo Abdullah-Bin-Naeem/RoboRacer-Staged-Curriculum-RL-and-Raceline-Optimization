@@ -243,7 +243,8 @@ class PurePursuit(Node):
         p('slip_circle', 0.0)
         # Feed the slip that produces the PLAN's acceleration forward through
         # the inverse tire curve, instead of waiting for a speed error to ask
-        # for it: the car delivered 91 % of its plan on run 17 (both ways).
+        # for it: the car delivered 91 % of its plan on run 17. Acceleration
+        # only; see _throttle_slip for what the brake side did on run 18.
         # Float, like observer_wheels: the launch files cast every tunable to
         # float, so accel_ff:=1.0 on, 0.0 off.
         p('accel_ff', 0.0)
@@ -891,9 +892,15 @@ class PurePursuit(Node):
             s_acc = s_brk = max(self.slip_circle * f, 0.02)
         else:
             s_acc, s_brk = self.slip_accel, self.slip_brake
-        if self.accel_ff:
-            # The slip that delivers the plan's (gated) acceleration at landing,
-            # gross of drag; the proportional term then only corrects the lag.
+        if self.accel_ff and a_pred > 0.0:
+            # ACCELERATION ONLY. The slip that delivers the plan's (gated)
+            # acceleration at landing, gross of drag; the proportional term then
+            # corrects the lag. Fed forward on the BRAKE side too (ICRA run 18)
+            # it made the car track the plan's deceleration instead of its
+            # speed: a car entering a braking zone slightly slow no longer
+            # braked less and caught up, every apex came in 0.1 m/s lower, and
+            # the lap was 0.09 s slower; braking delivery did not improve (91 %
+            # either way). Accel delivery went 91 -> 98 %, so that half stays.
             gross = a_pred + DRAG_LIN * v_land
             mu_need = min(abs(gross) / G, 0.95 * TIRE_MU_PEAK)
             s_ff = math.copysign(float(np.interp(mu_need, self._mu_tab, self._s_tab)), gross)

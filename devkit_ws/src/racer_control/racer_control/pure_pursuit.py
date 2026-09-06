@@ -513,7 +513,7 @@ class PurePursuit(Node):
         self.create_subscription(Imu, g('imu_topic'), self._cb_imu, QOS)
         self.get_logger().info(
             f'speed_source={self.speed_source}  throttle_mode={self.throttle_mode}  '
-            f'slip band [-{self.slip_brake:g}, +{self.slip_accel:g}]  u_launch {self.u_launch:g} m/s  '
+            (f'slip band circle {self.slip_circle:.2f} x sqrt(1-(a_lat/{self.steer_a_lat_max:.1f})^2)' if self.slip_circle > 0.0 else f'slip band [-{self.slip_brake:g}, +{self.slip_accel:g}]  u_launch {self.u_launch:g} m/s  ') + (', accel feedforward ON' if self.accel_ff else '')
             f'lookahead {self.ld_min:g}-{self.ld_max:g} m (k {self.ld_k:g})  '
             f'latency_comp {self.latency:g} s')
         if self.dev_lap:

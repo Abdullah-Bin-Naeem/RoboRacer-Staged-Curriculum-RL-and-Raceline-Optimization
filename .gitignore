@@ -1,8 +1,9 @@
-# colcon output. The image builds the workspace itself; a host build tree in the
-# context would only slow it down.
-devkit_ws/build/
-devkit_ws/install/
-devkit_ws/log/
+# colcon output, if the repo root is ever built in place as a workspace. The
+# image builds it itself; a host build tree in the context would only slow the
+# build down.
+build/
+install/
+log/
 
 __pycache__/
 *.pyc

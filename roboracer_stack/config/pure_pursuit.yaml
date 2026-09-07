@@ -1,0 +1,197 @@
+# Pure pursuit for the AutoDRIVE RoboRacer.
+#
+# Lookahead values come from an offline sweep against the extracted centerline
+# (bicycle model, 3 laps): these gave the lowest tracking error, ~0.03 m mean /
+# 0.06 m max. Lap time is set by the SPEED block below, not by lookahead --
+# every lookahead setting produced the same lap time.
+
+pure_pursuit:
+  ros__parameters:
+
+    path_csv: ''            # set on the command line or in the launch file
+    pose_topic: /autodrive/roboracer_1/odom   # RESTRICTED at race time; see below
+    control_hz: 20.0
+
+    # ---- Lookahead ----
+    # Ld = lookahead_k * v_est, clamped. Short oscillates, long cuts corners.
+    #
+    # These are tuned for LATENCY, not for tracking error. The bridge is a
+    # WebSocket round trip, so pose is stale and commands land late. In a
+    # zero-latency sim a short lookahead (0.25) wins on paper -- with ~100 ms of
+    # loop delay the same setting is unstable (1.63 m mean error vs 0.05 m
+    # here), because the controller keeps correcting against where the car
+    # WAS. A longer lookahead is what buys back the phase margin.
+    #
+    # Measured on the two converged runs (raceline/analyze_run.py): 0.07 m mean
+    # tracking error on the centerline, no weave up to 5.7 m/s, and the extra
+    # error on the raceline was the tire running wide, not the controller. So
+    # these stay until the new profile has been driven and measured. Linearised,
+    # the loop's natural frequency is sqrt(2) v / Ld: at 6.7 m/s and 1.6 m that is
+    # 34-51 deg of phase lag for 100-175 ms of delay, thin but stable. If the
+    # analysis reports weave on fast straights, raise lookahead_max toward 2.2;
+    # if it reports cutting at corner entry, lower lookahead_k toward 0.35.
+    # NOTE max must exceed min: max < min used to clamp to max at EVERY speed.
+    # max 2.2, not 1.6: at 6.7 m/s on the straights the shorter value weaved
+    # (yaw +-9 deg in 0.2 s, 51 deg of phase lag at a 175 ms round trip) and
+    # clipped a wall 0.29 m from the line. Corners never see the max: the two
+    # rules below shorten it there.
+    lookahead_min: 0.80
+    lookahead_max: 2.20
+    lookahead_k: 0.55
+    # Bound the corner cut directly: the chord to the lookahead point sags inside
+    # by |kappa| Ld^2 / 8, kept under this fraction of the line's inside margin
+    # (its own width columns). Curvature scaling alone missed the gentle S-exit
+    # left-hander (kappa 0.36, inside wall 0.28 m): 0.20 m inside, wall.
+    lookahead_sag_frac: 0.5
+    # Scale lookahead_k and lookahead_max by the measured command delay over
+    # this reference. The values above were tuned at 175 ms (17.5 Hz sim tick:
+    # the round trip is three sim frames, 170-175 ms here at 5 ms resolution;
+    # an earlier 50 ms regression grid read it as 150); at 13-14.6 Hz the delay
+    # was 190-210 ms and the same lookahead weaved into a wall on the straight
+    # after the first corner. Phase margin goes as v*delay/Ld.
+    lookahead_delay_ref: 0.175
+    # Derate the speed targets on a slow loop. The profile's lateral limit was
+    # proven at a 175 ms round trip (runs 17 and 21, 17.3-17.5 Hz); the
+    # evaluation machine is unknown and this one decayed from 17.3 to 12.8 Hz
+    # within one session, at which point the 7.0 profile hit walls it had
+    # cleared (measured delay 190-210 ms). Corner speed goes as sqrt(a_lat), so
+    # targets scale by sqrt(a_lat_eff / profile limit), the profile limit read
+    # from the CSV as max v^2 |kappa|, a_lat_eff sliding to derate_a_lat between
+    # the two delays: none at the proven delay, full at the delay that hit.
+    # A slow machine gets a slower clean lap instead of a hit. With the earlier
+    # 0.15 reference the derate was already 36 % in at 175 ms and cost 0.1 s a
+    # lap on this machine (run 21: 6.80/6.88 against run 17's 6.65/6.79).
+    derate_delay_from: 0.175
+    derate_delay_to: 0.21
+    derate_a_lat: 6.0
+    # Divide the lookahead by (1 + gain * worst |kappa| within it). The chord to
+    # a 1.6 m lookahead cuts 0.26 m inside a kappa-0.8 corner on entry; the line
+    # runs 0.28 m from the inside wall there. Measured 0.18 m inside and a hit at
+    # s = 26.7 m once the braking preview stopped hiding it. The car is slow
+    # where the path curves, so a 1.0 m lookahead is stable there; straights keep
+    # the full length and their phase margin. 0 turns it off.
+    lookahead_curv_gain: 0.67
+    # Cap the commanded curvature at this lateral acceleration over v^2. Above the
+    # tire's lateral peak more steering means LESS force; at the 6.5 rung the car
+    # ran 0.9 m wide at full lock in the S entry. Measured usable maxima 6.4-7.8.
+    steer_a_lat_max: 7.0
+
+    # ---- Steering ----
+    # From the published competition vehicle spec. delta = atan(kappa*wheelbase),
+    # command = delta/max_steer_rad. Max achievable curvature is
+    # tan(0.5236)/0.324 = 1.78 1/m; this track's tightest corner needs 0.92 1/m,
+    # so there is comfortable margin.
+    wheelbase: 0.3240
+    max_steer_rad: 0.5236
+    steering_gain: 1.0        # trim; verify with `ros2 run roboracer_stack calibrate_steering`
+
+    # ---- Speed ----
+    # v = sqrt(a_lat_max / |kappa|), clamped to [v_min, v_max].
+    # a_lat_max is a GRIP limit and cannot be validated offline -- the tuning
+    # sim has no tyre model, so it happily corners at any speed. Start at 3.0
+    # and raise it on the car until the back steps out, then back off ~20%.
+    a_lat_max: 3.0
+    v_min: 1.0
+    v_max: 8.0                 # matches V_MAX in the raceline notebook;
+                               # lower than the profile peak would clip it
+    curvature_preview_m: 1.0   # curvature FALLBACK only (no v_mps column): brake for the
+                               # worst corner within this distance
+    lead_min_m: 0.10           # with a profile, the target is the profile speed at
+                               # v * cmd_delay_s ahead (floor: this). It used to be the
+                               # minimum over a 1 m preview, which reached corner speed a
+                               # metre early at every entry: 0.55 s a lap, measured.
+    target_lead_s: 0.08        # extra preview for the speed target, on top of the measured
+                               # delay. The car's deceleration follows the wheel as slip
+                               # builds, and at the 7.0 rung the tire is at its limit in R1
+                               # and the S entry: arriving at the profile speed runs wide,
+                               # and the longer path costs more than braking early. Measured
+                               # 0 = 6.70/6.78 (run 26), 0.05 = 6.65/6.70 (runs 25, 27),
+                               # 0.08 = 6.60/6.69 with the corner bias halved to -0.04 and R1
+                               # from -0.15 to -0.11 m (run 28). Separate from
+                               # latency_comp_s, which is steering.
+
+    # Follow the v_mps column when the CSV has one (the notebooks emit it).
+    # Set false to force the curvature fallback -- useful for isolating whether
+    # a line is better because of its geometry or its speed profile.
+    use_path_speed: true
+
+    # ---- Speed source ----
+    # The sim spins each wheel to 25.25 m/s per unit throttle within a
+    # millisecond (raceline/VEHICLE_MODEL.md §3.1), so the ENCODERS REPORT THE
+    # THROTTLE COMMAND, not the car. 'tire' recovers the car's speed by running
+    # the sim's own tire curve and drag on the measured wheel speed; the error is
+    # bounded by construction and measured at p90 0.17-0.28 m/s against ground
+    # truth on four runs. 'encoder' is the old behaviour. 'fused' (IMU integral +
+    # pose blend) is kept for reference and FAILED twice in the sim: the sim's IMU
+    # is a 1 ms sample of a force that a 20 Hz throttle law makes jump every tick,
+    # and the pose speed between localizer updates is the encoders again.
+    speed_source: tire
+    tire_rise_slope: 3.0       # rising-branch initial slope; 3 fits ground truth best
+    imu_topic: /autodrive/roboracer_1/imu
+    pose_speed_window: 1.0     # s. Between localizer updates the pose is dead reckoning,
+                               # i.e. the encoders: over 0.25 s the pose speed WAS the
+                               # wheel speed (1.15x accelerating, 0.85x braking) and the
+                               # correction fed the slip band back on itself until the
+                               # car stopped in the S. Over 1 s AMCL's corrections win.
+    pose_speed_gain: 0.15      # symmetric, per new pose sample
+    pose_corr_max: 0.15        # m/s per sample. A rejection threshold used to sit here and
+                               # deadlocked the car at 0.6 m/s with v_est stuck at 0 for up
+                               # to 30 s; a clamp bounds spikes without ever refusing.
+    imu_lever_arm: 0.155       # the sim's IMU reports dv/dt - omega*v_y; adds lever*omega^2
+                               # back (up to 1.1 m/s^2 in the corners). 0 disables.
+    latency_comp_s: 0.05       # steer on the pose propagated this far ahead along the
+                               # mid-interval heading; 0 = off. Until the localizer's
+                               # estimate was made honest (dead_reckoning extrapolate_pos,
+                               # pure_pursuit compose_latest) a hidden lead did this job
+                               # badly; explicit 0.05 measured 6.60/6.70 s over 25 clean
+                               # laps against 6.70/6.76 at 0 (runs 24-25). The lookahead
+                               # was tuned with the delay in, so move the two together.
+
+    # ---- Throttle ----
+    # 'slip': command a WHEEL speed = target, clamped to
+    #     v_est +- slip * max(v_est, v_slip_den).
+    # PhysX computes slip as (u - v)/max(v, 4 m/s), so below 4 m/s the band is
+    # +-0.6 m/s of wheel speed rather than a percentage; a percentage band left
+    # the car crawling at 0.5-0.9 m/s for seconds. 0.15 is the slip where the
+    # forward friction curve peaks (VEHICLE_MODEL.md §3.1, §3.2): peak grip both
+    # ways, encoder error bounded to the band in every regime, launch and
+    # wall-respawn restarts included, because it keys on the car's speed.
+    # 'legacy': ff*v_t + kp*(v_t - speed) with the launch ramp, as before.
+    throttle_mode: slip
+    u_per_throttle: 25.25      # wheel surface speed per unit throttle, from the sim source
+    # The edges are a SATURATION that binds at launch, restarts and whenever the
+    # target is far from the car, i.e. every corner exit. They are placed around
+    # the speed the car will have when the command lands (cmd_delay_s), so they
+    # are real tire slips: 0.08 is ~5.5 m/s^2 on the fitted curve, above the
+    # profile's 4.55 and under the 7.06 peak, encoders ~0.3 m/s high while it binds.
+    slip_accel: 0.08
+    slip_brake: 0.08
+    v_slip_den: 4.0            # PhysX minLongSlipDenominator, default 4 m/s
+    slip_kp: 0.76              # proportional lead on (v_target - v_land) inside the band;
+                               # 0.76 = 25.25 * throttle_kp, the legacy law's gain. Without
+                               # it tire mode tracked the target 0.15 m/s low vs legacy's 0.07.
+    cmd_delay_auto: true       # measure the delay online (throttle vs wheel-speed cross-
+                               # correlation, 6 s window, every 2 s, 25 ms lag grid). The
+                               # round trip is three sim frames: 170-175 ms at 17.5 Hz here,
+                               # 190-210 ms at 13-14.6 Hz, and laps moved 0.2 s with it.
+    cmd_delay_window_s: 6.0
+    cmd_delay_update_s: 2.0
+    cmd_delay_s: 0.175         # starting value / fixed value when auto is off. MEASURED: the
+                               # wheel follows 25.25*throttle 175 ms late (three sim
+                               # frames, 5 ms regression grid). Without this the band's lead was
+                               # gone by the time it landed: 0.04 m/s of wheel slip
+                               # and 1.7 m/s^2 where the profile wanted 3.5-4.
+    u_launch: 0.4              # wheel-speed floor from rest [m/s]; below the band's 0.6, kept as a guard
+    # legacy mode only. throttle_ff = 1/25.25: the old feedforward WAS the
+    # physics; kp acted on the echo and did nothing for the car.
+    throttle_kp: 0.030
+    throttle_ff: 0.040
+    a_long_launch: 0.6
+    a_long_launch_v: 2.0
+    # 1.0 is the devkit's full range -- no cap. Speed is limited only by v_max
+    # and the path's own velocity profile, not by throttle authority.
+    throttle_max: 1.0
+    use_encoder_speed: true    # false = speed from the pose topic's twist: ground truth, DEV ONLY
+
+    # Lap topics are RESTRICTED during racing. Development telemetry only.
+    dev_lap_telemetry: false

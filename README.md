@@ -11,12 +11,31 @@ No RL, no online mapping. The map and the racing line are built offline on
 at 19.3 Hz). The track's best known lap is 6.46 s.
 
 This branch is deliberately **not** a fork of `main`. It shares no history with
-it and carries only what has to be in the container: the devkit, the five
-`racer_*` packages, the Porto map, three racing lines, and the Docker build.
-The RL stack, the raceline optimizer, the notebooks and the run logs stay on
-`main`.
+it and carries only what has to be in the container. The RL stack, the raceline
+optimizer, the notebooks and the run logs stay on `main`.
 
 ---
+
+## Layout
+
+The repository root is a copy of the devkit workspace's `src/` — the same two
+packages, in the same places, as `/home/autodrive_devkit/src/` inside the
+container:
+
+```
+Dockerfile              FROM the official devkit image; adds one package
+autodrive_devkit.sh     the entrypoint the rules name — the only automation
+autodrive_devkit/       the provided package, unmodified, NOT copied into the image
+roboracer_stack/        ours: perception, localization, planning, control, mapping
+scripts/build.sh run.sh convenience wrappers for us; not part of the image
+```
+
+`autodrive_roboracer` is never modified — the rules forbid it, and the base
+image already ships it built. Where its behaviour has to change we do it with a
+launch-level remap (`roboracer_stack/launch/bridge.launch.py` moves the
+ground-truth TF off `/tf`, because otherwise `roboracer_1` has two parents and
+the TF tree breaks). Our code is one separate package, as §3.4 requires; see
+[`roboracer_stack/README.md`](roboracer_stack/README.md) for what is in it.
 
 ## Build and run
 
@@ -24,25 +43,15 @@ Two containers, same host network. The simulator image is the organizers'; the
 racer image is ours.
 
 ```bash
-./docker/build.sh                  # -> autodrive_racer:qualification-1
+./scripts/build.sh                 # -> autodrive_racer:qualification-1
 
-./docker/run.sh sim --headless     # terminal 1: simulator
-./docker/run.sh racer              # terminal 2: our stack
+./scripts/run.sh sim --headless    # terminal 1: simulator
+./scripts/run.sh racer             # terminal 2: our stack
 ```
 
 Order does not matter — the bridge listens on 4567 and blocks until the
 simulator connects. In graphics mode, hit **Connect** in the simulator; the car
 starts driving on its own.
-
-To watch what it is doing:
-
-```bash
-docker exec -it autodrive_roboracer_api bash
-tail -f /home/racer_ws/log/racer_*.log
-```
-
-That shell gets the ROS environment from `~/.bashrc` and starts nothing — one
-stack per container, which is what the rules require.
 
 ## How the organizers run it
 
@@ -54,21 +63,41 @@ docker run --name autodrive_roboracer_api --rm -it \
   <dockerhub-user>/roboracer:qualification-1
 ```
 
-`/home/autodrive_devkit.sh` sources ROS, the devkit workspace and ours, sets the
-DDS configuration, and launches the devkit bridge together with our nodes. It
-then hands the terminal to `bash`, so the container is immediately usable for
-inspection with the car already driving.
+`/home/autodrive_devkit.sh` sets the environment, sources the workspace, and
+launches the devkit bridge together with our nodes. It then hands the terminal
+to `bash`, so the container is immediately usable for inspection with the car
+already driving.
 
 If the container is started with `--entrypoint /bin/bash` — the form printed in
-the technical guide — the entrypoint never runs. Start the stack by hand:
+the technical guide — the entrypoint never runs. Bring the stack up by running
+it by hand:
 
 ```bash
-/home/start_racer.sh
+/home/autodrive_devkit.sh
 ```
+
+### Inspection shells
+
+```bash
+docker exec -it autodrive_roboracer_api bash
+source /home/autodrive_devkit/install/setup.bash   # needed: see below
+ros2 topic list
+tail -f /home/autodrive_devkit/log/racer_*.log
+```
+
+Nothing is appended to `~/.bashrc` and nothing is automated from it, per the
+guide, so a new shell starts no nodes — and, as a consequence, has no ROS on
+its path until you source the workspace yourself. That one line is the whole
+cost, and it is what guarantees a second stack can never come up behind you.
+
+The DDS settings are not in that line: they are `ENV` in the image, so every
+`docker exec` shell inherits them and can actually see the running nodes. A
+shell on a different RMW would find none — an empty `ros2 node list` and no
+error.
 
 ## Changing the configuration without rebuilding
 
-Every knob is an environment variable read by `/home/start_racer.sh`:
+Every knob is an environment variable read by `/home/autodrive_devkit.sh`:
 
 | variable | default | what it does |
 |---|---|---|
@@ -82,7 +111,7 @@ Every knob is an environment variable read by `/home/start_racer.sh`:
 
 ```bash
 docker run --rm -it --network=host --ipc=host \
-  -e RACER_PATH_CSV=/home/racer_ws/install/racer_control/share/racer_control/raceline/raceline_a6.5.csv \
+  -e RACER_PATH_CSV=/home/autodrive_devkit/install/roboracer_stack/share/roboracer_stack/raceline/raceline_a6.5.csv \
   autodrive_racer:qualification-1
 ```
 
@@ -105,9 +134,9 @@ the bridge round trip, not by grip.
 
 If the evaluation machine runs the loop slow, the controller handles it without
 being told: `pure_pursuit` measures its own command delay online and derates the
-speed targets (`derate_*` in `pure_pursuit.yaml`), which was validated in-sim at
-11 Hz — it gives back about a second a lap and stays on the line rather than
-holding the pace and hitting a wall.
+speed targets (`derate_*` in `config/pure_pursuit.yaml`), which was validated
+in-sim at 11 Hz — it gives back about a second a lap and stays on the line
+rather than holding the pace and hitting a wall.
 
 ## Competition legality
 
@@ -124,38 +153,11 @@ nine defaults that each have to be right:
 
 Ground truth is read in exactly one place: `localization_bootstrap` takes **one**
 sample of `/ips` before the car has moved, seeds AMCL with it, and destroys the
-subscription (`racer_common/restricted.py`, `seed()` / `released()`). The first
-lap is a warmup and the timer starts after it, so that read is inside the
-permitted window, and nothing reads ground truth during the timed laps. Set
+subscription (`roboracer_stack/common/restricted.py`, `seed()` / `released()`).
+The first lap is a warmup and the timer starts after it, so that read is inside
+the permitted window, and nothing reads ground truth during the timed laps. Set
 `RACER_BOOTSTRAP_MODE=global` for AMCL's particle search if a stricter reading is
 wanted; it costs a convergence phase.
-
-`autodrive_devkit/` is unmodified and is **not copied into the image** — the base
-image already ships it built, and the rules forbid modifying it. Where its
-behaviour has to change we do it with a launch-level remap: `bridge.launch.py`
-moves the devkit's ground-truth TF off `/tf`, because otherwise `roboracer_1`
-has two parents and the TF tree breaks.
-
-## Layout
-
-```
-docker/
-  Dockerfile            FROM the official devkit image; adds /home/racer_ws
-  autodrive_devkit.sh   the entrypoint the rules name
-  start_racer.sh        the launch command, also runnable by hand
-  racer_env.sh          environment only; launches nothing
-  build.sh  run.sh      convenience wrappers
-devkit_ws/src/
-  autodrive_devkit/     third-party bridge, BSD, unmodified, NOT in the image
-  racer_common/         frames, paths, the restricted-topic list
-  racer_localization/   dead reckoning, AMCL, slam fallback, bootstrap
-  racer_control/        pure_pursuit + the three racing lines
-  racer_mapping/        the Porto map
-  racer_bringup/        race.launch.py — the composition root
-```
-
-Only `racer_bringup` composes. Every other package launches its own subsystem
-and nothing else.
 
 ## Submitting
 
@@ -165,6 +167,63 @@ docker login
 docker push <user>/roboracer:qualification-1
 ```
 
-Then submit the DockerHub link. The repository overview there needs step-by-step
-instructions for pulling that exact tag and running it — the "How the organizers
-run it" section above is written to be pasted in.
+Then submit the Docker Hub link. The guide requires the repository overview
+there to carry step-by-step instructions for that exact tag — the next section
+is written to be pasted in as-is.
+
+---
+
+## Docker Hub overview (paste this into the repository overview)
+
+### RoboRacer Sim Racing League 2026 — Qualification 1
+
+AMCL localization and pure pursuit along a pre-optimized minimum-curvature
+raceline, on the Porto track. Built on
+`autodriveecosystem/autodrive_roboracer_api:2026-iros-practice`. The map and the
+racing line ship inside the image; there is nothing to mount and nothing to
+configure.
+
+**1. Pull the tag**
+
+```bash
+docker pull <user>/roboracer:qualification-1
+```
+
+**2. Start the simulator** (organizers' image, in its own terminal)
+
+```bash
+docker run --name autodrive_roboracer_sim --rm -it \
+  --network=host --ipc=host \
+  -v /tmp/.X11-unix:/tmp/.X11-unix:rw --env DISPLAY --privileged --gpus all \
+  autodriveecosystem/autodrive_roboracer_sim:2026-iros-practice
+```
+
+**3. Start this container**
+
+```bash
+docker run --name autodrive_roboracer_api --rm -it \
+  --network=host --ipc=host \
+  <user>/roboracer:qualification-1
+```
+
+No entrypoint override, no extra commands. `/home/autodrive_devkit.sh` sets the
+environment, sources the workspace, and starts the AutoDRIVE bridge together
+with our localization and control nodes. The bridge listens on port 4567 and
+waits, so the order of steps 2 and 3 does not matter.
+
+**4. Hit Connect** on the simulator's Menu Panel. The car starts driving
+immediately.
+
+**Inspecting a run.** Extra bash sessions start nothing — the codebase is
+launched only from the entrypoint, never from `~/.bashrc`:
+
+```bash
+docker exec -it autodrive_roboracer_api bash
+source /home/autodrive_devkit/install/setup.bash
+ros2 topic list
+tail -f /home/autodrive_devkit/log/racer_*.log
+```
+
+**Contents.** `autodrive_roboracer` is the provided devkit package, unmodified.
+`roboracer_stack` is our separate package: dead reckoning, nav2 AMCL against the
+baked-in map, and the pure pursuit follower.

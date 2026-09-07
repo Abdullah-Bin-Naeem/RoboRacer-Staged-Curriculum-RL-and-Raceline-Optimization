@@ -3,11 +3,12 @@
 # already ships it built at /home/autodrive_devkit and the rules forbid
 # modifying it. Keeping it out of the build context makes that structural
 # rather than a promise -- no COPY can pick it up by accident.
-devkit_ws/src/autodrive_devkit/
+autodrive_devkit/
 
-devkit_ws/build/
-devkit_ws/install/
-devkit_ws/log/
+# colcon artefacts, if the repo was ever built in place
+build/
+install/
+log/
 **/__pycache__/
 **/*.pyc
 **/*.egg-info/

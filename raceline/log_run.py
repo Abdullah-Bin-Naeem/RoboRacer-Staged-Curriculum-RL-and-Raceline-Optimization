@@ -99,8 +99,13 @@ class Logger(Node):
                          f'{self.v:.4f}', self.coll]
                         + [f'{s:.5f}' for s in self.status])
         self.n += 1
-        if self.n % 400 == 0:
-            self.f.flush()
+        # Flush EVERY row. It used to be every 400 (20 s at 20 Hz), and
+        # destroy_node() never runs when stop_follower.sh SIGKILLs the logger --
+        # which is exactly what an abort-on-collision does. E8 lost its only
+        # collision that way: the console log recorded it, the CSV ended 8.6 s
+        # earlier, and ab_report.py duly reported "0 collisions" for a run that
+        # had failed the gate. A 20 Hz flush of one short row costs nothing.
+        self.f.flush()
 
     def destroy_node(self):
         self.f.flush(), self.f.close()

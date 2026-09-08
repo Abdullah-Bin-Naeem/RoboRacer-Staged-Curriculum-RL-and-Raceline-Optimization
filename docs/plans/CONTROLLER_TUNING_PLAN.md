@@ -250,6 +250,51 @@ python3 raceline/compare_runs.py --path raceline/icra2026/raceline_a7.0.csv \
 
 ---
 
+## 3.5 What the official vehicle spec says we are allowed [2026-09-09]
+
+Source: the [RoboRacer Sim Racing Guide 2026](https://autodrive-ecosystem.github.io/competitions/roboracer-sim-racing-guide-2026/).
+Checked because "have we throttled ourselves somewhere?" is a fair question and the answer was
+not written down. **Answer: no — every limit in our stack either does not bind, or is worth
+< 0.05 s.** Each row below is measured against `E0_base` / `E4_test2`, not assumed.
+
+| Guide says | We run | Binding? |
+|---|---|---|
+| Top speed **22.88 m/s** | `v_max 8.0`, and the a7.0 CSV itself peaks at exactly 8.00 | **No.** Only **3.3 m of 53.99** (6 % of the lap, s 13.0–16.3) sits on the ceiling. Re-planning that stretch at 9.0 buys **0.047 s**, at 10.0 **0.085 s** — and R3 already showed raising it backfires at T2. Not the lever. |
+| Throttle range **[−1, 1]**, motor torque 428 N·m | `throttle_max 1.0` (no cap) | **No.** Throttle median **0.203**, p90 0.295, at 1.0 on **0.0 %** of ticks. The solver's note is confirmed: the motor never limits acceleration, the tire does. |
+| Steering rate limited to **3.2 rad/s** | not modelled anywhere in `pure_pursuit.py` | **No, but worth knowing.** Commanded rate is median 0.11, p99 1.24 rad/s; only **3 ticks of 6210** exceed 3.2. Interestingly 2 of those 3 are at s 40 and s 44 — the failure corner — so it is not a *general* limit but may matter in the spiral. Not actionable yet. |
+| Longitudinal tire extremum at **slip 0.15, μ 0.72** | `slip_accel 0.16` (**107 %** of extremum), `slip_brake 0.08` (**53 %**) | **Accel: no** — we are correctly sitting on the peak, which is why E3 is predicted ~0. **Brake: unused authority, but not binding.** We allow only half the available longitudinal grip, yet the car is measured *slower* than plan through braking zones, not faster. A brake-limited car would overshoot; ours undershoots. Raising `slip_brake` addresses a constraint that is not active. |
+| Lateral tire extremum at **slip 0.01, μ 1.00** | `steer_a_lat_max 7.0` (0.71 g) | **No — and this explains R4 from the spec.** The car has *more* lateral grip (0.98 g) than longitudinal (0.72 g), so 7.0 looks conservative. But the lateral peak sits at a slip angle of **0.01 rad (0.57°)** — razor-thin — while the longitudinal peak at 0.15 is broad and easy to hold. A geometric controller cannot sit in a half-degree window. **`steer_a_lat_max` stays at 7.0**; R4's 146 collisions were not a grip shortage, they were the controller falling off a peak it cannot track. |
+
+### The one real defect found, and why it is not the answer either
+
+The a7.0 profile demands **up to 7.59 m/s² of deceleration** — above `optimize_raceline.py`'s own
+`a_long_profile = 5.0` budget on **20 %** of braking points, and above the tire's physical
+**7.06 m/s²** ceiling on **3.5 %** of them, concentrated at **s 16.3–17.7** (the T2 entry). The
+solver claims to enforce 5.0 both ways, so either the backward sweep is not being applied or a7.0
+was generated with different arguments. That is a genuine bug on the raceline side.
+
+**But it is worth almost nothing in time.** Re-imposing a feasible braking limit:
+
+| Braking cap | Plan time | vs published | Our gap becomes |
+|---|---|---|---|
+| as published (7.59 peak) | 11.440 s | — | +0.360 |
+| 7.06 (tire ceiling) | 11.442 s | +0.002 | +0.358 |
+| 6.35 (0.9 × ceiling) | 11.443 s | +0.004 | +0.357 |
+| 5.00 (solver's own budget) | 11.455 s | +0.015 | +0.345 |
+
+So **the gap is not an artefact of an infeasible plan** — it is +0.345 s even against a fully
+feasible one. Worth fixing in the solver for honesty, not for lap time.
+
+### What this changes in the queue
+
+Nothing is promoted. E3's ~0 prediction is now backed by the official extremum rather than our
+own fitted curve, `steer_a_lat_max` is confirmed as not-a-knob from the spec, and two tempting
+dead ends — "unclip `v_max`" and "the plan is infeasible so the gap is fake" — are closed with
+numbers. **E8 remains next**: the binding constraint is the collision gate at s 43–46, and the
+failure there is *cutting inside*, which is exactly the quantity E8 bounds.
+
+---
+
 ## 4. What the state of the art actually does
 
 Our controller is a geometric tracker, and the literature on geometric trackers is small and

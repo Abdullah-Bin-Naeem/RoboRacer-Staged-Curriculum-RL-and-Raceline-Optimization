@@ -28,7 +28,7 @@ Gate is **≤ 11.50 s with 0 collisions**, so we need **−0.30 s** and must not
 
 | # | ID | What the parameter is, in plain words | Existing (what runs today) | Proposed change | Reason — the measured evidence | Expected / calculated impact | Result |
 |---|---|---|---|---|---|---|---|
-| **1** | **E13** | **How hard the throttle reacts to being off-target.** The speed law is a plain proportional controller: it commands extra wheel speed equal to `slip_kp` × (how far below target the car is). Like any P-controller with no integral term, it settles at a **standing error** — it stops pushing before it has caught up, because a smaller error asks for less push. | `slip_kp: 0.76` — **never swept.** Chosen only to reproduce the legacy law's gain (`25.25 × throttle_kp`) | `slip_kp:=1.2` | **[new 09-09 — this is the cause of the acceleration deficit]** On accelerating ticks the car sits **0.539 m/s below its own target**, and 0.76 × that asks for a slip of only **0.085**. Predicted-vs-observed commanded slip: **0.0846 vs 0.0825** — the law is doing exactly this and nothing else. **The band is NOT the limiter**: it is reached on only **20 %** of accelerating ticks, and throttle peaks at 0.337 of 1.0. So the +0.211 s accelerating loss is a **gain shortfall**, which is why E4's feedforward recovered only 0.020 s of it and E3 was a dead end. Raising the gain is *safe by construction* — `slip_accel` still clamps at the friction peak. | **−0.10 to −0.20 s.** Halving the 0.539 m/s standing error recovers roughly half of +0.211 s. At kp 1.2 mean commanded slip goes 0.077 → 0.110, at-band 5 % → 21 %. | |
+| **1** | **E13** | **How hard the throttle reacts to being off-target.** The speed law is a plain proportional controller: it commands extra wheel speed equal to `slip_kp` × (how far below target the car is). Like any P-controller with no integral term, it settles at a **standing error** — it stops pushing before it has caught up, because a smaller error asks for less push. | `slip_kp: 0.76` — **never swept.** Chosen only to reproduce the legacy law's gain (`25.25 × throttle_kp`) | `slip_kp:=1.2` | **[new 09-09 — this is the cause of the acceleration deficit]** On accelerating ticks the car sits **0.539 m/s below its own target**, and 0.76 × that asks for a slip of only **0.085**. Predicted-vs-observed commanded slip: **0.0846 vs 0.0825** — the law is doing exactly this and nothing else. **The band is NOT the limiter**: it is reached on only **20 %** of accelerating ticks, and throttle peaks at 0.337 of 1.0. So the +0.211 s accelerating loss is a **gain shortfall**, which is why E4's feedforward recovered only 0.020 s of it and E3 was a dead end. Raising the gain is *safe by construction* — `slip_accel` still clamps at the friction peak. | **−0.10 to −0.20 s.** Halving the 0.539 m/s standing error recovers roughly half of +0.211 s. At kp 1.2 mean commanded slip goes 0.077 → 0.110, at-band 5 % → 21 %. | **❌ REJECTED on the gate / ⏸ INCONCLUSIVE on time (09-09).** Collided lap 6 at s 46.09. **n = 5 clean laps**: median 11.850 vs 11.800, i.e. **+0.050 s — inside one standard error (0.055) of the control's own spread**, so no time verdict. Gain verified acting: commanded slip 0.0825→**0.1010**, at-band 20 %→**37 %**. But the standing error **rose** (0.506→0.577) rather than fell, against the hypothesis. **Not falsified though** — force response to slip is monotonic to 0.17 with no plateau (§12.10). **Re-run needed.** |
 | **2** | **E4** | **Acceleration feedforward.** The raceline says how fast to be at every point, which also implies *how hard to accelerate* right here. Today the controller ignores that and only reacts once the car has **already fallen behind** the speed it wanted — it waits for a mistake, then corrects it. `accel_ff` means "read how hard the plan wants to accelerate at this point and ask for that much push immediately." Pushing *before* you fall behind instead of after. | `accel_ff: 0.0` — off. Throttle responds only to a speed error that has already happened. | `accel_ff:=1.0`, `slip_circle` left at 0 | **78 % of all time lost is on accelerating stretches** (+0.526 s vs +0.106 s braking). There the car sits **−0.784 m/s below its own target** while `v_target` is *above* plan, so the target is not the limiter. Not authority either: throttle median **0.203**, at 1.0 on **0.0 %** of ticks. Not the band: realized slip p90 **0.160**, already on the friction curve's flat top. The plan asks only **2.49 m/s² mean** (max 4.12) against a ~7 tire peak and the car delivers **1.64, i.e. 66 %**. Feedforward is the one mechanism that asks for the plan's acceleration *before* the error appears. | **−0.15 to −0.25 s.** Closing delivery 66 % → 90 % recovers ~0.35 s of the +0.526 s accelerating loss; halved for the usual gap between mechanism and outcome. **⚠️ This prediction was computed against the SUPERSEDED baseline and was ~2.5× too large — see §12.3.** | **❌ REJECTED on time, 09-09.** Attempt 1 aborted on the out-lap (§12.2, tail event — attempt 2's out-lap was clean). Attempt 2: **25 laps, 0 collisions, median 11.799 vs control 11.800 — no gain.** Mechanism confirmed but small: accel delivery 79 %→82 %, accel loss +0.211→+0.191 s, **given back on the brake side** +0.070→+0.125 s. **Lateral improved materially**: \|e\| p90 0.074→0.066, max 0.540→**0.434**, excursion ticks **112→56**, worst lap 12.250→12.001. Gate 3/4 (corner 37–41 worse by +0.035). See §12.3. |
 | **3** | **E12** | **The shortest the aim point is ever allowed to be.** Every other lookahead rule can only *shorten* `Ld`; this is the floor they all stop at. In slow corners it is the only thing still binding — the controller wants to aim closer and is not permitted to. | `lookahead_min: 0.80` — **never swept, on any track** | `lookahead_min:=0.65` | **[new 09-09] The one parameter that actually binds where the car keeps crashing.** `Ld` sits on this floor for **84 %** of ticks through s 43–46 (against 5 % at T2), which is why E8 was a no-op and why E9 is closed unrun — both can only shorten a value already at its minimum. That corner holds the control's worst excursion (**+0.525 m**), 33 of E0's 49 collisions, and E4 attempt 1's crash. Lowering the floor is the **only** lever left that can act there. | **−0.00 to −0.05 s**, and the excursion tail. Bought for the collision gate. ⚠️ Shorter `Ld` costs phase margin — but it binds only where the car is slow, and the yaml notes 1.0 m is stable in corners. Watch for weave. | **❌ REJECTED 09-09 — collided on lap 2**, `e_lat` +1.084 at **s 23.79 (T2)**. Lever verified acting where aimed (`Ld` at s 43–46: 0.831→0.738, min 0.800→**0.650**) but **no benefit there** (`e_lat` +0.036→+0.056), and it failed at T2 where it barely acted. **n = 1 clean lap — too thin to attribute**, and the honest reading is the pattern in §12.8: T2 fails under *every* perturbation. |
 | **7** | **E8** | **How much corner-cutting is allowed.** Pure pursuit picks a point some distance ahead on the line and drives a smooth **arc** to it. An arc drawn to a point around a bend always passes *inside* the real path — the same way you cut the corner running round a track. That inward bulge is the **sag**. This setting says how much of the room between the racing line and the inside wall the cut may eat: `0.5` = up to half of it. | `lookahead_sag_frac: 0.5` — the cut may use half the available inside margin. | `lookahead_sag_frac:=0.35` | The **only** real lateral failure is apex cutting at **s 43–46**: worst inside excursion **+0.525 m at s 46.2** in the clean reference, and when E0 doubled the sag it became **+0.700 m and 33 collisions in that exact bin**. R8 proved the mechanism (`sag = \|κ\|·Ld²/8`) is what decides that corner. This caps the same quantity directly and in the physical unit — fraction of *actual* margin — instead of guessing a length. Launch-exposed, no code change. | **−0.00 to −0.05 s**, and the excursion tail shrinks. Bought as **insurance on the collision gate**, not as lap time. | **❌ REJECTED 09-09 — collided at lap 18.** 16 clean laps, median 11.801 vs control 11.800 (no change), best 11.701 (0.05 worse). **⚠️ RETRACTED READING — E8 was very nearly a no-op.** Measured `Ld` differs from the control by **0.006 m on average**, and by > 0.05 m in only **4 of 216** bins. The s 43–46 "improvement" I first claimed is **variance, not effect** (`Ld` there: 0.829 vs 0.831). Only T2 changed meaningfully, and it got worse. **Real finding: `Ld` is pinned at the `lookahead_min` 0.80 floor for 84 % of ticks through s 43–46**, so `sag_frac` — and any per-zone *cap* — is inert there. See §12.4. |
@@ -1522,3 +1522,54 @@ would beat the target with 0.06 s in hand. We never needed a faster line — we 
 close the delivery gap, then raising `a_lat` is the remaining route — but it raises demand on a
 car that already has no margin at three corners (§12.8), so it is strictly the worse option and
 should not be started first.
+
+---
+
+### 12.10 E13 — `slip_kp:=1.2` — ❌ gate / ⏸ inconclusive on time (2026-09-09)
+
+**Prediction:** −0.10 to −0.20 s. **Outcome: collided lap 6 at s 46.09 (`e_lat` +0.695), 5 clean
+laps, median 11.850 vs 11.800.** Rejected on the collision gate. **No verdict on time**, and the
+hypothesis is *not* falsified.
+
+#### Why there is no time verdict
+
+The control's own lap-time std is **0.122 s**, so the standard error of a median from **n = 5** is
+**≈ 0.055 s**. E13's median moved **+0.050 s**. That is *inside* one standard error — it is
+indistinguishable from no change, and reporting it as "0.05 s slower" would be reading noise.
+
+#### Mechanism: acted as designed, outcome ambiguous
+
+| clean laps only | control (kp 0.76) | E13 (kp 1.2) |
+|---|---|---|
+| commanded slip, mean | 0.0825 | **0.1010** ✅ as modelled |
+| at the band edge | 19.8 % | **36.5 %** |
+| **standing error** `v_target − v_est` | 0.506 m/s | **0.577** ❌ rose |
+| `v_est` − plan | −0.144 | −0.173 |
+| clean laps | 25 | **5** |
+
+The gain did what it was set to do. The standing error rose rather than fell, which is against
+§12.9 — but it is confounded: a run that is slower overall has a larger `v_target − v_est` by
+construction, so the error and the outcome are not independent at n = 5.
+
+#### The hypothesis survives, because the tire is not the limit
+
+Achieved `a_long` binned by commanded slip (control, v > 3 m/s), drag-corrected:
+
+| slip | 0.00–0.04 | 0.04–0.08 | 0.08–0.11 | 0.11–0.14 | 0.14–0.17 |
+|---|---|---|---|---|---|
+| a_long + 0.273·v | +1.03 | +2.52 | +2.84 | +3.45 | **+4.10** |
+
+**Monotonic, with no plateau up to 0.17.** More commanded slip really does produce more force in
+this sim, so "raise the gain to close the standing error" remains physically available. The yaml's
+old `slip_accel` sweep plateauing at 0.12 was measuring the *clamp*, not the tire.
+
+**E13 needs a re-run, exactly as E4 did after §12.2.** Five clean laps cannot settle a 0.05 s
+question against a 0.122 s spread, and the one thing that *is* settled — the collision — sits at
+s 46.09, the corner §12.8 showed fails under every perturbation.
+
+#### Standing caution
+
+This is the third hypothesis this session that outran its evidence (E0's inference, E8's
+attribution, and §12.9's linear slip→force model, which the table above only partly rescues).
+The pattern is consistent: **mechanisms are being confirmed on n ≤ 5 and outcomes on n = 25.**
+Any future run of E13 should be 25 laps before its time effect is quoted at all.

@@ -90,7 +90,7 @@ def sections(grid, kappa_grid, L):
 
 
 def analyze(path, line_path, out_dir, tol, lo, hi, ds, cmd_delay, slip_circle, cap, lead_min,
-            slip_accel, slip_brake):
+            slip_accel, slip_brake, target_lead=0.0):
     log = ar.load_log(path)
     line = ar.load_line(line_path) if line_path else ar.pick_line(
         log, log['speed'] > 0.8, None)
@@ -172,7 +172,15 @@ def analyze(path, line_path, out_dir, tol, lo, hi, ds, cmd_delay, slip_circle, c
         # acceleration -- which is what drove loss_limit negative over s 0-20.
         # Shifting it back by the lead leaves only what the follower genuinely
         # rewrote: the v_max / v_min clip and the slow-loop derate.
-        lead = np.clip(v_true, 0.0, None) * cmd_delay + lead_min
+        #
+        # The lead is v * (cmd_delay + target_lead_s) + lead_min -- BOTH terms.
+        # target_lead_s was omitted here until 2026-09-09, so the shift was short
+        # by v * 0.08 = 0.64 m at 8 m/s and this function reported exactly the
+        # artifact its own comment warns about: the deliberate lead scored as a
+        # loss on every braking zone. That is the term E1 changes, so an
+        # uncorrected run of this tool misreports E1's own effect. Pass the run's
+        # target_lead_s with --target-lead.
+        lead = np.clip(v_true, 0.0, None) * (cmd_delay + target_lead) + lead_min
         aligned = np.interp((grid - lead) % L, grid, v_targ, period=L)
         vt = np.clip(aligned, 0.5, None)
         vp = np.clip(v_plan, 0.5, None)
@@ -316,12 +324,15 @@ def main():
     ap.add_argument('--slip-accel', type=float, default=0.16, help="the run's slip_accel (used when slip_circle is 0)")
     ap.add_argument('--slip-brake', type=float, default=0.08, help="the run's slip_brake (used when slip_circle is 0)")
     ap.add_argument('--lead-min', type=float, default=0.10, help="the run's lead_min_m")
+    ap.add_argument('--target-lead', type=float, default=0.08,
+                    help="the run's target_lead_s; the profile lead is v*(cmd_delay+this)+lead_min")
     ap.add_argument('--slip-circle', type=float, default=0.12, help='the run\'s slip_circle')
     ap.add_argument('--a-lat-cap', type=float, default=7.0, help="the run's steer_a_lat_max")
     a = ap.parse_args()
     for p in a.logs:
         analyze(p, a.path, a.out, a.tol, a.lap_lo, a.lap_hi, a.ds, a.cmd_delay,
-                a.slip_circle, a.a_lat_cap, a.lead_min, a.slip_accel, a.slip_brake)
+                a.slip_circle, a.a_lat_cap, a.lead_min, a.slip_accel, a.slip_brake,
+                a.target_lead)
 
 
 if __name__ == '__main__':

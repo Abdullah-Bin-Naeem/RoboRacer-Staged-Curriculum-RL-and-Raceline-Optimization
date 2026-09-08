@@ -31,8 +31,9 @@ Gate is **≤ 11.50 s with 0 collisions**, so we need **−0.30 s** and must not
 | **1** | **E4** | **Acceleration feedforward.** The raceline says how fast to be at every point, which also implies *how hard to accelerate* right here. Today the controller ignores that and only reacts once the car has **already fallen behind** the speed it wanted — it waits for a mistake, then corrects it. `accel_ff` means "read how hard the plan wants to accelerate at this point and ask for that much push immediately." Pushing *before* you fall behind instead of after. | `accel_ff: 0.0` — off. Throttle responds only to a speed error that has already happened. | `accel_ff:=1.0`, `slip_circle` left at 0 | **78 % of all time lost is on accelerating stretches** (+0.526 s vs +0.106 s braking). There the car sits **−0.784 m/s below its own target** while `v_target` is *above* plan, so the target is not the limiter. Not authority either: throttle median **0.203**, at 1.0 on **0.0 %** of ticks. Not the band: realized slip p90 **0.160**, already on the friction curve's flat top. The plan asks only **2.49 m/s² mean** (max 4.12) against a ~7 tire peak and the car delivers **1.64, i.e. 66 %**. Feedforward is the one mechanism that asks for the plan's acceleration *before* the error appears. | **−0.15 to −0.25 s.** Closing delivery 66 % → 90 % recovers ~0.35 s of the +0.526 s accelerating loss; halved for the usual gap between mechanism and outcome. **⚠️ This prediction was computed against the SUPERSEDED baseline and was ~2.5× too large — see §12.3.** | **❌ REJECTED on time, 09-09.** Attempt 1 aborted on the out-lap (§12.2, tail event — attempt 2's out-lap was clean). Attempt 2: **25 laps, 0 collisions, median 11.799 vs control 11.800 — no gain.** Mechanism confirmed but small: accel delivery 79 %→82 %, accel loss +0.211→+0.191 s, **given back on the brake side** +0.070→+0.125 s. **Lateral improved materially**: \|e\| p90 0.074→0.066, max 0.540→**0.434**, excursion ticks **112→56**, worst lap 12.250→12.001. Gate 3/4 (corner 37–41 worse by +0.035). See §12.3. |
 | **2** | **E8** | **How much corner-cutting is allowed.** Pure pursuit picks a point some distance ahead on the line and drives a smooth **arc** to it. An arc drawn to a point around a bend always passes *inside* the real path — the same way you cut the corner running round a track. That inward bulge is the **sag**. This setting says how much of the room between the racing line and the inside wall the cut may eat: `0.5` = up to half of it. | `lookahead_sag_frac: 0.5` — the cut may use half the available inside margin. | `lookahead_sag_frac:=0.35` | The **only** real lateral failure is apex cutting at **s 43–46**: worst inside excursion **+0.525 m at s 46.2** in the clean reference, and when E0 doubled the sag it became **+0.700 m and 33 collisions in that exact bin**. R8 proved the mechanism (`sag = \|κ\|·Ld²/8`) is what decides that corner. This caps the same quantity directly and in the physical unit — fraction of *actual* margin — instead of guessing a length. Launch-exposed, no code change. | **−0.00 to −0.05 s**, and the excursion tail shrinks. Bought as **insurance on the collision gate**, not as lap time. | **❌ REJECTED 09-09 — collided at lap 18.** 16 clean laps, median 11.801 vs control 11.800 (no change), best 11.701 (0.05 worse). **⚠️ RETRACTED READING — E8 was very nearly a no-op.** Measured `Ld` differs from the control by **0.006 m on average**, and by > 0.05 m in only **4 of 216** bins. The s 43–46 "improvement" I first claimed is **variance, not effect** (`Ld` there: 0.829 vs 0.831). Only T2 changed meaningfully, and it got worse. **Real finding: `Ld` is pinned at the `lookahead_min` 0.80 floor for 84 % of ticks through s 43–46**, so `sag_frac` — and any per-zone *cap* — is inert there. See §12.4. |
 | **6** | **E9** | **How much closer to look when the track bends.** Aiming far ahead is smooth and stable but cuts corners; aiming close follows the path faithfully but twitches. This dial is "the tighter the bend, the closer I aim" — raising it pulls the aim point in harder in corners while leaving the straights alone. | `lookahead_curv_gain: 0.67` — aim distance divided by `1 + 0.67·\|κ\|`. | `lookahead_curv_gain:=0.90` | Same target as E8, different lever, and §5.2's prescribed response to **positive (inside) corner bias**, which is what s 43–46 shows (`+0.026` mean, `+0.525` worst). Run only if E8 misses — they act on the same failure and running both at once breaks one-variable. | **−0.00 to −0.05 s**; same insurance argument as E8. | |
-| **4** | **E1** | **How far down the road it reads the speed limit.** A throttle command takes time to take effect, so the controller doesn't read the target speed where the car *is* — it reads it a little further along, where the car will be when the command lands. That much is necessary and measured (`cmd_delay`). `target_lead_s` is an **extra** margin on top, and its practical effect is that the car starts slowing **earlier** than it strictly needs to. | `target_lead_s: 0.08` — profile sampled `v·(cmd_delay + 0.08) + 0.10` ahead. | `target_lead_s:=0.0` | Braking zones hold **16 %** of the loss (+0.106 s). Of the 1.69 m total lead at 8 m/s only **0.64 m** is this parameter; the rest is `cmd_delay` and is deliberate. That is ~10 % of the 6.10 m main zone but **40 % of the 2.50 m zone at s 42–45**, so the gain is concentrated in the short zones. | **−0.03 to −0.05 s.** (Was −0.28 s in the original plan; that used a 2.1 m lead at a `cmd_delay` of 0.175 that does not run, against a 7.8 m zone that does not exist.) | |
-| **5** | **E2** | as E1 | as E1 | `target_lead_s:=0.04` | Only if E1 overshoots into hot corner entries. The midpoint. | between E1 and reference | |
+| **4** | **E1** | **How far down the road it reads the speed limit.** A throttle command takes time to take effect, so the controller doesn't read the target speed where the car *is* — it reads it a little further along, where the car will be when the command lands. That much is necessary and measured (`cmd_delay`). `target_lead_s` is an **extra** margin on top, and its practical effect is that the car starts slowing **earlier** than it strictly needs to. | `target_lead_s: 0.08` — profile sampled `v·(cmd_delay + 0.08) + 0.10` ahead. | `target_lead_s:=0.0` | Braking zones hold **16 %** of the loss (+0.106 s). Of the 1.69 m total lead at 8 m/s only **0.64 m** is this parameter; the rest is `cmd_delay` and is deliberate. That is ~10 % of the 6.10 m main zone but **40 % of the 2.50 m zone at s 42–45**, so the gain is concentrated in the short zones. | **−0.03 to −0.05 s.** (Was −0.28 s in the original plan; that used a 2.1 m lead at a `cmd_delay` of 0.175 that does not run, against a 7.8 m zone that does not exist.) | **❌ REJECTED HARD 09-09 — wrong in SIGN.** Collided at lap 8. 7 clean laps, median **12.199 vs 11.800 — 0.40 s SLOWER**, \|e\| mean 0.038→0.085, p90 0.074→**0.243**, max 0.540→**1.304**. Mechanism verified acting *and* backfiring: the car arrives **hot** at every corner entry (+0.29 / +0.42 / +0.32 m/s vs plan, control ≈ 0). **The yaml already contained this measurement** and the plan proposed undoing it anyway. See §12.6. |
+| — | ~~**E2**~~ | as E1 | as E1 | ~~`target_lead_s:=0.04`~~ | ~~Only if E1 overshoots into hot corner entries. The midpoint.~~ | ~~between E1 and reference~~ | **❌ CLOSED without a run, 09-09.** E1 (0.0) measured **12.199** against 0.08's **11.800**, so 0.04 lies between two known points and is bracketed above by the reference. Nothing to learn. |
+| **5** | **E11** | as E1 | `target_lead_s: 0.08` | `target_lead_s:=0.12` | **[new, from E1]** E1 proved the response is monotonic in the *other* direction than assumed: less preview → hot entries → slower and unsafe. The tuned 0.08 may not be the optimum, it may be the largest value tested. Cheap, launch-exposed, one variable. | **−0.00 to −0.05 s**; may also cut the T2 excursion, which is where E1 failed | |
 | **3** | **E5** | **A per-corner aim distance instead of one rule for the whole lap.** Every aim-point setting above is a single number applied everywhere. This adds a list of "between these two points on the track, never aim further than X" — so the one corner that misbehaves gets treated without making the whole lap timid. The raceline side already does exactly this with `lat_zones` / `margin_zones`. | Lookahead constants are **global**; per-`s` overrides exist only on the raceline side. | Add `lookahead_zones` (`s0:s1:cap`), applied as a cap on `Ld` | Excursions are **local, not global** — 165 baseline ticks in three clusters (s 0–10, s 20–26, s 40–48) and nothing between. E0's collisions localised harder still: **33 of 49 in s 44–46**. **But E8 showed the obvious implementation would be inert**: `Ld` at s 43–46 sits on the `lookahead_min` 0.80 floor 84 % of the time, so a per-zone *cap* has nothing to cap. A per-zone override of the **floor** is the only version that can act there. This is the cheap version of the F1TENTH per-waypoint adaptive lookahead (§4). **Needs a code change**, so it runs after E8/E9 show whether local lateral work pays at all. | **unknown — and the design in §7.1 is wrong.** **[after E8]** A per-zone *cap* on `Ld` at s 43–46 would do **nothing**: `Ld` is already at the `lookahead_min` **0.80 floor** for 84 % of ticks there. If a per-zone lookahead is worth anything it must override the **floor**, not impose a cap. Redesign before running. | |
 | **7** | **E10** | **Guessing where the car will be before steering.** By the time a position reading reaches the controller the car has already moved on, so steering on it means steering at where the car *was*. This tells the controller to project the position forward by this many seconds first. Too little and it steers at stale information; too much and it steers at a place the car never reaches, which makes it weave. | `latency_comp_s: 0.05` — pose propagated 50 ms forward. **Fixed; not delay-scaled.** | `latency_comp_s:=0.03` | Tuned at a **175 ms** round trip (yaml: 6.60/6.70 vs 6.70/6.76 at 0, runs 24–25). This host measures **97 ms**. Unlike the lookahead, this parameter has **no automatic delay compensation**, so it is over-predicting by roughly the delay ratio. ⚠️ **This is the same reasoning shape that produced R8** — the difference is that R8 removed a compensator that was working, and here there is no compensator at all. Rank held low until E4/E8 land. | **−0.00 to −0.04 s.** Low confidence, explicitly flagged. | |
 | **8** | **E3** | **How much wheelspin is allowed under acceleration.** Driven wheels must turn slightly faster than the car is moving for the tire to push it forward — that difference is **slip**, and grip rises with it up to a peak and then falls away. This caps how much extra wheel speed may be commanded. Too low and the car is sluggish; too high and it is past the grip peak, spinning rather than accelerating. | `slip_accel: 0.16` | `slip_accel:=0.20` | Confirmation only, and now **predicted from the log rather than guessed**: realized slip p90 is already **0.160**, on the curve's flat top (0.10–0.18), so there is nothing above it to buy. Keep it in the queue so the plateau is on record, not because it should pay. | **~0.** | |
@@ -209,7 +210,12 @@ These are not bureaucracy; each one exists because ignoring it has already destr
    a lookahead problem without checking `d_scale`, and E8's outcome was attributed to a parameter
    that moved `Ld` by 0.006 m on average. Both readings were wrong. `pp_ld`, `pp_delay`,
    `pp_slip` and `pp_throttle` are logged for exactly this.
-11. **Write the prediction down before the run, and score it after.** §0 carries the predicted
+11. **Read what is already recorded beside the parameter before proposing to change it.**
+   [2026-09-09] `target_lead_s` carried a measured three-point sweep in its own yaml comment —
+   0.0 / 0.05 / 0.08, with 0.08 best and 0.0 worst. E1 proposed 0.0 anyway, and measured 0.40 s
+   slower plus a collision. Re-deriving a number from logs is not a substitute for reading the
+   comment three lines below the value.
+12. **Write the prediction down before the run, and score it after.** §0 carries the predicted
    impact; §12 carries what actually happened and whether the prediction held. E0's prediction was
    wrong in sign, which is knowable only because it was recorded in advance.
 
@@ -1259,3 +1265,68 @@ raising either alone, and it is the one worth setting up.
 `a7.5` variant, and run it with `steer_a_lat_max:=7.5` as a matched pair. Everything left in the
 follower queue (E1, E2, E3, E9, E10) is now expected to be worth ≤ 0.05 s combined, and E5 needs
 redesigning before it is worth a run at all.
+
+---
+
+### 12.6 E1 — `target_lead_s:=0.0` — ❌ REJECTED, wrong in sign (2026-09-09)
+
+**Prediction on record:** −0.03 to −0.05 s (already revised down from the original plan's −0.28 s).
+**Outcome: +0.40 s slower and a collision.** The prediction was wrong in **sign**, and the
+information needed to get it right was already in `pure_pursuit.yaml`.
+
+#### Results
+
+| | `E0_base` control | `E1_test` |
+|---|---|---|
+| Laps | 25 | **7 clean, collision at lap 8** |
+| Best / **median** / mean | 11.650 / **11.800** / 11.830 | 11.849 / **12.199** / 12.150 |
+| **Collisions** | 0 | **1** |
+| \|e\| mean / p90 / max | 0.038 / 0.074 / 0.540 | **0.085 / 0.243 / 1.304** |
+| `pp_delay` med (clean laps) | 0.097 | 0.119 |
+
+**Gate: 0 of 4 — REJECT.**
+
+#### Mechanism verified (§3 rule 10), and it backfires
+
+Speed at corner entry, mean over clean laps, versus plan:
+
+| Entry | plan | control | E1 |
+|---|---|---|---|
+| T2, s 21–22.5 | 3.56 | −0.024 | **+0.290** |
+| s 37–38.5 | 3.65 | +0.012 | **+0.416** |
+| s 43–44 | 3.15 | −0.048 | **+0.323** |
+
+Removing the extra preview does exactly what it says — `v_target` rose +0.02 to +0.07 m/s in the
+braking zones, checked live during the run — and the consequence is that the car **arrives hot at
+every corner**. T2 lateral error goes from +0.023 to **+0.198** mean, and the collision was at
+**s 23.39 with `e_lat` +1.304**.
+
+#### The part worth learning from
+
+`pure_pursuit.yaml`, in the comment beside `target_lead_s`, already said so:
+
+> *"at the 7.0 rung the tire is at its limit in R1 and the S entry: arriving at the profile speed
+> runs wide, and the longer path costs more than braking early. Measured 0 = 6.70/6.78 (run 26),
+> 0.05 = 6.65/6.70 (runs 25, 27), 0.08 = 6.60/6.69 with the corner bias halved (run 28)."*
+
+**0.08 was already the measured optimum of a three-point sweep, and 0.0 was already measured as
+the worst of the three.** The original plan ranked undoing it as the #1 experiment at −0.28 s. The
+audit corrected the arithmetic and shrank the prediction to −0.03/−0.05, but **kept the sign** and
+did not weigh the sweep sitting three lines below the parameter. Re-deriving a number is not the
+same as reading what is already recorded. Added to §3 as rule 12.
+
+#### On the parity gate
+
+`pp_delay` medians are 0.022 s apart, which fails §8.5's 0.01 s gate. The result is still
+interpretable: the gate exists to catch the lookahead being silently rescaled, and `d_scale` is
+**floored at 0.70 in both arms** (0.097/0.175 and 0.119/0.175 both clamp), so the geometry is
+unchanged — `pp_ld` at v > 6 is 1.477 vs 1.521. A 0.022 s delay difference cannot produce +0.40 s,
+a tripled `|e|` p90 and a collision. **Rejected on the merits, not on the technicality.**
+
+#### Closed out by inference, no run needed
+
+- **E2 (`target_lead_s:=0.04`)** — bracketed. 0.0 measures 12.199, 0.08 measures 11.800, and 0.04
+  lies between two known points with the reference at the top end. **Closed.**
+- **E11 (`target_lead_s:=0.12`)** — *added*. The response is monotonic in the opposite direction
+  to the plan's assumption, so 0.08 may simply be the largest value ever tried rather than the
+  optimum. This is the cheap experiment E1 should have been.

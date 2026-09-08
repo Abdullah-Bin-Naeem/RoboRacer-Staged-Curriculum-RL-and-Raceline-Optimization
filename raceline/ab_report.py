@@ -56,7 +56,16 @@ def stats(d, lo, hi, L, grid):
     allx, clean = laps(d, lo, hi)
     lt = np.array([x[0] for x in allx])
     e = np.abs(d['pp_e_lat']); e = e[~np.isnan(e)]
-    dly = d['pp_delay'][~np.isnan(d['pp_delay'])]
+    # pp_delay over the CLEAN LAPS only. cmd_delay_auto seeds from cmd_delay_s
+    # (0.175) and converges downward over the first ~30 s, so a whole-file median
+    # is dominated by a transient that says nothing about the run: E1 read 0.147
+    # whole-file against a converged 0.110, which would have failed the parity
+    # gate against a control whose own transient happened to be shorter.
+    if clean:
+        dly = np.concatenate([d['pp_delay'][a:b] for _, a, b in clean])
+        dly = dly[~np.isnan(dly)]
+    else:
+        dly = d['pp_delay'][~np.isnan(d['pp_delay'])]
     ld = d['pp_ld'][~np.isnan(d['pp_ld'])]
     v = d['pp_v_est'][~np.isnan(d['pp_ld'])]
     coll = d['collisions']

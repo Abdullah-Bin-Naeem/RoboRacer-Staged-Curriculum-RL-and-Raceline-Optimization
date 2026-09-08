@@ -4,9 +4,13 @@ Working documents for the follower (pure pursuit + speed-profile matching), ICRA
 
 | File | What it is | Read it when |
 |---|---|---|
-| [`CONTROLLER_TUNING_PLAN.md`](CONTROLLER_TUNING_PLAN.md) | The plan. Current gap, experiment queue, result matrices to fill, rejected experiments, measurement traps. | You are about to run or judge an experiment. |
+| [`CONTROLLER_TUNING_PLAN.md`](CONTROLLER_TUNING_PLAN.md) | The plan. **§0 is the executive summary — the prioritised experiment table, and the only queue that counts.** §12 holds the full record of every run. Also: the gap, result matrices, rejected experiments, measurement traps. | You are about to run or judge an experiment. Start at §0. |
 | [`../../raceline/ab_report.py`](../../raceline/ab_report.py) | A/B report generator: lap/lateral/delay/section tables, the §8.5 gate, and a five-panel figure. | You have two run logs and need the before/after. |
 | [`follower-internals.html`](follower-internals.html) | Interactive explanation of the controller: pure pursuit geometry, the lookahead chain, how `v_target` is sampled, the tire slip band. Open in a browser. | You want to understand *why* a parameter does what it does. |
+
+**Every run gets logged.** §0's Result cell and a full §12 record, the same day, for accepted,
+rejected and aborted runs alike — see §3 rules 9–10. E0 is the worked example: it failed, and the
+record is why the failure is worth something.
 
 **Audited 2026-09-09** against `pure_pursuit.py`, the launch files and `icra_base20_a70.csv`.
 Corrections are marked **[audit 09-09]** in the plan; the headline ones are that the effective

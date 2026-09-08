@@ -3,12 +3,49 @@
 **Owner:** Adil (pure pursuit controller + speed-profile matching)
 **Branch:** `adil-icra-longitudinal`
 **Goal:** **0 collisions** and **≤ 11.50 s** on the ICRA 2026 track.
-**Status:** baseline measured, no tuning change accepted yet. Plan audited against the code
-and the baseline log on 2026-09-09; corrections are marked **[audit 09-09]**.
+**Status (2026-09-09):** reference run is **`E0_base`** — 25 laps, median **11.800 s**, best
+11.650, **0 collisions**. Gap to the plan: **+0.360 s**. One experiment run and rejected (E0/R8).
+Plan audited against the code on 2026-09-09; audit corrections are marked **[audit 09-09]**.
 
 Companion: [`follower-internals.html`](follower-internals.html) — interactive explanation of
 the geometry, the lookahead chain, profile sampling and the tire model. Open it first if you
 have not read the controller before. This document is the *plan*; that one is the *map*.
+
+---
+
+## 0. Executive summary — the experiment table
+
+**This table is the plan.** Everything below it is evidence for a row in it. Priority is
+expected impact ÷ risk, re-sorted after every run. Fill **Result** the day the run happens and
+write the detail into §12.
+
+**Where we stand:** plan **11.440 s**, we deliver **11.800 s** median, 0 collisions.
+Gate is **≤ 11.50 s with 0 collisions**, so we need **−0.30 s** and must not spend the clean sheet.
+
+| # | ID | Existing (what runs today) | Proposed change | Reason — the measured evidence | Expected / calculated impact | Result |
+|---|---|---|---|---|---|---|
+| **1** | **E4** | `accel_ff: 0.0` — no plan-acceleration feedforward. Throttle reacts only to a *speed error* that has already happened. | `accel_ff:=1.0`, `slip_circle` left at 0 | **78 % of all time lost is on accelerating stretches** (+0.526 s vs +0.106 s braking). There the car sits **−0.784 m/s below its own target** while `v_target` is *above* plan, so the target is not the limiter. Not authority either: throttle median **0.203**, at 1.0 on **0.0 %** of ticks. Not the band: realized slip p90 **0.160**, already on the friction curve's flat top. The plan asks only **2.49 m/s² mean** (max 4.12) against a ~7 tire peak and the car delivers **1.64, i.e. 66 %**. Feedforward is the one mechanism that asks for the plan's acceleration *before* the error appears. | **−0.15 to −0.25 s.** Closing delivery 66 % → 90 % recovers ~0.35 s of the +0.526 s accelerating loss; halved for the usual gap between mechanism and outcome. | |
+| **2** | **E8** | `lookahead_sag_frac: 0.5` — the chord is allowed to sag inside by up to 50 % of the line's own inside margin. | `lookahead_sag_frac:=0.35` | The **only** real lateral failure is apex cutting at **s 43–46**: worst inside excursion **+0.525 m at s 46.2** in the clean reference, and when E0 doubled the sag it became **+0.700 m and 33 collisions in that exact bin**. R8 proved the mechanism (`sag = \|κ\|·Ld²/8`) is what decides that corner. This caps the same quantity directly and in the physical unit — fraction of *actual* margin — instead of guessing a length. Launch-exposed, no code change. | **−0.00 to −0.05 s**, and the excursion tail shrinks. Bought as **insurance on the collision gate**, not as lap time. | |
+| **3** | **E9** | `lookahead_curv_gain: 0.67` — `Ld` divided by `1 + 0.67·\|κ\|` inside the lookahead. | `lookahead_curv_gain:=0.90` | Same target as E8, different lever, and §5.2's prescribed response to **positive (inside) corner bias**, which is what s 43–46 shows (`+0.026` mean, `+0.525` worst). Run only if E8 misses — they act on the same failure and running both at once breaks one-variable. | **−0.00 to −0.05 s**; same insurance argument as E8. | |
+| **4** | **E1** | `target_lead_s: 0.08` — profile sampled `v·(cmd_delay + 0.08) + 0.10` ahead. | `target_lead_s:=0.0` | Braking zones hold **16 %** of the loss (+0.106 s). Of the 1.69 m total lead at 8 m/s only **0.64 m** is this parameter; the rest is `cmd_delay` and is deliberate. That is ~10 % of the 6.10 m main zone but **40 % of the 2.50 m zone at s 42–45**, so the gain is concentrated in the short zones. | **−0.03 to −0.05 s.** (Was −0.28 s in the original plan; that used a 2.1 m lead at a `cmd_delay` of 0.175 that does not run, against a 7.8 m zone that does not exist.) | |
+| **5** | **E2** | as E1 | `target_lead_s:=0.04` | Only if E1 overshoots into hot corner entries. The midpoint. | between E1 and reference | |
+| **6** | **E5** | Lookahead constants are **global**; `lat_zones` / `margin_zones` already establish per-`s` overrides on the raceline side. | Add `lookahead_zones` (`s0:s1:cap`), applied as a cap on `Ld` | Excursions are **local, not global** — 165 baseline ticks in three clusters (s 0–10, s 20–26, s 40–48) and nothing between. E0's collisions localised harder still: **33 of 49 in s 44–46**. This is the cheap version of the F1TENTH per-waypoint adaptive lookahead (§4). **Needs a code change**, so it runs after E8/E9 show whether local lateral work pays at all. | **−0.05 to −0.15 s** and the excursion tail | |
+| **7** | **E10** | `latency_comp_s: 0.05` — pose propagated 50 ms forward before steering. **Fixed; not delay-scaled.** | `latency_comp_s:=0.03` | Tuned at a **175 ms** round trip (yaml: 6.60/6.70 vs 6.70/6.76 at 0, runs 24–25). This host measures **97 ms**. Unlike the lookahead, this parameter has **no automatic delay compensation**, so it is over-predicting by roughly the delay ratio. ⚠️ **This is the same reasoning shape that produced R8** — the difference is that R8 removed a compensator that was working, and here there is no compensator at all. Rank held low until E4/E8 land. | **−0.00 to −0.04 s.** Low confidence, explicitly flagged. | |
+| **8** | **E3** | `slip_accel: 0.16` | `slip_accel:=0.20` | Confirmation only, and now **predicted from the log rather than guessed**: realized slip p90 is already **0.160**, on the curve's flat top (0.10–0.18), so there is nothing above it to buy. Keep it in the queue so the plateau is on record, not because it should pay. | **~0.** | |
+| **9** | **E7** | `enc_window_s: 0.05` | A/B `0.0` vs `0.05` | Diagnostic, not a candidate: confirms the encoder-window fix on the current stack. | confirms the 3.7 s claim | |
+| — | ~~E0~~ | ~~`lookahead_delay_ref: 0.175`~~ | ~~`:=0.0`~~ | ~~Effective `Ld` is 1.48 m, not the documented 2.20 m~~ | ~~−0.10 to −0.17 s + the collision~~ | **❌ REJECTED 09-09 — 49 collisions, median 11.799 vs 11.800. See R8 and §12.1.** |
+| — | ~~E6~~ | ~~`lookahead_max: 2.20`~~ | ~~sweep 2.0/2.2/2.4~~ | ~~global fallback if E5 is not local~~ | — | **❌ DROPPED — R8 showed `lookahead_max` is not the lever on a 97 ms host.** |
+
+### Standing rules for this table
+
+1. **Everything gets logged here.** Every run — accepted, rejected or aborted — gets its
+   **Result** cell filled the same day and a full record in **§12**, with the launch command, the
+   raw lap list, the log excerpt and the chart. A run that is not written down did not happen,
+   and the reason we can reject E0 cleanly is that E0's control was written down.
+2. **Re-sort after every run.** E0 moved E5 *up* by failing. Priorities are posterior, not fixed.
+3. **Record the prediction before the run and score it after.** E0's prediction was wrong in
+   sign; that is only visible because it was written down first.
+4. Nothing enters this table without a measured number in the **Reason** column.
 
 ---
 
@@ -133,6 +170,15 @@ These are not bureaucracy; each one exists because ignoring it has already destr
 6. **Judge against the plan (11.441 s), not the previous run.** The plan does not drift.
 7. **Zero collisions is a gate.** A faster median with a collision is a failed experiment.
 8. **Discard the out-lap.** Lap 1 spans from sim reset to the first crossing and is meaningless.
+9. **Every run is written into this document, the same day.** [2026-09-09] Fill the **Result**
+   cell in §0 and add the full record to §12: launch command as issued, the override-confirmation
+   line, raw per-lap times, the log excerpt, the chart, and what it means. **Aborted and failed
+   runs included** — E0 is the most useful entry in §12 precisely because it failed, and it is
+   only usable because its control run was recorded first. No run is exempt for being
+   uninteresting: "no change" is a measurement.
+10. **Write the prediction down before the run, and score it after.** §0 carries the predicted
+   impact; §12 carries what actually happened and whether the prediction held. E0's prediction was
+   wrong in sign, which is knowable only because it was recorded in advance.
 
 ### Canonical run commands
 
@@ -406,6 +452,10 @@ Then look at the **speed profile chart**, which is the one that actually diagnos
 
 ## 7. Experiment queue
 
+> **[2026-09-09] §0 is the authoritative queue.** This section is kept for the per-experiment
+> rationale and the E5 note; the ordering, the predictions and the results live in the §0 table,
+> and E8/E9/E10 exist only there. If the two ever disagree, §0 wins.
+
 Ordered by expected value ÷ risk. Each is one variable. Fill the results matrix in §8 as you go.
 
 | ID | Change | Hypothesis | Predicted | Risk |
@@ -611,7 +661,9 @@ Each of these has already produced a confidently wrong number.
 ## 11. Definition of done
 
 - 25 consecutive laps, fresh reset, **0 collisions**
-- median ≤ 11.50 s on `raceline_a7.0.csv`
+- median ≤ 11.50 s on `raceline_a7.0.csv` — currently **11.800** (`E0_base`, 2026-09-09), so
+  **−0.30 s** to find, against a plan of 11.440
+- every run recorded in §0's Result column and §12 (§3 rules 9–10)
 - the accepted configuration written into `frames.py`'s `icra2026` `follower` dict **and into
   `pure_pursuit.yaml`**, with the measurement that justifies each value in the comment beside it.
   **[audit 09-09]** Both, not either: `follower.launch.py` never reads `frames.py` — see trap 8.
@@ -619,3 +671,162 @@ Each of these has already produced a confidently wrong number.
   the first run after the change
 - `VEHICLE_MODEL.md` §7 updated with the run history
 - §8 matrices in this file filled, including the rejected experiments
+
+---
+
+## 12. Experiment log — full records
+
+One subsection per run, newest last. Every run goes here: accepted, rejected, aborted,
+inconclusive. Required contents are the launch command **as issued**, the override-confirmation
+line from the follower log, the raw per-lap list, the headline numbers, the chart, and the
+reading. See §3 rules 9 and 10.
+
+---
+
+### 12.1 E0 — `lookahead_delay_ref:=0.0` — ❌ REJECTED (2026-09-09)
+
+**Prediction on record before the run:** −0.10 to −0.17 s and closes out the collision.
+**Outcome: wrong in sign.** No time gain, 49 collisions. Recorded as **R8** in §9.
+
+#### Hypothesis
+
+`pure_pursuit.py:1059-1061` scales the lookahead by the *measured* command delay:
+
+```python
+d_scale = max(0.7, min(1.2, self.cmd_delay / self.ld_delay_ref))   # ld_delay_ref = 0.175
+ld = clip(self.ld_k * d_scale * abs(self.speed), self.ld_min, self.ld_max * d_scale)
+```
+
+Measured `cmd_delay` on this host is **0.097 s**, so `0.097/0.175 = 0.55` floors `d_scale` at
+**0.70** and the car runs `lookahead_k` 0.385 / `lookahead_max` 1.54 against the documented
+0.55 / 2.20. The yaml records that a **1.6 m** lookahead *"weaved (yaw ±9 deg in 0.2 s) and
+clipped a wall 0.29 m from the line"*, and intermittent excursions plus a rare wall contact were
+exactly the observed failure. Setting `lookahead_delay_ref:=0` disables the scaling and restores
+the tuned values.
+
+#### Method
+
+Paired A/B, same session, fresh Reset + Connect before each arm, both counters verified at 0 from
+ROS as well as the GUI, 25 laps each, out-lap discarded. Line `raceline_a7.0.csv` (541 pts,
+54.09 m, plans 11.4398 s).
+
+```bash
+# Arm A — control, no overrides
+ros2 launch racer_control follower.launch.py track:=icra2026 \
+  path_csv:=/home/autodrive_devkit/dev_ws/raceline/icra2026/raceline_a7.0.csv
+
+# Arm B — one variable
+ros2 launch racer_control follower.launch.py track:=icra2026 \
+  path_csv:=/home/autodrive_devkit/dev_ws/raceline/icra2026/raceline_a7.0.csv \
+  lookahead_delay_ref:=0.0
+```
+
+Override confirmed in `/tmp/E0_test_foll.log` before the run was allowed to proceed:
+
+```
+[pure_pursuit] launch overrides: {'lookahead_delay_ref': 0.0}
+[pure_pursuit] speed_source=tire  throttle_mode=slip  slip band [-0.08, +0.16]
+               u_launch 0.4 m/s  lookahead 0.8-2.2 m (k 0.55)  latency_comp 0.05 s
+```
+
+Arm A's log has **no** `launch overrides` line — it is a true default run.
+
+#### Raw lap times
+
+```
+Arm A  E0_base.csv        25 laps, 0 collisions
+  11.85 11.80 11.75 11.90 11.80 11.75 11.75 11.80 11.90 11.75 11.75 11.70 12.25
+  11.70 11.80 11.95 11.65 12.00 11.80 11.80 12.00 11.90 11.85 11.80 11.75
+
+Arm B  E0_test_aborted.csv 17 laps then aborted   (* = collision on that lap)
+  11.80 11.70 11.70 11.80 11.80 11.75 11.85 11.85 12.00 11.90 11.70 11.75 11.85
+  12.25* 11.95 11.75 11.70
+```
+
+#### Results
+
+| | Arm A `E0_base` | Arm B `E0_test` |
+|---|---|---|
+| Laps | 25 | 13 clean, then collisions, aborted at 17 |
+| Best / **median** / mean | 11.650 / **11.800** / 11.830 | 11.700 / **11.799** / 11.804 |
+| Lap-time std | 0.122 | — |
+| **Collisions** | **0** | **49** |
+| Gap vs plan 11.440 | **+0.360** | +0.359 |
+| `pp_delay` med / p90 | **0.097** / 0.108 | **0.100** / 0.129 |
+| `pp_ld` median at v > 6 | **1.477 m** | **2.093 m** |
+| `pp_ld` max | 2.183 | 2.184 |
+| \|e\| mean / p90 / max | **0.038 / 0.074 / 0.540** | **0.066 / 0.124 / 0.651** |
+| Worst **inside** excursion | +0.525 m at s 46.2 | **+0.700 m at s 45.8** |
+
+`pp_delay` medians differ by **0.008 s**, inside the 0.01 s parity gate — the arms are
+comparable and this is a clean rejection, not a confounded one.
+
+**Collision distribution by 2 m bin:** `s 44: 33` · `s 30: 14` · `s 28: 2`.
+First contact at **t 177.5 s, s 45.99 m, v 2.98 m/s, e_lat +0.749 m** (positive = inside),
+`Ld` 1.18 m at that instant. After the first hit the car respawned into the same wall repeatedly —
+the 49 are a loop, not 49 independent events.
+
+**Section-level time loss vs plan** (from `ab_report.py`; Δ is the result):
+
+| Section | Arm A | Arm B | Δ |
+|---|---|---|---|
+| straight 0–21 | +0.122 | +0.167 | **+0.046** |
+| corner 21–24 (T2) | +0.007 | +0.012 | +0.004 |
+| straight 24–37 | +0.074 | +0.081 | +0.007 |
+| corner 37–41 | +0.001 | +0.026 | +0.024 |
+| straight 41–43 | +0.034 | +0.024 | −0.010 |
+| corner 43–46 | +0.008 | +0.037 | **+0.028** |
+| straight 46–end | +0.056 | +0.094 | **+0.038** |
+| **total** | **+0.303** | **+0.441** | **+0.138** |
+
+**Decision gate (§8.5): 1 of 4 — REJECT.**
+
+- ❌ collisions = 0 → **49**
+- ❌ median improves ≥ 0.03 s → **−0.001 s**, noise
+- ❌ no section worse by > 0.03 s → **three** are
+- ✅ `pp_delay` parity within 0.01 s → 0.008
+
+Chart: `figures/E0_ab.png` (five panels; panel 2 is the effective-lookahead trace, panel 4 the
+excursion histogram). Regenerate with:
+
+```bash
+python3 raceline/ab_report.py E0_base.csv:"E0_base (control)" E0_test_aborted.csv:"E0 delay_ref 0" \
+  --path raceline/icra2026/raceline_a7.0.csv --name E0 --lap-lo 11.4 --lap-hi 12.4
+```
+
+#### Reading — why the prediction was wrong
+
+The measurement was right and the inference from it was wrong. The override did **exactly** what
+it was predicted to do mechanically: `Ld` at speed went **1.477 → 2.093 m**. It bought nothing —
+median 11.799 against 11.800 — and cost the collision gate outright.
+
+`lookahead_max: 2.20` is the value tuned **at the reference delay**, where `d_scale = 1.0`. It is
+what the geometry wants when the round trip is **175 ms** and the phase lag needs that much
+lookahead to stay stable. This host now runs at **97 ms**. There is far less lag to buy margin
+against, so the extra length buys nothing on the straights and spends itself cutting apexes. The
+chord sags inside by `|κ|·Ld²/8`, which is quadratic in `Ld`:
+
+| | `Ld` at speed | sag at κ = 0.8 |
+|---|---|---|
+| Arm A (floored) | 1.477 m | **0.218 m** |
+| Arm B (restored) | 2.093 m | **0.438 m** |
+
+The line runs **0.28 m** from the inside wall at s 43–46. Arm A fits under that; Arm B does not,
+and the measured worst inside excursion (+0.700 m) confirms it. Same failure family as **R4**: a
+lateral-geometry change that grows past a physical margin cascades rather than degrades.
+
+**Conclusion: `lookahead_delay_ref` is doing its job and the 0.70 floor is load-bearing.**
+"Configured 2.20 / effective 1.48" is not a discrepancy to fix — 2.20 is the value *at the
+reference delay*, and §5.1 now says so.
+
+#### What this run bought us anyway
+
+1. **`E0_base` is the new reference** and is strictly better evidence than the historical
+   `icra_base20_a70`: 25 laps instead of 21, median 11.800 vs 11.898, **0 collisions vs 1**, and
+   its `pp_delay` is recorded so future arms can be checked against it.
+2. **The `pp_delay` parity rule earned itself immediately** — 0.008 s apart is what makes this
+   rejection trustworthy rather than arguable.
+3. **E5's case got stronger, not weaker.** The failure localised to **s 43–46**, which is direct
+   evidence that lookahead wants to be *per-zone*, not globally longer or globally shorter. E8 and
+   E9 in §0 exist because of this run.
+4. **E6 is dead.** Sweeping `lookahead_max` on a 97 ms host sweeps the wrong quantity.

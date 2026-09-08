@@ -1,0 +1,924 @@
+<title>Follower Internals</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+
+<style>
+:root{
+  /* neutrals carry a slight blue bias: instrument panel, not warm paper */
+  --paper:#f2f5f8;
+  --surface:#ffffff;
+  --surface-2:#e8edf3;
+  --rule:#cdd7e2;
+  --rule-soft:#dde5ed;
+  --ink:#141b23;
+  --ink-2:#3d4b5a;
+  --ink-3:#6b7c8d;
+  /* data colours, carried over from the run charts so the two read as one system */
+  --plan:#1a7f37;
+  --achieved:#c0392b;
+  --cmd:#0b6bcb;
+  --warn:#b7791f;
+  --plan-soft:rgba(26,127,55,.13);
+  --cmd-soft:rgba(11,107,203,.13);
+  --achieved-soft:rgba(192,57,43,.13);
+  --warn-soft:rgba(183,121,31,.13);
+  --grid:rgba(20,27,35,.09);
+  --shadow:0 1px 2px rgba(20,27,35,.06),0 8px 24px -12px rgba(20,27,35,.18);
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,sans-serif;
+  --cond:"IBM Plex Sans Condensed","IBM Plex Sans",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --paper:#0e1319;
+    --surface:#161d25;
+    --surface-2:#1e2732;
+    --rule:#2c3945;
+    --rule-soft:#232d38;
+    --ink:#e6edf4;
+    --ink-2:#adbccb;
+    --ink-3:#7d8fa1;
+    --plan:#4ec06d;
+    --achieved:#f0705f;
+    --cmd:#5ba4f5;
+    --warn:#e0a542;
+    --plan-soft:rgba(78,192,109,.16);
+    --cmd-soft:rgba(91,164,245,.16);
+    --achieved-soft:rgba(240,112,95,.16);
+    --warn-soft:rgba(224,165,66,.16);
+    --grid:rgba(230,237,244,.10);
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -12px rgba(0,0,0,.6);
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0e1319; --surface:#161d25; --surface-2:#1e2732;
+  --rule:#2c3945; --rule-soft:#232d38;
+  --ink:#e6edf4; --ink-2:#adbccb; --ink-3:#7d8fa1;
+  --plan:#4ec06d; --achieved:#f0705f; --cmd:#5ba4f5; --warn:#e0a542;
+  --plan-soft:rgba(78,192,109,.16); --cmd-soft:rgba(91,164,245,.16);
+  --achieved-soft:rgba(240,112,95,.16); --warn-soft:rgba(224,165,66,.16);
+  --grid:rgba(230,237,244,.10);
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -12px rgba(0,0,0,.6);
+}
+
+*{box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);font-family:var(--sans);
+  font-size:16px;line-height:1.62;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1180px;margin:0 auto;padding:0 28px 96px}
+
+/* ---------- masthead ---------- */
+.mast{padding:48px 0 30px;border-bottom:2px solid var(--ink);margin-bottom:0}
+.kicker{font-family:var(--mono);font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--ink-3);margin:0 0 14px}
+h1{font-family:var(--cond);font-weight:700;font-size:clamp(38px,6.2vw,62px);line-height:1.02;
+  margin:0 0 16px;letter-spacing:-.015em;text-wrap:balance}
+.dek{font-size:19px;line-height:1.55;color:var(--ink-2);max-width:64ch;margin:0}
+.dek em{color:var(--ink);font-style:normal;font-weight:600}
+
+/* ---------- nav ---------- */
+nav{position:sticky;top:0;z-index:30;background:var(--paper);border-bottom:1px solid var(--rule);
+  margin-bottom:44px}
+nav ol{list-style:none;display:flex;gap:0;margin:0;padding:0;overflow-x:auto;
+  font-family:var(--mono);font-size:12px}
+nav a{display:block;padding:13px 15px;color:var(--ink-3);text-decoration:none;white-space:nowrap;
+  border-bottom:2px solid transparent}
+nav a:hover{color:var(--ink);background:var(--surface-2)}
+nav a:focus-visible{outline:2px solid var(--cmd);outline-offset:-3px}
+nav .n{color:var(--ink-3);opacity:.6;margin-right:7px}
+
+/* ---------- sections ---------- */
+section{margin:0 0 60px;scroll-margin-top:60px}
+h2{font-family:var(--cond);font-weight:700;font-size:clamp(25px,3.1vw,33px);line-height:1.12;
+  margin:0 0 6px;letter-spacing:-.01em;text-wrap:balance}
+.sub{font-family:var(--mono);font-size:11.5px;letter-spacing:.13em;text-transform:uppercase;
+  color:var(--cmd);margin:0 0 18px}
+h3{font-family:var(--cond);font-weight:600;font-size:19.5px;margin:30px 0 8px;letter-spacing:-.005em}
+p{margin:0 0 15px;max-width:70ch}
+ul,ol.body{max-width:70ch;padding-left:20px;margin:0 0 15px}
+li{margin-bottom:7px}
+code{font-family:var(--mono);font-size:.885em;background:var(--surface-2);
+  padding:1px 5px;border-radius:3px;color:var(--ink)}
+strong{font-weight:600}
+a.ln{color:var(--cmd)}
+
+/* ---------- figure panels ---------- */
+.fig{background:var(--surface);border:1px solid var(--rule);border-radius:6px;
+  margin:26px 0;overflow:hidden;box-shadow:var(--shadow)}
+.fig-head{padding:14px 18px;border-bottom:1px solid var(--rule-soft);
+  display:flex;justify-content:space-between;align-items:baseline;gap:16px;flex-wrap:wrap}
+.fig-title{font-family:var(--cond);font-weight:600;font-size:16px}
+.fig-note{font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.04em}
+.fig-body{padding:18px}
+.canvas-holder{position:relative;width:100%}
+canvas{display:block;width:100%;touch-action:none}
+
+/* controls */
+.ctrls{display:grid;gap:14px 26px;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));
+  padding:16px 18px;border-top:1px solid var(--rule-soft);background:var(--surface-2)}
+.ctrl label{display:flex;justify-content:space-between;align-items:baseline;gap:10px;
+  font-family:var(--mono);font-size:11.5px;color:var(--ink-2);margin-bottom:5px}
+.ctrl .val{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;accent-color:var(--cmd);height:20px}
+input[type=range]:focus-visible{outline:2px solid var(--cmd);outline-offset:3px}
+.ctrl .hint{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);margin-top:3px;display:block}
+
+/* readout strip */
+.readout{display:grid;gap:1px;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));
+  background:var(--rule-soft);border-top:1px solid var(--rule-soft)}
+.readout div{background:var(--surface);padding:11px 14px}
+.readout dt{font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--ink-3);margin:0 0 3px}
+.readout dd{margin:0;font-family:var(--mono);font-size:17px;font-weight:500;
+  font-variant-numeric:tabular-nums;color:var(--ink)}
+.readout dd.hi{color:var(--achieved)}
+.readout dd.ok{color:var(--plan)}
+
+/* ---------- callouts ---------- */
+.note{border-left:3px solid var(--cmd);background:var(--cmd-soft);padding:13px 17px;
+  margin:20px 0;border-radius:0 4px 4px 0;max-width:74ch}
+.note.warn{border-left-color:var(--warn);background:var(--warn-soft)}
+.note.find{border-left-color:var(--achieved);background:var(--achieved-soft)}
+.note p{margin:0 0 8px;max-width:none}
+.note p:last-child{margin:0}
+.note .tag{font-family:var(--mono);font-size:10.5px;letter-spacing:.13em;text-transform:uppercase;
+  display:block;margin-bottom:5px;font-weight:500}
+.note .tag{color:var(--cmd)} .note.warn .tag{color:var(--warn)} .note.find .tag{color:var(--achieved)}
+
+/* ---------- pipeline ---------- */
+.pipe{display:grid;gap:10px;margin:22px 0}
+.step{display:grid;grid-template-columns:34px 1fr;gap:14px;align-items:start;
+  padding:13px 15px;background:var(--surface);border:1px solid var(--rule-soft);border-radius:5px}
+.step .num{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--surface);
+  background:var(--ink);width:26px;height:26px;border-radius:50%;
+  display:grid;place-items:center;margin-top:1px}
+.step h4{margin:0 0 3px;font-family:var(--cond);font-size:16px;font-weight:600}
+.step p{margin:0;font-size:14.5px;color:var(--ink-2);max-width:none}
+.step code{font-size:12.5px}
+
+/* ---------- tables ---------- */
+.tbl-scroll{overflow-x:auto;margin:18px 0;border:1px solid var(--rule);border-radius:6px;
+  background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:14px;min-width:660px}
+th{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-3);text-align:left;padding:11px 14px;border-bottom:1px solid var(--rule);
+  background:var(--surface-2);position:sticky;top:0}
+td{padding:10px 14px;border-bottom:1px solid var(--rule-soft);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td.p{font-family:var(--mono);font-size:12.5px;white-space:nowrap;color:var(--ink)}
+td.v{font-family:var(--mono);font-size:12.5px;font-variant-numeric:tabular-nums;
+  white-space:nowrap;font-weight:500}
+td.d{color:var(--ink-2);min-width:270px}
+tbody.grp th{background:var(--surface-2)}
+tr.grp td{background:var(--surface-2);font-family:var(--mono);font-size:10.5px;
+  letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);padding:8px 14px;font-weight:500}
+.tag-lat{color:var(--cmd)} .tag-lon{color:var(--achieved)} .tag-est{color:var(--warn)}
+
+/* ---------- equation ---------- */
+.eq{font-family:var(--mono);font-size:14.5px;background:var(--surface);border:1px solid var(--rule);
+  border-left:3px solid var(--ink);border-radius:0 5px 5px 0;padding:15px 18px;margin:18px 0;
+  overflow-x:auto;color:var(--ink)}
+.eq .cm{color:var(--ink-3)}
+
+.legend{display:flex;gap:18px;flex-wrap:wrap;font-family:var(--mono);font-size:11.5px;
+  color:var(--ink-2);padding:0 18px 16px}
+.legend span{display:flex;align-items:center;gap:6px}
+.swatch{width:15px;height:3px;border-radius:2px;display:inline-block}
+
+footer{border-top:1px solid var(--rule);padding-top:22px;margin-top:56px;
+  font-family:var(--mono);font-size:12px;color:var(--ink-3);max-width:74ch}
+
+@media (max-width:640px){
+  .wrap{padding:0 17px 64px}
+  .mast{padding:32px 0 24px}
+  .readout dd{font-size:15px}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+<div class="wrap">
+
+<header class="mast">
+  <p class="kicker">RoboRacer · ICRA 2026 · racer_control/pure_pursuit.py</p>
+  <h1>What the follower is actually doing</h1>
+  <p class="dek">The follower solves <em>two separate control problems</em> twenty times a second: where to point the wheels, and how hard to drive them. They share a path and almost nothing else. This is a working map of both — the real parameters, the real measured constants, and where the lap time is currently going on the a7.0 line.</p>
+</header>
+
+<nav>
+  <ol>
+    <li><a href="#loop"><span class="n">01</span>The control loop</a></li>
+    <li><a href="#geometry"><span class="n">02</span>Pure pursuit geometry</a></li>
+    <li><a href="#lookahead"><span class="n">03</span>The lookahead chain</a></li>
+    <li><a href="#target"><span class="n">04</span>Where v_target comes from</a></li>
+    <li><a href="#tire"><span class="n">05</span>Throttle is a wheel speed</a></li>
+    <li><a href="#estimator"><span class="n">06</span>Knowing your own speed</a></li>
+    <li><a href="#params"><span class="n">07</span>Every parameter</a></li>
+    <li><a href="#method"><span class="n">08</span>How to tune it</a></li>
+  </ol>
+</nav>
+
+<!-- ================= 01 ================= -->
+<section id="loop">
+  <p class="sub">01 — Orientation</p>
+  <h2>One loop, two independent problems</h2>
+  <p>At <code>control_hz: 20</code> the follower runs the same sequence every tick. The steering half and the throttle half both read the path, but they never read each other. A steering change cannot fix a speed deficit, and no amount of throttle tuning will stop the car running wide.</p>
+
+  <div class="pipe">
+    <div class="step"><div class="num">1</div><div>
+      <h4>Locate the car on the path</h4>
+      <p>Find the nearest path point to the current pose. Everything downstream is indexed off this point — the curvature under the car, the planned speed, the planned acceleration.</p></div></div>
+    <div class="step"><div class="num">2</div><div>
+      <h4>Estimate own speed</h4>
+      <p>A tire-model observer driven by wheel encoders produces <code>v_est</code>. This is <em>not</em> a measurement — it is a simulation of the tire, corrected by pose. Section 06.</p></div></div>
+    <div class="step"><div class="num">3</div><div>
+      <h4>Pick a lookahead point → steering</h4>
+      <p>Walk forward along the path until you are <code>Ld</code> metres away. Fit a circular arc to that point and command its curvature. Sections 02–03.</p></div></div>
+    <div class="step"><div class="num">4</div><div>
+      <h4>Sample the planned speed → v_target</h4>
+      <p>Read the raceline's own <code>v_mps</code> column at a point <em>ahead</em> of the car, because the throttle you set now will not land for ~0.15 s. Section 04.</p></div></div>
+    <div class="step"><div class="num">5</div><div>
+      <h4>Convert v_target into a wheel-speed command</h4>
+      <p>Throttle in this simulator is a wheel-speed command, not a torque. Choose a slip, bounded by the tire's peak-force band. Section 05.</p></div></div>
+  </div>
+
+  <div class="note">
+    <span class="tag">The important asymmetry</span>
+    <p>The raceline file carries its own velocity profile (<code>v_mps</code>) that already respects the acceleration and grip budget it was solved with. The follower's job is <strong>not</strong> to decide how fast to go. It is to land the car on the profile's speed at the profile's position. Every longitudinal parameter exists to close the gap between "the plan says 7.2 m/s here" and "the wheel actually delivered it 0.15 s ago".</p>
+  </div>
+</section>
+
+<!-- ================= 02 ================= -->
+<section id="geometry">
+  <p class="sub">02 — Lateral control</p>
+  <h2>Pure pursuit is one arc, chosen every tick</h2>
+  <p>The whole algorithm: pick a point on the path <code>Ld</code> metres ahead, then steer along the unique circular arc that starts at the rear axle, points where the car points, and passes through that point. Next tick, throw it away and pick a new one.</p>
+
+  <p>If that point sits <code>y</code> metres to the side in the car's own frame, the arc's curvature is:</p>
+  <div class="eq">κ = 2y / Ld²<span class="cm">   →   δ = atan(κ · L)  <span class="cm">// bicycle model, L = wheelbase 0.324 m</span></span></div>
+
+  <p>That is the entire steering law. Everything else in the lateral half of the config exists to choose <code>Ld</code> well, because <code>Ld</code> alone decides whether the car cuts the apex, runs wide, or weaves.</p>
+
+  <div class="fig">
+    <div class="fig-head">
+      <span class="fig-title">The arc the controller commands</span>
+      <span class="fig-note">drag the car, or move the slider</span>
+    </div>
+    <div class="fig-body"><div class="canvas-holder"><canvas id="cvGeo" height="360"></canvas></div></div>
+    <div class="legend">
+      <span><i class="swatch" style="background:var(--ink-3)"></i>path</span>
+      <span><i class="swatch" style="background:var(--cmd)"></i>commanded arc</span>
+      <span><i class="swatch" style="background:var(--achieved)"></i>lookahead point</span>
+    </div>
+    <div class="ctrls">
+      <div class="ctrl">
+        <label for="gLd">lookahead Ld<span class="val" id="gLdV">1.40 m</span></label>
+        <input type="range" id="gLd" min="0.4" max="3.0" step="0.05" value="1.4">
+        <span class="hint">short = tracks tightly, oscillates · long = smooth, cuts corners</span>
+      </div>
+      <div class="ctrl">
+        <label for="gOff">car's lateral error<span class="val" id="gOffV">0.35 m</span></label>
+        <input type="range" id="gOff" min="-1.2" max="1.2" step="0.01" value="0.35">
+        <span class="hint">how far off the line the car starts</span>
+      </div>
+    </div>
+    <div class="readout">
+      <div><dt>curvature κ</dt><dd id="gK">—</dd></div>
+      <div><dt>steer angle δ</dt><dd id="gD">—</dd></div>
+      <div><dt>steer command</dt><dd id="gS">—</dd></div>
+      <div><dt>a_lat at 7 m/s</dt><dd id="gA">—</dd></div>
+    </div>
+  </div>
+
+  <div class="note warn">
+    <span class="tag">Why steer_a_lat_max = 7.0 is load-bearing</span>
+    <p>The front tire's lateral force <em>peaks</em> at about 1.0 g near 0.57° of slip and has fallen to 0.5 g by 5.7°. Past the peak, a geometric controller's instinct — <strong>more steering</strong> — is the wrong sign: slip angle grows, force drops, the car runs wider still. Measured at the 6.5 rung, that spiral took the car from 0.2 m to 0.9 m wide in one second at full lock.</p>
+    <p>Capping commanded curvature at <code>a_cap / v²</code> holds the steering where the force is still near maximum and lets the car run wide by the honest physical amount instead of spiralling. Raising this cap to 8.5 was tried: <strong>146 collisions, no completed laps.</strong></p>
+  </div>
+</section>
+
+<!-- ================= 03 ================= -->
+<section id="lookahead">
+  <p class="sub">03 — Lateral tuning</p>
+  <h2>Ld is not one number, it is a chain</h2>
+  <p>The base rule is speed-proportional — fast means look further — then three corrections apply in order. Each was added to fix a specific measured failure, and each has an off switch.</p>
+
+  <div class="eq">
+Ld = clamp(<span class="cm">lookahead_min</span>, <span class="cm">lookahead_k</span> · v, <span class="cm">lookahead_max</span>)
+   ÷ (1 + <span class="cm">lookahead_curv_gain</span> · max|κ| within Ld)   <span class="cm">// tighten in corners</span>
+   → capped so the chord's sagitta ≤ <span class="cm">lookahead_sag_frac</span> · inside margin
+   → k and max scaled by (cmd_delay / <span class="cm">lookahead_delay_ref</span>)   <span class="cm">// slow loop, shorter Ld</span></div>
+
+  <div class="fig">
+    <div class="fig-head">
+      <span class="fig-title">Ld against speed, as the chain computes it</span>
+      <span class="fig-note">current config vs. what you change</span>
+    </div>
+    <div class="fig-body"><div class="canvas-holder"><canvas id="cvLd" height="290"></canvas></div></div>
+    <div class="legend">
+      <span><i class="swatch" style="background:var(--ink-3)"></i>shipped config</span>
+      <span><i class="swatch" style="background:var(--cmd)"></i>your settings</span>
+      <span><i class="swatch" style="background:var(--achieved);height:9px;width:9px;border-radius:50%"></i>on a straight</span>
+      <span><i class="swatch" style="background:var(--warn);height:9px;width:9px;border-radius:50%"></i>at a hairpin (κ=1.2)</span>
+    </div>
+    <div class="ctrls">
+      <div class="ctrl"><label for="lMin">lookahead_min<span class="val" id="lMinV">0.80 m</span></label>
+        <input type="range" id="lMin" min="0.3" max="1.5" step="0.05" value="0.80"></div>
+      <div class="ctrl"><label for="lK">lookahead_k<span class="val" id="lKV">0.55</span></label>
+        <input type="range" id="lK" min="0.2" max="0.9" step="0.01" value="0.55">
+        <span class="hint">seconds of travel to look ahead</span></div>
+      <div class="ctrl"><label for="lMax">lookahead_max<span class="val" id="lMaxV">2.20 m</span></label>
+        <input type="range" id="lMax" min="1.0" max="3.2" step="0.05" value="2.20"></div>
+      <div class="ctrl"><label for="lCg">lookahead_curv_gain<span class="val" id="lCgV">0.67</span></label>
+        <input type="range" id="lCg" min="0" max="1.6" step="0.01" value="0.67">
+        <span class="hint">0 = no corner tightening</span></div>
+    </div>
+  </div>
+
+  <div class="note">
+    <span class="tag">Reading the symptom</span>
+    <p><strong>Weaving on fast straights</strong> (lateral error changing sign &gt; 1.2 ×/s) means <code>Ld</code> is too short — lengthen <code>lookahead_max</code>. <strong>Cutting the apex</strong> (signed offset toward the inside, positive corner bias) means it is too long in corners — raise <code>lookahead_curv_gain</code> or lower <code>lookahead_k</code>. <strong>Running wide</strong> is neither: that is the tire, and the answer is a lower lateral rung on the line, not a lookahead change.</p>
+  </div>
+
+  <div class="note find">
+    <span class="tag">Where this bites you right now</span>
+    <p>On the 20-lap baseline, every fast lap (11.75–11.80 s) held max lateral error ≤ 0.10 m, and every slow lap had an excursion to 0.23–0.60 m. The spread from 11.75 best to 11.92 median is <strong>lateral</strong>, not longitudinal — the speed controller is not giving up on those laps, the car is running wide and paying for it.</p>
+  </div>
+</section>
+
+<!-- ================= 04 ================= -->
+<section id="target">
+  <p class="sub">04 — Longitudinal control</p>
+  <h2>Where v_target comes from — and why it is early</h2>
+  <p>The raceline CSV carries a <code>v_mps</code> column: the speed profile the optimiser solved, already containing its own braking distances. The follower does not recompute it. It samples it — at a point <em>ahead</em> of the car:</p>
+
+  <div class="eq">lead = v · (<span class="cm">cmd_delay</span> + <span class="cm">target_lead_s</span>) + <span class="cm">lead_min_m</span>
+v_target = clamp(path_v[ near + lead ], <span class="cm">v_min</span>, <span class="cm">v_max</span>)</div>
+
+  <p>The <code>cmd_delay</code> part of that lead is <strong>correct and necessary</strong>: a throttle published now does not reach the wheel for ~0.15 s, by which time the car has moved. Sampling the profile where the command will land is exactly right.</p>
+
+  <p><code>target_lead_s</code> is extra preview <em>on top</em> of that — and it is the one number in this chain with no physical justification on this track.</p>
+
+  <div class="fig">
+    <div class="fig-head">
+      <span class="fig-title">The a7.0 profile, and where the follower reads it</span>
+      <span class="fig-note">real line · 54.09 m lap · plans 11.441 s</span>
+    </div>
+    <div class="fig-body"><div class="canvas-holder"><canvas id="cvProf" height="330"></canvas></div></div>
+    <div class="legend">
+      <span><i class="swatch" style="background:var(--plan)"></i>planned v_mps</span>
+      <span><i class="swatch" style="background:var(--cmd)"></i>v_target as sampled</span>
+      <span><i class="swatch" style="background:var(--warn)"></i>lead distance at the cursor</span>
+    </div>
+    <div class="ctrls">
+      <div class="ctrl">
+        <label for="pLead">target_lead_s<span class="val" id="pLeadV">0.08 s</span></label>
+        <input type="range" id="pLead" min="0" max="0.20" step="0.01" value="0.08">
+        <span class="hint">shipped default is 0.08 — tuned on Porto</span>
+      </div>
+      <div class="ctrl">
+        <label for="pDelay">cmd_delay_s<span class="val" id="pDelayV">0.175 s</span></label>
+        <input type="range" id="pDelay" min="0.05" max="0.25" step="0.005" value="0.175">
+        <span class="hint">measured 0.085–0.140 on this host</span>
+      </div>
+      <div class="ctrl">
+        <label for="pS">inspect at s<span class="val" id="pSV">17.0 m</span></label>
+        <input type="range" id="pS" min="0" max="54" step="0.3" value="17">
+        <span class="hint">s 16–22 is the braking zone into T2</span>
+      </div>
+    </div>
+    <div class="readout">
+      <div><dt>lead distance</dt><dd id="pLd">—</dd></div>
+      <div><dt>plan at car</dt><dd id="pVp">—</dd></div>
+      <div><dt>v_target</dt><dd id="pVt">—</dd></div>
+      <div><dt>commanded early by</dt><dd id="pDiff">—</dd></div>
+    </div>
+  </div>
+
+  <div class="note find">
+    <span class="tag">This is the live finding</span>
+    <p>Drag <code>target_lead_s</code> between 0 and 0.08 and watch the blue trace in the braking zones. At 8 m/s the shipped 0.08 pushes the sample point roughly <strong>2.1 m</strong> down the road — and this track's braking zones are about 7.8 m long. The car starts braking about a quarter of the zone early, at every corner, on every lap.</p>
+    <p>That value was tuned for Porto, whose braking zones are short. The multi-track branch measured the same effect on this track independently and priced it at <strong>0.28 s per lap</strong>, which is why their registry sets it to 0.0. Your yaml still has 0.08.</p>
+  </div>
+
+  <div class="note warn">
+    <span class="tag">Why the profile is sampled, not previewed</span>
+    <p>An older version took the <em>minimum</em> of the profile over a fixed 1 m preview. That reaches corner speed a metre early at every entry and holds it there: measured at ~0.11 s per corner, about 0.55 s a lap. The profile already contains its own braking distances — taking a minimum over a window brakes for a corner twice.</p>
+  </div>
+</section>
+
+<!-- ================= 05 ================= -->
+<section id="tire">
+  <p class="sub">05 — Longitudinal control</p>
+  <h2>Throttle is a wheel speed, so tuning means choosing a slip</h2>
+  <p>This is the single most important thing about the simulator's longitudinal model. The sim spins the wheel to <code>u = 25.25 × throttle</code> <em>regardless of the car</em>. Throttle is not torque. It is a wheel-speed command.</p>
+
+  <p>Force therefore comes from the difference between wheel surface speed and car speed — the slip ratio — through the tire's friction curve:</p>
+
+  <div class="eq">S = (u − v) / max(v, <span class="cm">v_slip_den</span>)      <span class="cm">// PhysX longitudinal slip, v_slip_den = 4 m/s</span>
+a = μ(S) · g − <span class="cm">DRAG_LIN</span> · v      <span class="cm">// DRAG_LIN = 0.273 /s</span></div>
+
+  <p>μ(S) is not a straight line. It rises to a peak of <strong>0.72 at S = 0.15</strong>, then <em>falls</em> to an asymptote of 0.464 at S = 0.25. Commanding more slip past the peak gives you less force — the longitudinal twin of the steering cap in section 02.</p>
+
+  <div class="fig">
+    <div class="fig-head">
+      <span class="fig-title">The friction curve and the slip band</span>
+      <span class="fig-note">sim's own tire model · peak (0.15, 0.72)</span>
+    </div>
+    <div class="fig-body"><div class="canvas-holder"><canvas id="cvTire" height="320"></canvas></div></div>
+    <div class="legend">
+      <span><i class="swatch" style="background:var(--ink-3)"></i>μ(S)</span>
+      <span><i class="swatch" style="background:var(--plan-soft);height:11px;width:15px;border-radius:2px"></i>allowed band</span>
+      <span><i class="swatch" style="background:var(--achieved)"></i>peak force</span>
+    </div>
+    <div class="ctrls">
+      <div class="ctrl">
+        <label for="tAcc">slip_accel<span class="val" id="tAccV">0.16</span></label>
+        <input type="range" id="tAcc" min="0.02" max="0.30" step="0.01" value="0.16">
+        <span class="hint">your value. 0.08 is the file default</span>
+      </div>
+      <div class="ctrl">
+        <label for="tBrk">slip_brake<span class="val" id="tBrkV">0.08</span></label>
+        <input type="range" id="tBrk" min="0.02" max="0.30" step="0.01" value="0.08">
+        <span class="hint">deliberately not raised — braking at higher slip is how the tire is lost</span>
+      </div>
+      <div class="ctrl">
+        <label for="tCirc">slip_circle<span class="val" id="tCircV">off</span></label>
+        <input type="range" id="tCirc" min="0" max="0.24" step="0.01" value="0">
+        <span class="hint">&gt;0 replaces both values above with a lateral-load-scaled band</span>
+      </div>
+      <div class="ctrl">
+        <label for="tLat">lateral load a_lat<span class="val" id="tLatV">0.0 m/s²</span></label>
+        <input type="range" id="tLat" min="0" max="7" step="0.1" value="0">
+        <span class="hint">only matters when slip_circle &gt; 0</span>
+      </div>
+    </div>
+    <div class="readout">
+      <div><dt>band half-width</dt><dd id="tBand">—</dd></div>
+      <div><dt>μ at band edge</dt><dd id="tMu">—</dd></div>
+      <div><dt>accel available</dt><dd id="tAcl">—</dd></div>
+      <div><dt>vs. peak</dt><dd id="tPct">—</dd></div>
+    </div>
+  </div>
+
+  <h3>The friction circle option</h3>
+  <p>The multi-track branch added <code>slip_circle</code>: instead of a fixed band, use one value at zero lateral load and scale it down as the corner loads the tire.</p>
+  <div class="eq">band = max( <span class="cm">slip_circle</span> · √(1 − (a_lat / <span class="cm">steer_a_lat_max</span>)²) , 0.02 )</div>
+  <p>The shape is right — a tire carrying 6 m/s² sideways genuinely has less left for driving. Set the lateral slider above and watch the band close.</p>
+
+  <div class="note warn">
+    <span class="tag">Two things to know before you enable it</span>
+    <p><strong>It replaces <code>slip_accel</code> entirely.</strong> With <code>slip_circle &gt; 0</code>, your measured 0.16 does nothing — the startup log prints the fixed band and then says it has been superseded. On your host the circle's zero-load value of 0.12 sits <em>below</em> your measured 0.16 optimum.</p>
+    <p><strong>It has not worked on this machine.</strong> The multi-track config that enables it — circle band + acceleration feedforward + longer lookahead, on their hardened line — gave <strong>11 collisions in 26 laps</strong> here, against your 1-in-20 with the circle off. That config was validated on the Linux box.</p>
+  </div>
+
+  <h3>Where the band sits around</h3>
+  <p>The band is not centred on the car's current speed — that would be gone by the time the command lands. It is centred on <code>v_land</code>, the speed the car is predicted to have <code>cmd_delay</code> seconds from now, using <em>the profile's planned acceleration</em> rather than the observer's. That choice matters: predicting with the observer's own acceleration closes a feedback loop of delay 0.15 s and gain ~5, which oscillated at 1 Hz and stuck the car at walking pace.</p>
+</section>
+
+<!-- ================= 06 ================= -->
+<section id="estimator">
+  <p class="sub">06 — State estimation</p>
+  <h2>The controller has to guess its own speed</h2>
+  <p>Every longitudinal decision above needs <code>v</code>, and the car does not have a speedometer. <code>speed_source: tire</code> runs a small forward simulation: take the wheel speed from the encoders, run it through the same friction curve the simulator uses, integrate. The result is bounded-error by construction — the tire model cannot produce a wildly wrong speed the way a raw integration can.</p>
+
+  <p>Two failure modes are already documented in the code, and both cost real time:</p>
+
+  <div class="note find">
+    <span class="tag">The encoder aliasing bug — your fix</span>
+    <p>The bridge stamps messages with its own publish time, not the moment the simulator advanced the wheel. When it publishes faster than the sim steps, it stalls and then dumps the backlog. Measured here: one message with a 0.118 s gap and 0.350 rad of travel, the next with 0.007 s and <strong>5.881 rad — reading 51.9 m/s</strong> against a 22.88 m/s vehicle limit.</p>
+    <p>Differentiating over a fixed 0.05 s window instead of message-to-message fixes the arithmetic at any publish rate. Replayed on the raw capture: p95 slip 4.65 → 3.21, max 51.91 → 8.96, impossible reads 1.12% → 0.00%. Worth <strong>3.7 s per lap</strong> on this host. On a machine where the bridge publishes at the sim's rate the window spans one message and the change is a no-op by construction.</p>
+  </div>
+
+  <div class="note warn">
+    <span class="tag">The one-wheel optimism</span>
+    <p>The observer simulates a single wheel at the car's speed. Real contact patches run at different speeds — inner/outer differ by yaw rate × track/2, fronts by 1/cos(steer). The friction curve is concave, so four wheels at spread slips deliver <em>less</em> force than one at the mean, and the one-wheel model reads high exactly where the spread is large: +0.15–0.19 m/s at hairpin apexes.</p>
+    <p><code>observer_wheels: 4</code> fixes the bias and <strong>stays off anyway</strong>. With the true speed in hand the follower asked for more out of the left-leg apex at full lock, the fronts lost lateral grip, and the car understeered into the wall. The optimism was doubling as a throttle limiter.</p>
+  </div>
+
+  <p>On the 20-lap baseline <code>v_est − v_true</code> was negative on every single lap, between −0.06 and −0.27 m/s. The estimator reads consistently low, and the slip band is centred on it — worth keeping in view as you tune.</p>
+</section>
+
+<!-- ================= 07 ================= -->
+<section id="params">
+  <p class="sub">07 — Reference</p>
+  <h2>Every parameter, and which problem it belongs to</h2>
+  <p>Values shown are what <code>pure_pursuit.yaml</code> currently ships. Anything in the launch files' <code>TUNABLES</code> can be overridden with <code>name:=value</code> without a rebuild.</p>
+
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>Parameter</th><th>Value</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr class="grp"><td colspan="3" class="tag-lat">Lateral — choosing the arc</td></tr>
+      <tr><td class="p">lookahead_min</td><td class="v">0.80 m</td><td class="d">Floor on Ld. Too low and the car chases noise at walking pace.</td></tr>
+      <tr><td class="p">lookahead_k</td><td class="v">0.55</td><td class="d">Seconds of travel to look ahead: Ld = k · v before clamping.</td></tr>
+      <tr><td class="p">lookahead_max</td><td class="v">2.20 m</td><td class="d">Ceiling on Ld. Raise if the car weaves on fast straights.</td></tr>
+      <tr><td class="p">lookahead_curv_gain</td><td class="v">0.67</td><td class="d">Shortens Ld in corners by 1/(1+gain·|κ|). 0 disables.</td></tr>
+      <tr><td class="p">lookahead_sag_frac</td><td class="v">0.5</td><td class="d">Caps Ld so the chord's bulge stays inside the track margin.</td></tr>
+      <tr><td class="p">lookahead_delay_ref</td><td class="v">0.175 s</td><td class="d">Scales k and max by cmd_delay/ref — a slow loop gets a shorter Ld.</td></tr>
+      <tr><td class="p">steer_a_lat_max</td><td class="v">7.0 m/s²</td><td class="d">Caps commanded curvature at a_cap/v². Load-bearing — see section 02.</td></tr>
+      <tr><td class="p">steering_gain</td><td class="v">1.0</td><td class="d">Empirical trim on the bicycle model. 1.0 = trust the geometry.</td></tr>
+      <tr><td class="p">wheelbase</td><td class="v">0.324 m</td><td class="d">Physical. Converts commanded curvature to a steer angle.</td></tr>
+      <tr><td class="p">max_steer_rad</td><td class="v">0.5236</td><td class="d">30° at command 1.0. Physical limit of the rack.</td></tr>
+
+      <tr class="grp"><td colspan="3" class="tag-lon">Longitudinal — choosing the slip</td></tr>
+      <tr><td class="p">slip_accel</td><td class="v">0.16</td><td class="d">Upper bound on commanded slip. Your measured optimum on a grip-limited line; 0.08 is the file default.</td></tr>
+      <tr><td class="p">slip_brake</td><td class="v">0.08</td><td class="d">Lower bound. Deliberately not raised — braking at high slip loses the tire.</td></tr>
+      <tr><td class="p">slip_circle</td><td class="v">0 (off)</td><td class="d">&gt;0 replaces both bounds with a lateral-load-scaled band. Collides on this host.</td></tr>
+      <tr><td class="p">accel_ff</td><td class="v">0 (off)</td><td class="d">Feeds the plan's acceleration forward through the inverse tire curve. Accel side only.</td></tr>
+      <tr><td class="p">slip_kp</td><td class="v">0.76</td><td class="d">Proportional lead on (v_target − v_land) inside the band.</td></tr>
+      <tr><td class="p">v_slip_den</td><td class="v">4.0 m/s</td><td class="d">PhysX's minimum slip denominator. Physical, not tuned.</td></tr>
+      <tr><td class="p">u_per_throttle</td><td class="v">25.25</td><td class="d">m/s of wheel speed per unit throttle. From the simulator's source.</td></tr>
+      <tr><td class="p">u_launch</td><td class="v">0.4 m/s</td><td class="d">Wheel-speed floor from rest, so the car launches at peak grip.</td></tr>
+      <tr><td class="p">throttle_max</td><td class="v">1.0</td><td class="d">Hard clip on the published command.</td></tr>
+
+      <tr class="grp"><td colspan="3" class="tag-lon">Longitudinal — reading the plan</td></tr>
+      <tr><td class="p">target_lead_s</td><td class="v">0.08 s</td><td class="d">Extra preview beyond cmd_delay. Porto's value — the early-braking suspect.</td></tr>
+      <tr><td class="p">lead_min_m</td><td class="v">0.10 m</td><td class="d">Floor on the lead when the car is slow.</td></tr>
+      <tr><td class="p">cmd_delay_s</td><td class="v">0.175 s</td><td class="d">Throttle-to-wheel round trip. Auto-estimated at runtime by default.</td></tr>
+      <tr><td class="p">cmd_delay_auto</td><td class="v">true</td><td class="d">Re-measures the delay by cross-correlating throttle against wheel speed.</td></tr>
+      <tr><td class="p">v_max</td><td class="v">8.0 m/s</td><td class="d">Clips the plan. Raising to 9.0 unclipped the straight and lost T2 — reverted.</td></tr>
+      <tr><td class="p">v_min</td><td class="v">1.0 m/s</td><td class="d">Floor on v_target.</td></tr>
+      <tr><td class="p">use_path_speed</td><td class="v">true</td><td class="d">Use the line's v_mps column. False falls back to a curvature rule.</td></tr>
+      <tr><td class="p">a_long_launch</td><td class="v">0.6 m/s²</td><td class="d">Ramp limit from standstill only; off above a_long_launch_v.</td></tr>
+
+      <tr class="grp"><td colspan="3" class="tag-est">Speed estimation</td></tr>
+      <tr><td class="p">speed_source</td><td class="v">tire</td><td class="d">Tire-model observer. 'fused' failed twice in the sim; 'encoder' is raw.</td></tr>
+      <tr><td class="p">enc_window_s</td><td class="v">0.05 s</td><td class="d">Window for differentiating wheel angle. 0 restores message-to-message, for A/B.</td></tr>
+      <tr><td class="p">observer_wheels</td><td class="v">1</td><td class="d">4 removes the apex bias and causes understeer. Stays at 1.</td></tr>
+      <tr><td class="p">tire_rise_slope</td><td class="v">3.0</td><td class="d">Initial slope of the friction curve's rising branch.</td></tr>
+      <tr><td class="p">wheel_radius</td><td class="v">0.0581 m</td><td class="d">Measured, not the published 0.0590. A 1.55% error biases everything.</td></tr>
+      <tr><td class="p">pose_speed_gain</td><td class="v">0.15</td><td class="d">How hard each new pose sample corrects the observer.</td></tr>
+      <tr><td class="p">latency_comp_s</td><td class="v">0.05 s</td><td class="d">Forward-predicts the pose by this much before steering on it.</td></tr>
+      <tr><td class="p">control_hz</td><td class="v">20.0</td><td class="d">Loop rate. Match to the sim tick — measured 17.7–19.4 Hz here.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<!-- ================= 08 ================= -->
+<section id="method">
+  <p class="sub">08 — Method</p>
+  <h2>How a change gets accepted here</h2>
+  <p>Most of the numbers above were not chosen — they were measured, and several of the obvious-looking improvements were tried and reverted. The protocol matters as much as the parameter.</p>
+
+  <div class="pipe">
+    <div class="step"><div class="num">1</div><div>
+      <h4>Reset the environment first</h4>
+      <p><code>lap_count</code> and <code>collision_count</code> are cumulative since the simulator started. A run launched on top of a previous one inherits its totals and cannot be compared to anything.</p></div></div>
+    <div class="step"><div class="num">2</div><div>
+      <h4>Confirm the car is actually stopped</h4>
+      <p>The sim latches the last throttle it received. A killed follower leaves the car driving with <code>Publisher count: 0</code> on both command topics — it looks stopped and is not. Check <code>odom</code> linear.x reads 0.0.</p></div></div>
+    <div class="step"><div class="num">3</div><div>
+      <h4>Change exactly one variable</h4>
+      <p>Pass it as a launch override so the baseline file is untouched and the startup log records what actually ran.</p></div></div>
+    <div class="step"><div class="num">4</div><div>
+      <h4>Twenty laps, no more</h4>
+      <p>The sim tick is stable at 17.7–19.4 Hz over 20 laps but sags to ~14 Hz in a long session, and lap times move with it. Keep runs short and restart between them.</p></div></div>
+    <div class="step"><div class="num">5</div><div>
+      <h4>Judge against the plan, not the previous run</h4>
+      <p>The a7.0 line plans 11.441 s. That number does not move, so it is the only stable yardstick. Zero collisions is a gate, not a trade.</p></div></div>
+  </div>
+
+  <h3>What the current gap actually is</h3>
+  <div class="tbl-scroll">
+  <table>
+    <thead><tr><th>Quantity</th><th>Value</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td class="d">a7.0 planned lap</td><td class="v" style="color:var(--plan)">11.441 s</td><td class="d">What the line's own velocity profile predicts.</td></tr>
+      <tr><td class="d">Best clean lap</td><td class="v">11.75 s</td><td class="d">+0.31 s. This is delivery — mostly the early braking.</td></tr>
+      <tr><td class="d">Median clean lap</td><td class="v" style="color:var(--achieved)">11.92 s</td><td class="d">+0.48 s. The extra 0.17 s over best is lateral excursions.</td></tr>
+      <tr><td class="d">Collisions in 20 laps</td><td class="v">1</td><td class="d">Target is 0. The one contact is the tail of the excursion distribution.</td></tr>
+      <tr><td class="d">Target</td><td class="v" style="color:var(--cmd)">≤ 11.50 s</td><td class="d">Reachable on this line without a faster raceline.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note">
+    <span class="tag">Two independent budgets</span>
+    <p>Closing <strong>best → plan</strong> (0.31 s) is the longitudinal problem: the car brakes early at every corner. Closing <strong>median → best</strong> (0.17 s) is the lateral problem: intermittent excursions to 0.23–0.60 m. They are separate work, they need separate experiments, and together they are more than the 0.42 s that 11.50 requires.</p>
+  </div>
+</section>
+
+<footer>
+  Built against <code>racer_control/pure_pursuit.py</code> and <code>config/pure_pursuit.yaml</code> on branch <code>adil-icra-longitudinal</code>. Speed profile shown is <code>raceline/icra2026/raceline_a7.0.csv</code>, 541 points, 54.09 m. Run figures from the 20-lap baseline, ICRA 2026 track, macOS + Rosetta host. Lap times measured with <code>/odom</code> ground truth — development numbers, not race-legal.
+</footer>
+
+</div>
+
+<script>
+"use strict";
+const PROF = {"s":[0.0,0.3,0.6,0.9,1.2,1.5,1.8,2.1,2.4,2.7,3.0,3.3,3.6,3.9,4.2,4.5,4.8,5.1,5.4,5.7,6.0,6.3,6.6,6.9,7.2,7.5,7.8,8.1,8.4,8.7,9.0,9.3,9.6,9.9,10.2,10.5,10.8,11.1,11.4,11.7,12.0,12.3,12.6,12.9,13.2,13.5,13.8,14.1,14.4,14.7,15.0,15.3,15.6,15.9,16.2,16.5,16.8,17.1,17.4,17.7,18.0,18.3,18.6,18.9,19.2,19.5,19.8,20.1,20.4,20.7,21.0,21.3,21.6,21.9,22.19,22.49,22.79,23.09,23.39,23.69,23.99,24.29,24.59,24.89,25.19,25.49,25.79,26.09,26.39,26.69,26.99,27.29,27.59,27.89,28.19,28.49,28.79,29.09,29.39,29.69,29.99,30.29,30.59,30.89,31.19,31.49,31.79,32.09,32.39,32.69,32.99,33.29,33.59,33.89,34.19,34.49,34.79,35.09,35.39,35.69,35.99,36.29,36.59,36.89,37.19,37.49,37.79,38.09,38.39,38.69,38.99,39.29,39.59,39.89,40.19,40.49,40.79,41.09,41.39,41.69,41.99,42.29,42.59,42.89,43.19,43.49,43.79,44.09,44.39,44.69,44.99,45.29,45.59,45.89,46.19,46.49,46.79,47.09,47.39,47.69,47.99,48.29,48.59,48.89,49.19,49.49,49.79,50.09,50.39,50.69,50.99,51.29,51.59,51.89,52.19,52.49,52.79,53.09,53.39,53.69,53.99],
+"v":[3.339,3.401,3.636,3.667,3.883,4.04,4.2,4.345,4.49,4.629,4.763,4.884,4.965,5.068,5.193,5.348,5.511,5.409,5.289,5.321,5.467,5.651,5.825,5.958,6.053,6.124,6.235,6.356,6.483,6.611,6.727,6.833,6.937,7.039,7.14,7.24,7.34,7.438,7.535,7.63,7.722,7.813,7.901,7.988,8.0,8.0,8.0,8.0,8.0,8.0,8.0,8.0,8.0,8.0,8.0,7.819,7.527,7.236,6.947,6.665,6.384,6.114,5.86,5.617,5.382,5.15,4.894,4.657,4.448,4.256,4.069,3.894,3.696,3.399,3.105,3.107,3.319,3.486,3.619,3.766,3.896,3.913,4.071,4.214,4.354,4.495,4.629,4.743,4.844,4.942,5.04,5.151,5.292,5.468,5.628,5.766,5.891,6.012,6.13,6.239,6.341,6.483,6.628,6.766,6.897,7.022,7.143,7.257,7.361,7.451,7.53,7.28,6.993,6.72,6.47,6.236,6.01,5.788,5.564,5.318,5.044,4.774,4.51,4.244,4.069,3.837,3.581,3.324,3.069,2.709,2.719,2.456,2.352,2.486,2.699,3.01,3.164,3.446,3.755,4.065,4.351,4.424,4.06,3.73,3.415,3.078,2.862,2.542,2.347,2.25,2.472,2.746,3.019,3.055,3.3,3.608,3.894,4.129,4.357,4.62,4.872,5.109,5.328,5.53,5.714,5.878,6.011,6.13,6.168,5.931,5.739,5.553,5.367,5.184,4.992,4.775,4.551,4.322,4.115,3.839,3.743],
+"k":[-0.1203,-0.4895,-0.3757,-0.3648,-0.3775,-0.3485,-0.3287,-0.2986,-0.2793,-0.2603,-0.2467,-0.2539,-0.2422,-0.2149,-0.1807,-0.1153,-0.1716,-0.2099,-0.2503,-0.1744,-0.108,-0.0276,-0.1087,-0.1298,-0.1635,-0.1213,-0.1014,-0.0824,-0.067,-0.0688,-0.0764,-0.0726,-0.0679,-0.0631,-0.0563,-0.0497,-0.0434,-0.0382,-0.0327,-0.0295,-0.0245,-0.0208,-0.0164,-0.013,-0.0095,-0.006,-0.004,0.003,0.0031,0.0054,0.0084,0.0112,0.013,0.0122,0.0138,0.0052,-0.0143,-0.0311,-0.0572,-0.0732,-0.0886,-0.1219,-0.1433,-0.1736,-0.1928,-0.2094,-0.2192,-0.2749,-0.3194,-0.3555,-0.3926,-0.4381,-0.4355,-0.4332,-0.6616,-0.5885,-0.566,-0.5091,-0.4726,-0.4337,-0.4414,-0.4076,-0.3431,-0.3335,-0.3021,-0.2808,-0.2707,-0.2666,-0.2545,-0.2442,-0.2271,-0.1942,-0.1405,-0.1153,-0.1283,-0.1328,-0.1273,-0.1193,-0.115,-0.1262,-0.0701,-0.0121,-0.0151,-0.0194,-0.0224,-0.015,0.0226,0.0328,0.0481,0.0612,0.0619,0.057,0.0457,0.0914,0.1194,0.1393,0.1558,0.1709,0.1787,0.1806,0.1716,0.246,0.2359,0.3332,0.3788,0.4104,0.4654,0.5611,0.6499,0.6655,0.8917,1.0009,1.2655,1.0349,0.7448,0.6728,0.5234,0.352,0.1867,0.1367,0.0811,-0.0856,-0.2366,-0.368,-0.4403,-0.5883,-0.6071,-1.0345,-1.1909,-1.3194,-1.054,-0.7431,-0.7588,-0.6271,-0.4271,-0.2827,-0.2817,-0.2837,-0.1277,-0.0721,-0.0169,-0.031,-0.0472,-0.0599,-0.0759,-0.1056,-0.1177,-0.113,-0.1197,-0.163,-0.1905,-0.2046,-0.2205,-0.2376,-0.249,-0.2494,-0.2932,-0.3206,-0.3304,-0.3977,-0.478],
+"L":54.09};
+
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function fit(cv){
+  const r = window.devicePixelRatio || 1, w = cv.parentElement.clientWidth;
+  const h = parseInt(cv.getAttribute('height'), 10);
+  cv.width = Math.round(w*r); cv.height = Math.round(h*r);
+  cv.style.height = h+'px';
+  const g = cv.getContext('2d'); g.setTransform(r,0,0,r,0,0);
+  return {g, w, h};
+}
+const lerp=(a,b,t)=>a+(b-a)*t;
+function sampleProfile(s){
+  const L=PROF.L, m=((s%L)+L)%L, S=PROF.s;
+  let i=0; while(i<S.length-1 && S[i+1]<m) i++;
+  const j=Math.min(i+1,S.length-1);
+  const span=(S[j]-S[i])||1, t=(m-S[i])/span;
+  return {v:lerp(PROF.v[i],PROF.v[j],t), k:lerp(PROF.k[i],PROF.k[j],t)};
+}
+
+/* ---------- 02 geometry ---------- */
+(function(){
+  const cv=document.getElementById('cvGeo');
+  const sLd=document.getElementById('gLd'), sOff=document.getElementById('gOff');
+  const WB=0.324, MAXSTEER=0.5236;
+  function draw(){
+    const {g,w,h}=fit(cv);
+    const Ld=+sLd.value, off=+sOff.value;
+    document.getElementById('gLdV').textContent=Ld.toFixed(2)+' m';
+    document.getElementById('gOffV').textContent=off.toFixed(2)+' m';
+    g.clearRect(0,0,w,h);
+    const pad=34, x0=pad, y0=h/2, sc=Math.min((w-pad*2)/4.2, (h-pad*2)/2.6);
+    const X=m=>x0+m*sc, Y=m=>y0-m*sc;
+
+    g.strokeStyle=css('--grid'); g.lineWidth=1;
+    for(let m=0;m<=4;m+=0.5){g.beginPath();g.moveTo(X(m),pad*0.5);g.lineTo(X(m),h-pad*0.5);g.stroke();}
+
+    /* path: a straight line the car is offset from */
+    g.strokeStyle=css('--ink-3'); g.lineWidth=2.5; g.setLineDash([7,5]);
+    g.beginPath(); g.moveTo(X(0),Y(0)); g.lineTo(X(4.2),Y(0)); g.stroke(); g.setLineDash([]);
+
+    /* car sits at (0, off), heading +x */
+    const cx=X(0), cy=Y(off);
+    /* lookahead point on the path, Ld from the car */
+    const dx=Math.sqrt(Math.max(Ld*Ld-off*off,0.0001));
+    const lx=X(dx), ly=Y(0);
+    const yLocal=-off;                       /* lateral offset in car frame */
+    const kappa=2*yLocal/(Ld*Ld);
+    const delta=Math.atan(kappa*WB);
+    const cmd=Math.max(-1,Math.min(1,delta/MAXSTEER));
+
+    /* commanded arc */
+    g.strokeStyle=css('--cmd'); g.lineWidth=2.5; g.beginPath();
+    for(let i=0;i<=90;i++){
+      const dist=i/90*Math.max(Ld*1.5,1.2);
+      let px,py;
+      if(Math.abs(kappa)<1e-6){px=dist;py=0;}
+      else{const R=1/kappa;px=R*Math.sin(dist*kappa);py=R*(1-Math.cos(dist*kappa));}
+      const gx=X(px), gy=Y(off-py);
+      i?g.lineTo(gx,gy):g.moveTo(gx,gy);
+    }
+    g.stroke();
+
+    /* chord */
+    g.strokeStyle=css('--achieved'); g.lineWidth=1.2; g.setLineDash([3,3]);
+    g.beginPath(); g.moveTo(cx,cy); g.lineTo(lx,ly); g.stroke(); g.setLineDash([]);
+
+    /* lookahead point */
+    g.fillStyle=css('--achieved'); g.beginPath(); g.arc(lx,ly,6,0,7); g.fill();
+
+    /* car */
+    g.fillStyle=css('--ink'); g.save(); g.translate(cx,cy);
+    g.fillRect(-11,-7,22,14); g.restore();
+    g.fillStyle=css('--surface'); g.fillRect(cx+2,cy-4,7,8);
+
+    g.font='500 11px '+css('--mono').split(',')[0].replace(/"/g,'');
+    g.fillStyle=css('--ink-3');
+    g.fillText('path',X(3.5),Y(0)-9);
+    g.fillStyle=css('--achieved'); g.fillText('lookahead point',lx-38,ly+22);
+    g.fillStyle=css('--cmd'); g.fillText('commanded arc',X(0.35),Y(off)-18);
+
+    document.getElementById('gK').textContent=kappa.toFixed(3)+' 1/m';
+    document.getElementById('gD').textContent=(delta*180/Math.PI).toFixed(1)+'°';
+    const gS=document.getElementById('gS');
+    gS.textContent=cmd.toFixed(2);
+    gS.className=Math.abs(cmd)>=0.999?'hi':'';
+    const aLat=Math.abs(kappa)*49;
+    const gA=document.getElementById('gA');
+    gA.textContent=aLat.toFixed(1)+' m/s²';
+    gA.className=aLat>7?'hi':'ok';
+  }
+  sLd.addEventListener('input',draw); sOff.addEventListener('input',draw);
+  window.addEventListener('resize',draw); draw(); cv._d=draw;
+})();
+
+/* ---------- 03 lookahead chain ---------- */
+(function(){
+  const cv=document.getElementById('cvLd');
+  const ids=['lMin','lK','lMax','lCg'], el={};
+  ids.forEach(i=>el[i]=document.getElementById(i));
+  const SHIP={lMin:0.80,lK:0.55,lMax:2.20,lCg:0.67};
+  const ld=(v,k,p)=>Math.min(Math.max(p.lMin,p.lK*v),p.lMax)/(1+p.lCg*k);
+  function draw(){
+    const {g,w,h}=fit(cv);
+    const p={}; ids.forEach(i=>{p[i]=+el[i].value;});
+    document.getElementById('lMinV').textContent=p.lMin.toFixed(2)+' m';
+    document.getElementById('lKV').textContent=p.lK.toFixed(2);
+    document.getElementById('lMaxV').textContent=p.lMax.toFixed(2)+' m';
+    document.getElementById('lCgV').textContent=p.lCg.toFixed(2);
+    g.clearRect(0,0,w,h);
+    const L=52,R=16,T=16,B=34, pw=w-L-R, ph=h-T-B;
+    const vmax=9, dmax=3.4;
+    const X=v=>L+v/vmax*pw, Y=d=>T+ph-d/dmax*ph;
+
+    g.strokeStyle=css('--grid'); g.lineWidth=1;
+    g.font='11px '+css('--mono').split(',')[0].replace(/"/g,'');
+    g.fillStyle=css('--ink-3'); g.textAlign='right';
+    for(let d=0;d<=3;d+=0.5){
+      g.beginPath();g.moveTo(L,Y(d));g.lineTo(w-R,Y(d));g.stroke();
+      g.fillText(d.toFixed(1),L-8,Y(d)+4);
+    }
+    g.textAlign='center';
+    for(let v=0;v<=8;v+=2){g.fillText(v+'',X(v),h-13);}
+    g.fillText('car speed  [m/s]',L+pw/2,h-1);
+    g.save();g.translate(13,T+ph/2);g.rotate(-Math.PI/2);g.textAlign='center';
+    g.fillText('Ld  [m]',0,0);g.restore();
+
+    function curve(par,col,wid,dash,kap){
+      g.strokeStyle=col;g.lineWidth=wid;g.setLineDash(dash);g.beginPath();
+      for(let i=0;i<=120;i++){const v=i/120*vmax;const d=ld(v,kap,par);
+        i?g.lineTo(X(v),Y(d)):g.moveTo(X(v),Y(d));}
+      g.stroke();g.setLineDash([]);
+    }
+    curve(SHIP,css('--ink-3'),2,[6,4],0);
+    curve(p,css('--cmd'),2.6,[],0);
+    curve(p,css('--warn'),1.8,[3,3],1.2);
+
+    /* markers */
+    const mk=(v,kap,col)=>{const d=ld(v,kap,p);g.fillStyle=col;
+      g.beginPath();g.arc(X(v),Y(d),5,0,7);g.fill();
+      g.fillStyle=css('--ink');g.textAlign='left';
+      g.fillText(d.toFixed(2)+' m',X(v)+9,Y(d)+4);};
+    mk(7.8,0,css('--achieved'));
+    mk(2.5,1.2,css('--warn'));
+  }
+  ids.forEach(i=>el[i].addEventListener('input',draw));
+  window.addEventListener('resize',draw); draw();
+})();
+
+/* ---------- 04 speed profile ---------- */
+(function(){
+  const cv=document.getElementById('cvProf');
+  const sL=document.getElementById('pLead'), sD=document.getElementById('pDelay'), sS=document.getElementById('pS');
+  function draw(){
+    const {g,w,h}=fit(cv);
+    const lead=+sL.value, dly=+sD.value, cur=+sS.value;
+    document.getElementById('pLeadV').textContent=lead.toFixed(2)+' s';
+    document.getElementById('pDelayV').textContent=dly.toFixed(3)+' s';
+    document.getElementById('pSV').textContent=cur.toFixed(1)+' m';
+    g.clearRect(0,0,w,h);
+    const L=46,R=14,T=14,B=52, pw=w-L-R, ph=h-T-B;
+    const vmax=9;
+    const X=s=>L+s/PROF.L*pw, Y=v=>T+ph-v/vmax*ph;
+
+    g.strokeStyle=css('--grid');g.lineWidth=1;
+    g.font='11px '+css('--mono').split(',')[0].replace(/"/g,'');
+    g.textAlign='right';g.fillStyle=css('--ink-3');
+    for(let v=0;v<=8;v+=2){g.beginPath();g.moveTo(L,Y(v));g.lineTo(w-R,Y(v));g.stroke();
+      g.fillText(v+'',L-7,Y(v)+4);}
+    g.textAlign='center';
+    for(let s=0;s<=50;s+=10){g.fillText(s+'',X(s),T+ph+16);}
+    g.fillText('distance along lap  s  [m]',L+pw/2,T+ph+31);
+    g.save();g.translate(12,T+ph/2);g.rotate(-Math.PI/2);g.textAlign='center';
+    g.fillText('speed [m/s]',0,0);g.restore();
+
+    /* curvature strip */
+    const stripY=T+ph+36, stripH=13;
+    let kmax=0; PROF.k.forEach(k=>{kmax=Math.max(kmax,Math.abs(k));});
+    g.fillStyle=css('--warn-soft');
+    g.beginPath();g.moveTo(X(0),stripY+stripH);
+    PROF.s.forEach((s,i)=>g.lineTo(X(s),stripY+stripH-Math.abs(PROF.k[i])/kmax*stripH));
+    g.lineTo(X(PROF.L),stripY+stripH);g.closePath();g.fill();
+    g.fillStyle=css('--ink-3');g.textAlign='left';
+    g.fillText('|curvature|',L,stripY+stripH+11);
+
+    /* planned */
+    g.strokeStyle=css('--plan');g.lineWidth=2.6;g.beginPath();
+    PROF.s.forEach((s,i)=>{i?g.lineTo(X(s),Y(PROF.v[i])):g.moveTo(X(s),Y(PROF.v[i]));});
+    g.stroke();
+
+    /* v_target: at each s, sample the plan lead-distance ahead */
+    g.strokeStyle=css('--cmd');g.lineWidth=2;g.setLineDash([6,4]);g.beginPath();
+    for(let i=0;i<PROF.s.length;i++){
+      const s=PROF.s[i], v=PROF.v[i];
+      const d=v*(dly+lead)+0.10;
+      const vt=Math.min(sampleProfile(s+d).v,8.0);
+      i?g.lineTo(X(s),Y(vt)):g.moveTo(X(s),Y(vt));
+    }
+    g.stroke();g.setLineDash([]);
+
+    /* cursor */
+    const at=sampleProfile(cur), d=at.v*(dly+lead)+0.10;
+    const vt=Math.min(sampleProfile(cur+d).v,8.0);
+    g.strokeStyle=css('--warn');g.lineWidth=2;
+    g.beginPath();g.moveTo(X(cur),T);g.lineTo(X(cur),T+ph);g.stroke();
+    /* lead span */
+    g.fillStyle=css('--warn-soft');
+    g.fillRect(X(cur),Y(8.6),Math.max(X(cur+d)-X(cur),1),Y(8.0)-Y(8.6));
+    g.strokeStyle=css('--warn');g.lineWidth=1.4;
+    g.beginPath();g.moveTo(X(cur),Y(8.3));g.lineTo(X(cur+d),Y(8.3));g.stroke();
+    g.fillStyle=css('--plan');g.beginPath();g.arc(X(cur),Y(at.v),5,0,7);g.fill();
+    g.fillStyle=css('--cmd');g.beginPath();g.arc(X(cur),Y(vt),5,0,7);g.fill();
+
+    document.getElementById('pLd').textContent=d.toFixed(2)+' m';
+    document.getElementById('pVp').textContent=at.v.toFixed(2)+' m/s';
+    document.getElementById('pVt').textContent=vt.toFixed(2)+' m/s';
+    const diff=at.v-vt;
+    const el=document.getElementById('pDiff');
+    el.textContent=(diff>0?'−':'+')+Math.abs(diff).toFixed(2)+' m/s';
+    el.className=diff>0.25?'hi':(diff<0.02&&diff>-0.02?'ok':'');
+  }
+  [sL,sD,sS].forEach(s=>s.addEventListener('input',draw));
+  window.addEventListener('resize',draw); draw();
+})();
+
+/* ---------- 05 tire ---------- */
+(function(){
+  const cv=document.getElementById('cvTire');
+  const sA=document.getElementById('tAcc'), sB=document.getElementById('tBrk'),
+        sC=document.getElementById('tCirc'), sLat=document.getElementById('tLat');
+  const SP=0.15, MP=0.72, SA=0.25, MA=0.464, G=9.81;
+  function mu(S){
+    S=Math.abs(S);
+    if(S<=SP){const t=S/SP;return MP*(t*t*(3-2*t));}
+    if(S<=SA){const t=(S-SP)/(SA-SP);return MP+(MA-MP)*(t*t*(3-2*t));}
+    return MA;
+  }
+  function draw(){
+    const {g,w,h}=fit(cv);
+    let acc=+sA.value, brk=+sB.value;
+    const circ=+sC.value, lat=+sLat.value;
+    document.getElementById('tAccV').textContent=acc.toFixed(2);
+    document.getElementById('tBrkV').textContent=brk.toFixed(2);
+    document.getElementById('tCircV').textContent=circ>0?circ.toFixed(2):'off';
+    document.getElementById('tLatV').textContent=lat.toFixed(1)+' m/s²';
+    if(circ>0){
+      const f=Math.sqrt(Math.max(0,1-Math.pow(lat/7,2)));
+      acc=brk=Math.max(circ*f,0.02);
+    }
+    g.clearRect(0,0,w,h);
+    const L=50,R=16,T=16,B=44, pw=w-L-R, ph=h-T-B;
+    const smax=0.32;
+    const X=s=>L+s/smax*pw, Y=m=>T+ph-m/0.85*ph;
+
+    g.strokeStyle=css('--grid');g.lineWidth=1;
+    g.font='11px '+css('--mono').split(',')[0].replace(/"/g,'');
+    g.textAlign='right';g.fillStyle=css('--ink-3');
+    for(let m=0;m<=0.8;m+=0.2){g.beginPath();g.moveTo(L,Y(m));g.lineTo(w-R,Y(m));g.stroke();
+      g.fillText(m.toFixed(1),L-7,Y(m)+4);}
+    g.textAlign='center';
+    for(let s=0;s<=0.30;s+=0.05){g.fillText(s.toFixed(2),X(s),T+ph+16);}
+    g.fillText('slip ratio  S',L+pw/2,T+ph+32);
+    g.save();g.translate(12,T+ph/2);g.rotate(-Math.PI/2);g.textAlign='center';
+    g.fillText('friction  μ',0,0);g.restore();
+
+    /* allowed band */
+    g.fillStyle=css('--plan-soft');
+    g.fillRect(X(0),T,X(acc)-X(0),ph);
+    g.strokeStyle=css('--plan');g.lineWidth=1.6;g.setLineDash([4,3]);
+    g.beginPath();g.moveTo(X(acc),T);g.lineTo(X(acc),T+ph);g.stroke();g.setLineDash([]);
+
+    /* curve */
+    g.strokeStyle=css('--ink-3');g.lineWidth=2.8;g.beginPath();
+    for(let i=0;i<=160;i++){const s=i/160*smax;i?g.lineTo(X(s),Y(mu(s))):g.moveTo(X(s),Y(mu(s)));}
+    g.stroke();
+
+    /* peak */
+    g.fillStyle=css('--achieved');g.beginPath();g.arc(X(SP),Y(MP),5,0,7);g.fill();
+    g.textAlign='left';g.fillText('peak 0.72 @ S=0.15',X(SP)+9,Y(MP)-6);
+
+    /* operating point */
+    const m=mu(acc);
+    g.fillStyle=css('--plan');g.beginPath();g.arc(X(acc),Y(m),6,0,7);g.fill();
+    g.fillStyle=css('--ink');
+    g.fillText('band edge',X(acc)+9,Y(m)+16);
+
+    /* falling-branch warning */
+    if(acc>SP){
+      g.fillStyle=css('--warn');g.textAlign='center';
+      g.fillText('past the peak — more slip, less force',X((acc+smax)/2),T+16);
+    }
+
+    document.getElementById('tBand').textContent='±'+acc.toFixed(3);
+    document.getElementById('tMu').textContent=m.toFixed(3);
+    const a=m*G;
+    document.getElementById('tAcl').textContent=a.toFixed(2)+' m/s²';
+    const pct=m/MP*100;
+    const el=document.getElementById('tPct');
+    el.textContent=pct.toFixed(0)+'%';
+    el.className=pct>97?'ok':(pct<80?'hi':'');
+  }
+  [sA,sB,sC,sLat].forEach(s=>s.addEventListener('input',draw));
+  window.addEventListener('resize',draw); draw();
+})();
+
+/* redraw on theme flips */
+if(window.matchMedia){
+  const mq=window.matchMedia('(prefers-color-scheme: dark)');
+  const fire=()=>window.dispatchEvent(new Event('resize'));
+  mq.addEventListener?mq.addEventListener('change',fire):mq.addListener(fire);
+}
+</script>

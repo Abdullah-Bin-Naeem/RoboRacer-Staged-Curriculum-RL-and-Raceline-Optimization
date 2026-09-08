@@ -28,7 +28,7 @@ Gate is **≤ 11.50 s with 0 collisions**, so we need **−0.30 s** and must not
 
 | # | ID | What the parameter is, in plain words | Existing (what runs today) | Proposed change | Reason — the measured evidence | Expected / calculated impact | Result |
 |---|---|---|---|---|---|---|---|
-| **1** | **E4** | **Acceleration feedforward.** The raceline says how fast to be at every point, which also implies *how hard to accelerate* right here. Today the controller ignores that and only reacts once the car has **already fallen behind** the speed it wanted — it waits for a mistake, then corrects it. `accel_ff` means "read how hard the plan wants to accelerate at this point and ask for that much push immediately." Pushing *before* you fall behind instead of after. | `accel_ff: 0.0` — off. Throttle responds only to a speed error that has already happened. | `accel_ff:=1.0`, `slip_circle` left at 0 | **78 % of all time lost is on accelerating stretches** (+0.526 s vs +0.106 s braking). There the car sits **−0.784 m/s below its own target** while `v_target` is *above* plan, so the target is not the limiter. Not authority either: throttle median **0.203**, at 1.0 on **0.0 %** of ticks. Not the band: realized slip p90 **0.160**, already on the friction curve's flat top. The plan asks only **2.49 m/s² mean** (max 4.12) against a ~7 tire peak and the car delivers **1.64, i.e. 66 %**. Feedforward is the one mechanism that asks for the plan's acceleration *before* the error appears. | **−0.15 to −0.25 s.** Closing delivery 66 % → 90 % recovers ~0.35 s of the +0.526 s accelerating loss; halved for the usual gap between mechanism and outcome. | |
+| **1** | **E4** | **Acceleration feedforward.** The raceline says how fast to be at every point, which also implies *how hard to accelerate* right here. Today the controller ignores that and only reacts once the car has **already fallen behind** the speed it wanted — it waits for a mistake, then corrects it. `accel_ff` means "read how hard the plan wants to accelerate at this point and ask for that much push immediately." Pushing *before* you fall behind instead of after. | `accel_ff: 0.0` — off. Throttle responds only to a speed error that has already happened. | `accel_ff:=1.0`, `slip_circle` left at 0 | **78 % of all time lost is on accelerating stretches** (+0.526 s vs +0.106 s braking). There the car sits **−0.784 m/s below its own target** while `v_target` is *above* plan, so the target is not the limiter. Not authority either: throttle median **0.203**, at 1.0 on **0.0 %** of ticks. Not the band: realized slip p90 **0.160**, already on the friction curve's flat top. The plan asks only **2.49 m/s² mean** (max 4.12) against a ~7 tire peak and the car delivers **1.64, i.e. 66 %**. Feedforward is the one mechanism that asks for the plan's acceleration *before* the error appears. | **−0.15 to −0.25 s.** Closing delivery 66 % → 90 % recovers ~0.35 s of the +0.526 s accelerating loss; halved for the usual gap between mechanism and outcome. | **⏸ ATTEMPT 1 INCONCLUSIVE (09-09)** — aborted on the **out-lap** at s 45.6, before a single timed lap. **Not** arriving hot: throttle 0.124 (identical to control) and speed 0.19 m/s *below* plan. Cut the s 43–46 apex to **+1.13 m** inside. n = 1 traversal → **re-run required**, not yet a verdict. See §12.2. | |
 | **2** | **E8** | **How much corner-cutting is allowed.** Pure pursuit picks a point some distance ahead on the line and drives a smooth **arc** to it. An arc drawn to a point around a bend always passes *inside* the real path — the same way you cut the corner running round a track. That inward bulge is the **sag**. This setting says how much of the room between the racing line and the inside wall the cut may eat: `0.5` = up to half of it. | `lookahead_sag_frac: 0.5` — the cut may use half the available inside margin. | `lookahead_sag_frac:=0.35` | The **only** real lateral failure is apex cutting at **s 43–46**: worst inside excursion **+0.525 m at s 46.2** in the clean reference, and when E0 doubled the sag it became **+0.700 m and 33 collisions in that exact bin**. R8 proved the mechanism (`sag = \|κ\|·Ld²/8`) is what decides that corner. This caps the same quantity directly and in the physical unit — fraction of *actual* margin — instead of guessing a length. Launch-exposed, no code change. | **−0.00 to −0.05 s**, and the excursion tail shrinks. Bought as **insurance on the collision gate**, not as lap time. | |
 | **3** | **E9** | **How much closer to look when the track bends.** Aiming far ahead is smooth and stable but cuts corners; aiming close follows the path faithfully but twitches. This dial is "the tighter the bend, the closer I aim" — raising it pulls the aim point in harder in corners while leaving the straights alone. | `lookahead_curv_gain: 0.67` — aim distance divided by `1 + 0.67·\|κ\|`. | `lookahead_curv_gain:=0.90` | Same target as E8, different lever, and §5.2's prescribed response to **positive (inside) corner bias**, which is what s 43–46 shows (`+0.026` mean, `+0.525` worst). Run only if E8 misses — they act on the same failure and running both at once breaks one-variable. | **−0.00 to −0.05 s**; same insurance argument as E8. | |
 | **4** | **E1** | **How far down the road it reads the speed limit.** A throttle command takes time to take effect, so the controller doesn't read the target speed where the car *is* — it reads it a little further along, where the car will be when the command lands. That much is necessary and measured (`cmd_delay`). `target_lead_s` is an **extra** margin on top, and its practical effect is that the car starts slowing **earlier** than it strictly needs to. | `target_lead_s: 0.08` — profile sampled `v·(cmd_delay + 0.08) + 0.10` ahead. | `target_lead_s:=0.0` | Braking zones hold **16 %** of the loss (+0.106 s). Of the 1.69 m total lead at 8 m/s only **0.64 m** is this parameter; the rest is `cmd_delay` and is deliberate. That is ~10 % of the 6.10 m main zone but **40 % of the 2.50 m zone at s 42–45**, so the gain is concentrated in the short zones. | **−0.03 to −0.05 s.** (Was −0.28 s in the original plan; that used a 2.1 m lead at a `cmd_delay` of 0.175 that does not run, against a 7.8 m zone that does not exist.) | |
@@ -839,3 +839,88 @@ reference delay*, and §5.1 now says so.
    evidence that lookahead wants to be *per-zone*, not globally longer or globally shorter. E8 and
    E9 in §0 exist because of this run.
 4. **E6 is dead.** Sweeping `lookahead_max` on a 97 ms host sweeps the wrong quantity.
+
+---
+
+### 12.2 E4 attempt 1 — `accel_ff:=1.0` — ⏸ INCONCLUSIVE, re-run required (2026-09-09)
+
+**Prediction on record:** −0.15 to −0.25 s.
+**Outcome: no timed lap.** Aborted on the out-lap after the first collision, at **s 45.59 m**,
+9.1 s after the follower started publishing. **This is one traversal of one corner. It is not
+enough to accept or reject E4** and is logged as an attempt, not a verdict (§3 rule 9).
+
+#### Command
+
+```bash
+ros2 launch racer_control follower.launch.py track:=icra2026 \
+  path_csv:=/home/autodrive_devkit/dev_ws/raceline/icra2026/raceline_a7.0.csv \
+  accel_ff:=1.0
+```
+```
+[pure_pursuit] launch overrides: {'accel_ff': 1.0}
+```
+Pre-run state verified from ROS, not just the GUI: `odom linear.x 0.0`, `collision_count 0`,
+`lap_count 0`, zero follower/logger processes.
+
+#### What happened
+
+The car tracked the line normally for 43 m (`|e_lat|` ≤ 0.065 through s 35–42), then cut the
+s 43–46 apex progressively and did not recover:
+
+```
+e_lat, s > 43, pre-contact:
+  -0.00 -0.00 +0.09 +0.13 +0.12 +0.14 +0.25 +0.29 +0.33 +0.37 +0.42 +0.43 +0.51
+  +0.52 +0.62 +0.63 +0.72 +0.73 +0.83 +0.86 +0.93 +0.99 +1.01 +1.08 +1.13  -> wall
+control (E0_base) out-lap, same s range:
+  -0.12 -0.10 -0.09 -0.08 -0.07 -0.06 -0.06 -0.05 -0.05 -0.04 -0.04 -0.03 -0.03
+  -0.02 +0.00 +0.02 +0.03 +0.05 +0.07 +0.08 +0.09 +0.10
+```
+
+#### The obvious hypothesis is ruled out by the data
+
+`accel_ff` only touches throttle, so the natural story is R3's: more speed into the corner, less
+distance to shed it, understeer into the wall. **The log does not support that.** Out-lap only,
+s 36–46, E4 truncated at first contact:
+
+| | mean `v_est` − plan | mean throttle | max inside `e_lat` |
+|---|---|---|---|
+| `E0_base` control | −0.081 m/s | **0.124** | +0.145 m |
+| E4 `accel_ff 1.0` | **−0.193 m/s** | **0.124** | **+1.129 m** |
+
+Same throttle to three decimals, and E4 was *further below* plan than the control. It did not
+arrive hot. Whatever happened, "the feedforward over-drove the corner entry" is not it.
+
+#### How marginal that corner already is
+
+Max **inside** `e_lat` in s 43–46, per lap, in the 25-lap zero-collision control:
+
+```
++0.14 +0.11 +0.09 +0.08 +0.10 +0.08 +0.08 +0.09 +0.53 +0.11 +0.08 +0.07 +0.39
++0.07 +0.07 +0.13 +0.06 +0.38 +0.12 +0.10 +0.12 +0.05 +0.06 +0.06 +0.06
+```
+
+mean +0.130, p90 +0.285, **max +0.525**, and **3 of 25 laps exceed +0.25 m**. So this corner
+spikes on its own roughly once every eight laps, in a run that recorded zero collisions. E4's
++1.13 is **more than double the worst of 25 control laps**, on its first attempt — outside the
+control distribution, but the tail of that distribution is not characterised and n = 1.
+
+#### Reading
+
+Two readings survive the data and this run cannot separate them:
+
+1. **`accel_ff` destabilises s 43–46 through a path that is not corner-entry speed.** It changes
+   the commanded wheel speed, which changes the tire observer's `v_est`, which feeds *both* the
+   lookahead (`Ld = k·d_scale·v_est`) and the curvature cap (`a_cap/v²`). That is a real
+   throttle → steering coupling and it is not in §5 or §6 as one.
+2. **The corner spiked on its own**, as it does 3 times in 25 control laps, and drew a bad tail on
+   the one traversal we got.
+
+**Next action: re-run E4 unchanged.** The abort-on-first-collision watcher makes the retry cheap,
+and a second failure at the same `s` on an independent draw settles it. If it completes 25 laps,
+the first attempt was the tail.
+
+#### Method change made during this run
+
+The watcher now aborts on the **first** collision instead of running to 25 laps. E0 logged 49 hits
+because a lateral failure respawns into the same wall faster than a human reacts; one collision
+already fails the gate, so the other 48 are noise. Applied from E4 onward.

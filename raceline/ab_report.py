@@ -55,6 +55,19 @@ def resample(d, a, b, grid, L, key):
 def stats(d, lo, hi, L, grid):
     allx, clean = laps(d, lo, hi)
     lt = np.array([x[0] for x in allx])
+    if len(lt) == 0:
+        # A run aborted on the out-lap completes no timed lap. Report what IS
+        # known -- the collision and where it happened -- instead of dying on an
+        # empty reduction. E15 hit this: 0 laps, and the traceback hid the one
+        # fact the run did establish.
+        coll = d['collisions']
+        return dict(n=0, best=np.nan, med=np.nan, mean=np.nan, worst=np.nan,
+                    n_clean=0, lt=lt, coll=int(np.nanmax(coll) - np.nanmin(coll)),
+                    e_mean=np.nan, e_p90=np.nan, e_max=np.nan, e_worst_s=np.nan,
+                    n_exc=0, exc_s=np.array([]), dly_med=np.nan, dly_p90=np.nan,
+                    ld_med=np.nan, ld_fast=np.nan, ld_max=np.nan,
+                    prof={k: np.full(len(grid), np.nan)
+                          for k in ('pp_v_est', 'pp_v_target', 'pp_e_lat', 'pp_ld')})
     e = np.abs(d['pp_e_lat']); e = e[~np.isnan(e)]
     # pp_delay over the CLEAN LAPS only. cmd_delay_auto seeds from cmd_delay_s
     # (0.175) and converges downward over the first ~30 s, so a whole-file median

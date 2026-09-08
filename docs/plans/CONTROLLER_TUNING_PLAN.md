@@ -29,11 +29,11 @@ Gate is **≤ 11.50 s with 0 collisions**, so we need **−0.30 s** and must not
 | # | ID | What the parameter is, in plain words | Existing (what runs today) | Proposed change | Reason — the measured evidence | Expected / calculated impact | Result |
 |---|---|---|---|---|---|---|---|
 | **1** | **E4** | **Acceleration feedforward.** The raceline says how fast to be at every point, which also implies *how hard to accelerate* right here. Today the controller ignores that and only reacts once the car has **already fallen behind** the speed it wanted — it waits for a mistake, then corrects it. `accel_ff` means "read how hard the plan wants to accelerate at this point and ask for that much push immediately." Pushing *before* you fall behind instead of after. | `accel_ff: 0.0` — off. Throttle responds only to a speed error that has already happened. | `accel_ff:=1.0`, `slip_circle` left at 0 | **78 % of all time lost is on accelerating stretches** (+0.526 s vs +0.106 s braking). There the car sits **−0.784 m/s below its own target** while `v_target` is *above* plan, so the target is not the limiter. Not authority either: throttle median **0.203**, at 1.0 on **0.0 %** of ticks. Not the band: realized slip p90 **0.160**, already on the friction curve's flat top. The plan asks only **2.49 m/s² mean** (max 4.12) against a ~7 tire peak and the car delivers **1.64, i.e. 66 %**. Feedforward is the one mechanism that asks for the plan's acceleration *before* the error appears. | **−0.15 to −0.25 s.** Closing delivery 66 % → 90 % recovers ~0.35 s of the +0.526 s accelerating loss; halved for the usual gap between mechanism and outcome. **⚠️ This prediction was computed against the SUPERSEDED baseline and was ~2.5× too large — see §12.3.** | **❌ REJECTED on time, 09-09.** Attempt 1 aborted on the out-lap (§12.2, tail event — attempt 2's out-lap was clean). Attempt 2: **25 laps, 0 collisions, median 11.799 vs control 11.800 — no gain.** Mechanism confirmed but small: accel delivery 79 %→82 %, accel loss +0.211→+0.191 s, **given back on the brake side** +0.070→+0.125 s. **Lateral improved materially**: \|e\| p90 0.074→0.066, max 0.540→**0.434**, excursion ticks **112→56**, worst lap 12.250→12.001. Gate 3/4 (corner 37–41 worse by +0.035). See §12.3. |
-| **2** | **E8** | **How much corner-cutting is allowed.** Pure pursuit picks a point some distance ahead on the line and drives a smooth **arc** to it. An arc drawn to a point around a bend always passes *inside* the real path — the same way you cut the corner running round a track. That inward bulge is the **sag**. This setting says how much of the room between the racing line and the inside wall the cut may eat: `0.5` = up to half of it. | `lookahead_sag_frac: 0.5` — the cut may use half the available inside margin. | `lookahead_sag_frac:=0.35` | The **only** real lateral failure is apex cutting at **s 43–46**: worst inside excursion **+0.525 m at s 46.2** in the clean reference, and when E0 doubled the sag it became **+0.700 m and 33 collisions in that exact bin**. R8 proved the mechanism (`sag = \|κ\|·Ld²/8`) is what decides that corner. This caps the same quantity directly and in the physical unit — fraction of *actual* margin — instead of guessing a length. Launch-exposed, no code change. | **−0.00 to −0.05 s**, and the excursion tail shrinks. Bought as **insurance on the collision gate**, not as lap time. | **❌ REJECTED 09-09 — collided at lap 18.** 16 clean laps, median 11.801 vs control 11.800 (no change), best 11.701 (0.05 worse). **Mechanism proved at the target corner**: s 43–46 max inside excursion **+0.525 → +0.260**, p90 +0.285 → +0.109. **But it moved the failure to T2**: max +0.272 → **+0.999**. A global cap trades one corner for another → **this is the strongest evidence yet for E5**. See §12.4. |
+| **2** | **E8** | **How much corner-cutting is allowed.** Pure pursuit picks a point some distance ahead on the line and drives a smooth **arc** to it. An arc drawn to a point around a bend always passes *inside* the real path — the same way you cut the corner running round a track. That inward bulge is the **sag**. This setting says how much of the room between the racing line and the inside wall the cut may eat: `0.5` = up to half of it. | `lookahead_sag_frac: 0.5` — the cut may use half the available inside margin. | `lookahead_sag_frac:=0.35` | The **only** real lateral failure is apex cutting at **s 43–46**: worst inside excursion **+0.525 m at s 46.2** in the clean reference, and when E0 doubled the sag it became **+0.700 m and 33 collisions in that exact bin**. R8 proved the mechanism (`sag = \|κ\|·Ld²/8`) is what decides that corner. This caps the same quantity directly and in the physical unit — fraction of *actual* margin — instead of guessing a length. Launch-exposed, no code change. | **−0.00 to −0.05 s**, and the excursion tail shrinks. Bought as **insurance on the collision gate**, not as lap time. | **❌ REJECTED 09-09 — collided at lap 18.** 16 clean laps, median 11.801 vs control 11.800 (no change), best 11.701 (0.05 worse). **⚠️ RETRACTED READING — E8 was very nearly a no-op.** Measured `Ld` differs from the control by **0.006 m on average**, and by > 0.05 m in only **4 of 216** bins. The s 43–46 "improvement" I first claimed is **variance, not effect** (`Ld` there: 0.829 vs 0.831). Only T2 changed meaningfully, and it got worse. **Real finding: `Ld` is pinned at the `lookahead_min` 0.80 floor for 84 % of ticks through s 43–46**, so `sag_frac` — and any per-zone *cap* — is inert there. See §12.4. |
 | **6** | **E9** | **How much closer to look when the track bends.** Aiming far ahead is smooth and stable but cuts corners; aiming close follows the path faithfully but twitches. This dial is "the tighter the bend, the closer I aim" — raising it pulls the aim point in harder in corners while leaving the straights alone. | `lookahead_curv_gain: 0.67` — aim distance divided by `1 + 0.67·\|κ\|`. | `lookahead_curv_gain:=0.90` | Same target as E8, different lever, and §5.2's prescribed response to **positive (inside) corner bias**, which is what s 43–46 shows (`+0.026` mean, `+0.525` worst). Run only if E8 misses — they act on the same failure and running both at once breaks one-variable. | **−0.00 to −0.05 s**; same insurance argument as E8. | |
 | **4** | **E1** | **How far down the road it reads the speed limit.** A throttle command takes time to take effect, so the controller doesn't read the target speed where the car *is* — it reads it a little further along, where the car will be when the command lands. That much is necessary and measured (`cmd_delay`). `target_lead_s` is an **extra** margin on top, and its practical effect is that the car starts slowing **earlier** than it strictly needs to. | `target_lead_s: 0.08` — profile sampled `v·(cmd_delay + 0.08) + 0.10` ahead. | `target_lead_s:=0.0` | Braking zones hold **16 %** of the loss (+0.106 s). Of the 1.69 m total lead at 8 m/s only **0.64 m** is this parameter; the rest is `cmd_delay` and is deliberate. That is ~10 % of the 6.10 m main zone but **40 % of the 2.50 m zone at s 42–45**, so the gain is concentrated in the short zones. | **−0.03 to −0.05 s.** (Was −0.28 s in the original plan; that used a 2.1 m lead at a `cmd_delay` of 0.175 that does not run, against a 7.8 m zone that does not exist.) | |
 | **5** | **E2** | as E1 | as E1 | `target_lead_s:=0.04` | Only if E1 overshoots into hot corner entries. The midpoint. | between E1 and reference | |
-| **3** | **E5** | **A per-corner aim distance instead of one rule for the whole lap.** Every aim-point setting above is a single number applied everywhere. This adds a list of "between these two points on the track, never aim further than X" — so the one corner that misbehaves gets treated without making the whole lap timid. The raceline side already does exactly this with `lat_zones` / `margin_zones`. | Lookahead constants are **global**; per-`s` overrides exist only on the raceline side. | Add `lookahead_zones` (`s0:s1:cap`), applied as a cap on `Ld` | Excursions are **local, not global** — 165 baseline ticks in three clusters (s 0–10, s 20–26, s 40–48) and nothing between. E0's collisions localised harder still: **33 of 49 in s 44–46**. **E8 then proved the lever works but must be local**: a *global* sag cap halved the s 43–46 excursion and doubled T2's. This is the cheap version of the F1TENTH per-waypoint adaptive lookahead (§4). **Needs a code change**, so it runs after E8/E9 show whether local lateral work pays at all. | **−0.05 to −0.15 s** and the excursion tail. **[after E8] Promoted to #3 and the prediction is now grounded**: E8 showed a tighter sag cap cuts the s 43–46 excursion by half (+0.525 → +0.260) but costs T2 (+0.272 → +0.999). Applying it *only* where it helps is exactly what `lookahead_zones` is for. | |
+| **3** | **E5** | **A per-corner aim distance instead of one rule for the whole lap.** Every aim-point setting above is a single number applied everywhere. This adds a list of "between these two points on the track, never aim further than X" — so the one corner that misbehaves gets treated without making the whole lap timid. The raceline side already does exactly this with `lat_zones` / `margin_zones`. | Lookahead constants are **global**; per-`s` overrides exist only on the raceline side. | Add `lookahead_zones` (`s0:s1:cap`), applied as a cap on `Ld` | Excursions are **local, not global** — 165 baseline ticks in three clusters (s 0–10, s 20–26, s 40–48) and nothing between. E0's collisions localised harder still: **33 of 49 in s 44–46**. **But E8 showed the obvious implementation would be inert**: `Ld` at s 43–46 sits on the `lookahead_min` 0.80 floor 84 % of the time, so a per-zone *cap* has nothing to cap. A per-zone override of the **floor** is the only version that can act there. This is the cheap version of the F1TENTH per-waypoint adaptive lookahead (§4). **Needs a code change**, so it runs after E8/E9 show whether local lateral work pays at all. | **unknown — and the design in §7.1 is wrong.** **[after E8]** A per-zone *cap* on `Ld` at s 43–46 would do **nothing**: `Ld` is already at the `lookahead_min` **0.80 floor** for 84 % of ticks there. If a per-zone lookahead is worth anything it must override the **floor**, not impose a cap. Redesign before running. | |
 | **7** | **E10** | **Guessing where the car will be before steering.** By the time a position reading reaches the controller the car has already moved on, so steering on it means steering at where the car *was*. This tells the controller to project the position forward by this many seconds first. Too little and it steers at stale information; too much and it steers at a place the car never reaches, which makes it weave. | `latency_comp_s: 0.05` — pose propagated 50 ms forward. **Fixed; not delay-scaled.** | `latency_comp_s:=0.03` | Tuned at a **175 ms** round trip (yaml: 6.60/6.70 vs 6.70/6.76 at 0, runs 24–25). This host measures **97 ms**. Unlike the lookahead, this parameter has **no automatic delay compensation**, so it is over-predicting by roughly the delay ratio. ⚠️ **This is the same reasoning shape that produced R8** — the difference is that R8 removed a compensator that was working, and here there is no compensator at all. Rank held low until E4/E8 land. | **−0.00 to −0.04 s.** Low confidence, explicitly flagged. | |
 | **8** | **E3** | **How much wheelspin is allowed under acceleration.** Driven wheels must turn slightly faster than the car is moving for the tire to push it forward — that difference is **slip**, and grip rises with it up to a peak and then falls away. This caps how much extra wheel speed may be commanded. Too low and the car is sluggish; too high and it is past the grip peak, spinning rather than accelerating. | `slip_accel: 0.16` | `slip_accel:=0.20` | Confirmation only, and now **predicted from the log rather than guessed**: realized slip p90 is already **0.160**, on the curve's flat top (0.10–0.18), so there is nothing above it to buy. Keep it in the queue so the plateau is on record, not because it should pay. | **~0.** | |
 | **9** | **E7** | **How much wheel-speed history to average.** Encoder readings are noisy, so they are smoothed over a short window. A longer window is steadier but lags reality; a shorter one is current but jumpy. | `enc_window_s: 0.05` | A/B `0.0` vs `0.05` | Diagnostic, not a candidate: confirms the encoder-window fix on the current stack. | confirms the 3.7 s claim | |
@@ -204,7 +204,12 @@ These are not bureaucracy; each one exists because ignoring it has already destr
    runs included** — E0 is the most useful entry in §12 precisely because it failed, and it is
    only usable because its control run was recorded first. No run is exempt for being
    uninteresting: "no change" is a measurement.
-10. **Write the prediction down before the run, and score it after.** §0 carries the predicted
+10. **Check what the parameter did to the intermediate quantity, not just the outcome.**
+   [2026-09-09] Before attributing a result to a change, verify the change *acted*: E0 was read as
+   a lookahead problem without checking `d_scale`, and E8's outcome was attributed to a parameter
+   that moved `Ld` by 0.006 m on average. Both readings were wrong. `pp_ld`, `pp_delay`,
+   `pp_slip` and `pp_throttle` are logged for exactly this.
+11. **Write the prediction down before the run, and score it after.** §0 carries the predicted
    impact; §12 carries what actually happened and whether the prediction held. E0's prediction was
    wrong in sign, which is knowable only because it was recorded in advance.
 
@@ -1162,3 +1167,95 @@ does. The collision was 8.6 s after the last flushed row and was lost.
 **A run that failed the gate was one step from being reported as passing it.** Fixed: the logger
 now flushes every row. Recorded as trap 9 in §10. For any run logged before this fix, trust
 `grep -c COLLISION /tmp/<run>.log` over the CSV column.
+
+---
+
+### 12.5 Correction to §12.4, and where the lap time actually is (2026-09-09)
+
+#### E8's reading is retracted
+
+§12.4 claimed E8 "halved the excursion at the target corner and cost T2". Checking what the
+parameter *did* to the lookahead, rather than what happened around it:
+
+| | control `Ld` | E8 `Ld` | Δ |
+|---|---|---|---|
+| s 43–46.5 (the target) | 0.831 m | 0.829 m | **−0.002** |
+| T2, s 21–24.5 | 0.975 m | 0.954 m | −0.021 |
+| whole lap, mean \|Δ\| | | | **0.006 m** |
+| bins differing by > 0.05 m | | | **4 of 216** |
+
+**`lookahead_sag_frac 0.5 → 0.35` was very nearly a no-op.** It changed `Ld` measurably in only
+four places on the lap — s 21.2–22.0 (T2 entry) and s 46.5–47.8. At the corner it was aimed at it
+changed nothing at all.
+
+So the s 43–46 "improvement" (+0.525 → +0.260) **cannot be attributed to E8 and is retracted as
+run-to-run variance.** The T2 degradation coincides with the one place the parameter actually
+acted, so that one may be real. E8's median matching the control to 0.001 s is consistent: the two
+arms were, to a good approximation, the same configuration.
+
+**This is the second time in this session a mechanism was over-read from thin evidence** (E0 was
+the first). Both times the fix was the same: check what the parameter did to the *intermediate*
+quantity — `Ld` here, `d_scale` there — before attributing an outcome to it. Added to §3 as
+rule 11.
+
+#### The finding that replaces it
+
+`Ld` is pinned at the **`lookahead_min` = 0.80 m floor** for **84 %** of ticks through s 43–46
+(control 84 %, E4 83 %, E8 83 %). T2 by contrast is on the floor only 5 % of the time.
+
+Consequences:
+
+- **`lookahead_sag_frac`, `lookahead_curv_gain` and any per-zone `Ld` *cap* are all inert at
+  s 43–46.** They can only shorten `Ld`, and it is already as short as it is allowed to be.
+- **§7.1's E5 design is wrong.** "A `lookahead_zones` entry applied as a cap on `Ld`" cannot act
+  in the corner that matters. If per-zone lookahead is worth anything here it must override the
+  **floor** (`lookahead_min`), which is the only thing binding.
+- The corner that keeps failing is the one where the controller has the *least* remaining
+  freedom. That is worth knowing before more parameters are spent on it.
+
+#### Where the lap time actually is — the strategic finding
+
+Four experiments have now moved the median by at most 0.002 s:
+
+| Run | Median | Verdict |
+|---|---|---|
+| `E0_base` reference | **11.800** | 0 collisions |
+| E0 `lookahead_delay_ref 0` | 11.799 | ❌ 49 collisions |
+| E4 `accel_ff 1.0` | 11.799 | ❌ no time |
+| E8 `sag_frac 0.35` | 11.801 | ❌ collision; ~no-op |
+
+§3.5 established that **no limit in the follower binds**: throttle at 1.0 on 0.0 % of ticks,
+`slip_accel` already on the friction peak, steering rate never reached, `v_max` worth 0.047 s.
+So the follower is not what is holding the lap time. **The lap time is set by the line's lateral
+budget**, and the solver's own outputs measure that directly:
+
+| line | a_lat | plan | d(plan)/d(a_lat) |
+|---|---|---|---|
+| a4.0 | 4.00 | 14.111 | |
+| a5.0 | 5.00 | 12.934 | −1.06 s per unit |
+| a6.0 | 6.00 | 12.090 | −0.78 |
+| a6.5 | 6.50 | 11.745 | −0.69 |
+| **a7.0** | **7.00** | **11.440** | **−0.61** |
+
+Extrapolating the last measured slope, and holding today's **+0.360 s** delivery deficit constant:
+
+| a_lat | plan (est.) | we would drive (est.) |
+|---|---|---|
+| 7.0 | 11.440 | 11.800 ← today |
+| **7.5** | **~11.13** | **~11.49** ← meets the gate, marginally |
+| 8.0 | ~10.83 | ~11.19 |
+
+*(The slope is still shrinking, so 7.5 is likely a little worse than this — treat ~11.49 as
+optimistic and 7.5 as the minimum credible rung, not a comfortable one.)*
+
+**Conclusion: 11.50 s is reachable, but not from the follower.** It needs the raceline's lateral
+budget raised to ≈ 7.5–8.0, which is the *line owner's* call, not this document's. The follower's
+job then becomes holding a line planned at higher lateral load — and `steer_a_lat_max` would have
+to rise with it, which is R4's territory and needs care: R4's 146 collisions came from raising the
+cap on a line that did **not** demand it. Raising both together is a different experiment from
+raising either alone, and it is the one worth setting up.
+
+**Recommended handover:** take the sensitivity table above to whoever owns the line, ask for an
+`a7.5` variant, and run it with `steer_a_lat_max:=7.5` as a matched pair. Everything left in the
+follower queue (E1, E2, E3, E9, E10) is now expected to be worth ≤ 0.05 s combined, and E5 needs
+redesigning before it is worth a run at all.

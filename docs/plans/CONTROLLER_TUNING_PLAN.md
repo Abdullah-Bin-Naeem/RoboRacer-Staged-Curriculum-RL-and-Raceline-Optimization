@@ -278,9 +278,33 @@ Sources:
 > occasional wall contact — is the failure mode we have.
 >
 > The scaling was written for a host whose round trip was three sim frames at 17.5 Hz. That is
-> not this host any more, and the clamp floor turned a compensator into a constant 0.70 derate.
-> `lookahead_delay_ref` is launch-exposed (it is in `TUNABLES`), so this is one override and no
-> code change: **E0**.
+> not this host any more, and the clamp floor has turned a compensator into a constant 0.70
+> derate. `lookahead_delay_ref` is launch-exposed, so testing it is one override: **E0**.
+>
+> ### [2026-09-09, after the run] E0 was tested and REJECTED — the 0.70 floor is load-bearing
+>
+> **The measurement above is correct and the inference from it was wrong.** The effective
+> lookahead really is 1.48 m rather than 2.20 m, and `lookahead_delay_ref:=0.0` really does
+> restore 2.09 m (measured, both arms below). But restoring it is not an improvement — it is
+> **49 collisions**. See **R8** in §9.
+>
+> The reasoning error: `lookahead_max: 2.20` was tuned *at the reference delay*, where
+> `d_scale = 1.0`. It is the value the geometry wants **when the round trip is 175 ms** and the
+> phase lag needs that much lookahead to stay stable. This host now runs at **97 ms**. There is
+> less lag to buy margin against, so the extra length buys nothing on the straights and spends
+> itself cutting apexes: the chord sagitta goes as `|κ|·Ld²/8`, so 1.48 → 2.09 m **doubles the
+> cut**, 0.218 → 0.438 m at κ = 0.8, against a line that runs 0.28 m from the inside wall there.
+>
+> So `lookahead_delay_ref` is **doing its job**, and the floor is what keeps the geometry sane on
+> a fast host. "Configured 2.20" and "effective 1.48" are not a discrepancy to fix; 2.20 is the
+> value *at the reference delay* and this document should say so wherever it quotes it.
+>
+> **What stands from the audit:** `pp_delay` must be logged per run and the arms kept in parity
+> (trap 7) — it rescales the geometry, and the two runs here differed by only 0.003 s, which is
+> why the comparison is clean enough to reject on. **What falls:** E0, and E6's premise that
+> `lookahead_max` is the lever. On this host the lever, if any, is the *floor* (0.70) or
+> per-zone lookahead (E5) — and E5's case is now stronger, because the failure is at
+> **s 43–46 specifically**, not everywhere.
 >
 > It also invalidates **E6** as written: sweeping `lookahead_max` 2.0 / 2.2 / 2.4 actually sweeps
 > **1.40 / 1.54 / 1.68** and never reaches any tuned value. Do E0 first, or sweep with
@@ -386,7 +410,7 @@ Ordered by expected value ÷ risk. Each is one variable. Fill the results matrix
 
 | ID | Change | Hypothesis | Predicted | Risk |
 |---|---|---|---|---|
-| **E0** | `lookahead_delay_ref:=0.0` | **[audit 09-09]** `d_scale` is pinned at its 0.70 floor, so the car runs `lookahead_k` 0.385 / `lookahead_max` 1.54 m — 30 % shorter than the values tuned to stop weave and wall contact. Restoring them targets the **lateral** budget and the collision gate. | −0.10 to −0.17 s and the collision | Medium. Restores a *tested* configuration, but one tested at a longer round trip. A longer `Ld` cuts corners: check corner bias sign and T2 clearance, not just \|e\|. |
+| ~~**E0**~~ | ~~`lookahead_delay_ref:=0.0`~~ **DONE 09-09 → REJECTED, see R8** | **[audit 09-09]** `d_scale` is pinned at its 0.70 floor, so the car runs `lookahead_k` 0.385 / `lookahead_max` 1.54 m — 30 % shorter than the values tuned to stop weave and wall contact. Restoring them targets the **lateral** budget and the collision gate. | −0.10 to −0.17 s and the collision | Medium. Restores a *tested* configuration, but one tested at a longer round trip. A longer `Ld` cuts corners: check corner bias sign and T2 clearance, not just \|e\|. |
 | **E1** | `target_lead_s:=0.0` | **[audit 09-09, prediction revised down]** `target_lead_s` contributes `v·0.08` = **0.64 m** of the 1.69 m total lead at 8 m/s (the rest is `cmd_delay`, which is deliberate and stays). Against the real braking-zone lengths — **6.10, 5.90, 2.50, 3.70 m**, not 7.8 m — that is **~10 %** of the main zone. It bites hardest in the *short* zones: 1.00 m of a 2.50 m zone at 4.5 m/s, i.e. **40 %**. | **−0.08 to −0.12 s** (was −0.28 s; that used a 2.1 m lead at a `cmd_delay` of 0.175 that does not run, against a zone length that does not exist) | Low. Watch T2 and the s 42–45 entry. |
 | **E2** | `target_lead_s:=0.04` | If E1 overshoots (hot entries), the optimum is between | between E1 and base | Low |
 | **E3** | `slip_accel:=0.20` | Re-confirm the 0.16→0.20 plateau. **[audit 09-09]** Now predicted from the log rather than guessed: realized slip p90 is already 0.160, on the friction curve's flat top, so there is nothing above it to buy. | ~0 | Low. **Deprioritised — the band is not the limiter.** |
@@ -401,13 +425,20 @@ so a control arm from another session is not a control. Run control and treatmen
 same session, fresh reset each, 25 laps each, and let `ab_report.py` check `pp_delay` parity
 before you read anything else.
 
-> **[audit 09-09] Revised order: E0 → E4 → E1/E2 → E5 → E3/E6.** E0 owns the collision gate and
-> the lateral budget; E4 owns 78 % of the longitudinal one. E1/E2 address the braking zones, which
+> **[2026-09-09, after E0] Order is now: E4 → E5 → E1/E2 → E3.** E0 is done and rejected (R8);
+> E6 is dropped with it, since `lookahead_max` is not the lever on a 97 ms host. **E4 is next**:
+> it owns 78 % of the longitudinal loss and, unlike E0, it does not touch lateral geometry at all,
+> so it cannot reproduce R8's failure mode. E5 rises to second — E0's collisions landed at
+> **s 43–46 specifically**, which is direct evidence that lookahead wants to be *per-zone* rather
+> than globally longer or globally shorter.
+>
+> ~~**[audit 09-09] Revised order: E0 → E4 → E1/E2 → E5 → E3/E6.** E0 owns the collision gate and
+> the lateral budget; E4 owns 78 % of the longitudinal one.~~ E1/E2 address the braking zones, which
 > carry **16 %** of the longitudinal loss, and can reach only the discretionary 0.64 m of a 1.69 m
 > lead within that — a realistic ceiling of **0.03–0.05 s**, which is why E1's prediction is
 > revised down from −0.28 s.
 >
-> **Ordering.** Run **E0 first.** It is one launch override, no code change, it is
+> ~~**Ordering.** Run **E0 first.**~~ It is one launch override, no code change, it is
 > the only queued item that addresses the collision gate directly, and until it is settled every
 > lateral number in §8.3 describes a controller nobody intended to run. Then fix the
 > `target_lead_s` term in `plot_speed_tracking.py` (§6.2), *then* E1/E2 — otherwise the tool
@@ -432,8 +463,8 @@ One row per run. **`Coll` is the per-run delta**, not the cumulative counter.
 | Run | Date | Line | Change (one variable) | Laps | Best | Median | Mean | Coll | `pp_delay` med/p90 | Gap vs 11.440 | Verdict |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | `icra_base20_a70` | 2026-09-08 | a7.0 | *baseline, yaml defaults* | 21 | 11.750 | 11.898 | 11.950 | 1 | 0.119 / 0.138 | +0.458 | reference (superseded) |
-| `E0-base` | | a7.0 | *baseline, 25 laps* | | | | | | | | |
-| `E0` | | a7.0 | `lookahead_delay_ref:=0.0` | | | | | | | | |
+| `E0_base` | 2026-09-09 | a7.0 | *baseline, 25 laps* | 25 | 11.650 | **11.800** | 11.830 | **0** | 0.097 / 0.108 | +0.360 | **new reference** |
+| `E0_test` | 2026-09-09 | a7.0 | `lookahead_delay_ref:=0.0` | 13 then aborted | 11.700 | 11.799 | 11.804 | **49** | 0.100 / — | +0.359 | **REJECTED — R8** |
 | `E1` | | a7.0 | `target_lead_s:=0.0` | | | | | | | | |
 | `E2` | | a7.0 | `target_lead_s:=0.04` | | | | | | | | |
 | `E3` | | a7.0 | `slip_accel:=0.20` | | | | | | | | |
@@ -485,8 +516,8 @@ Where the car leaves the line, and by how much. Fill from the per-lap `|e|max` t
 | Run | \|e\| mean | \|e\| p90 | \|e\| max | # laps with \|e\| > 0.25 m | `s` of worst excursion | Corner bias (+in/−wide) |
 |---|---|---|---|---|---|---|
 | baseline | 0.045 | 0.078 | **0.765** | 7 of 21 | **3.9** | |
-| E0-base | | | | | | |
-| E0 | | | | | | |
+| E0_base | 0.038 | 0.074 | 0.540 | — | 46.2 (+0.525 inside) | +0.026 at 43–46 |
+| E0_test (clean phase) | 0.066 | 0.124 | 0.651 | — | 45.8 (**+0.700** inside) | +0.004 at 43–46 |
 | E1 | | | | | | |
 | E5 | | | | | | |
 
@@ -534,6 +565,7 @@ An experiment is **accepted** only if all four hold:
 | **R5** | `accel_ff` on the **brake** side | −0.09 s slower | Tracked the plan's deceleration instead of its speed; every apex 0.1 m/s lower |
 | **R6** | 1 m minimum-preview for `v_target` | ~0.55 s/lap | Brakes for each corner twice; the profile already has its braking distances |
 | **R7** | multi-track's line (`…corners_h.csv`) | plans 11.447 vs a7.0's 11.441 | No gain available; strictly harder to drive here |
+| **R8** | `lookahead_delay_ref:=0.0` (**E0**, 2026-09-09) | **49 collisions**, aborted at lap 18 of 25; 13 clean laps first, median **11.799 vs the control's 11.800 — no gain at all** | Restored `Ld` at speed from 1.48 to **2.09 m** exactly as intended, and that is the problem. 2.20 is the value tuned *at* the 175 ms reference delay; this host runs 97 ms, so the length buys no phase margin and doubles the chord sag (0.218 → 0.438 m at κ 0.8) into a line 0.28 m off the inside wall. Tracking got **worse** on every measure: \|e\| mean 0.038 → 0.066, p90 0.074 → 0.124, worst inside excursion +0.525 → **+0.700 m at s ≈ 46**. Then 33 of the 49 hits at **s 44–46** and 14 at **s 30**, respawn-rehit looping. Same failure family as R4: a lateral-geometry change that grows past a physical margin cascades rather than degrades. |
 
 ---
 

@@ -20,8 +20,10 @@
 #                              with the ground-truth TF remapped off /tf (or
 #                              roboracer_1 gets two parents and the TF tree
 #                              breaks). Exactly one bridge, one owner.
-#   our localization + control  dead reckoning, AMCL against the baked-in Porto
-#                              map, and pure pursuit along the baked-in raceline.
+#   our localization + control  dead reckoning, AMCL against the baked-in map
+#                              for the selected track, and pure pursuit along
+#                              that track's raceline. Both tracks and every line
+#                              are in the image; RACER_TRACK picks one.
 #
 # The bridge listens on 4567 and blocks until the simulator connects, so
 # starting before the operator hits Connect is correct: everything is up and
@@ -81,9 +83,20 @@ unset _dds
 # Every value is overridable from `docker run -e NAME=...`, so a teammate can
 # change the line or fall back to slam without rebuilding the image.
 #
-#   localizer:=amcl   nav2 AMCL against maps/track_clean.pgm. `slam` is built
-#                     into the image too and works (6.7 s), but AMCL is what
-#                     this branch is qualified on.
+#   RACER_TRACK=icra  which circuit. Exported rather than passed as a launch
+#                     argument because roboracer_stack.common.frames reads it at
+#                     IMPORT time -- it selects the map, the spawn pose, the fit
+#                     grid and the default line together, and launch arguments
+#                     are parsed long after that module is imported. Set `porto`
+#                     for the qualification track.
+#                     NOTE: icra ships no pose graph, so RACER_LOCALIZER=slam
+#                     works on porto only.
+#   RACER_RACELINE    a line WITHIN that track, by bare filename --
+#                     `raceline_a4.0.csv`, not a share path. Unset uses the
+#                     track's default from the frames table.
+#   localizer:=amcl   nav2 AMCL against the track's track_clean.pgm. `slam` is
+#                     built into the image too and works (6.7 s), but AMCL is
+#                     what this branch is qualified on.
 #   mode:=race        instruments off, no lap telemetry, steer on the estimate.
 #                     race.launch.py refuses every restricted reader in this
 #                     mode; see roboracer_stack/common/restricted.py.
@@ -101,9 +114,11 @@ unset _dds
 #                     it does not key off this.
 #   rviz:=false       there is no display in the evaluation container.
 #
-# path_csv is left unset on purpose: common/frames.py picks the default
-# (raceline_a7.0.csv, run 38, 6.50 s) and prints it, so the choice lives in one
-# documented place instead of two.
+# path_csv is left unset unless asked for: common/frames.py picks the track's
+# default and prints it, so the choice lives in one documented place instead of
+# two.
+export RACER_TRACK="${RACER_TRACK:-icra}"
+echo "[entrypoint] track ${RACER_TRACK}"
 ARGS=(
   "localizer:=${RACER_LOCALIZER:-amcl}"
   "mode:=${RACER_MODE:-race}"
@@ -112,7 +127,19 @@ ARGS=(
   "control_hz:=${RACER_CONTROL_HZ:-40}"
   "rviz:=${RACER_RVIZ:-false}"
 )
-[ -n "${RACER_PATH_CSV:-}" ] && ARGS+=("path_csv:=${RACER_PATH_CSV}")
+# RACER_RACELINE is a bare filename inside the track's raceline directory;
+# RACER_PATH_CSV is the older full-path form. Both land on the SAME launch
+# argument, which resolves either (follower.launch.py -> frames.raceline_path),
+# so a name is enough now that a track ships eleven lines. Passing path_csv:=
+# twice would leave which one wins up to ros2 launch, so they are exclusive and
+# the newer name is preferred.
+_line="${RACER_RACELINE:-${RACER_PATH_CSV:-}}"
+if [ -n "${RACER_RACELINE:-}" ] && [ -n "${RACER_PATH_CSV:-}" ]; then
+    echo "[entrypoint] WARNING both RACER_RACELINE and RACER_PATH_CSV are set;" \
+         "using RACER_RACELINE=${RACER_RACELINE}" >&2
+fi
+[ -n "$_line" ] && ARGS+=("path_csv:=${_line}")
+unset _line
 # Anything else, word-split on purpose: RACER_EXTRA_ARGS="v_max:=7.5 lookahead_k:=0.6"
 # shellcheck disable=SC2206
 [ -n "${RACER_EXTRA_ARGS:-}" ] && ARGS+=(${RACER_EXTRA_ARGS})
@@ -129,7 +156,26 @@ if [ "${RACER_AUTOSTART:-1}" = "1" ]; then
     ros2 launch roboracer_stack race.launch.py "${ARGS[@]}" >"$LOG" 2>&1 &
     RACER_PID=$!
     echo "[entrypoint] race stack pid $RACER_PID -- follow it with: tail -f $LOG"
-    echo "[entrypoint] waiting for the simulator to connect on port 4567"
+
+    # A launch that dies on a bad argument -- a raceline name that is not in the
+    # image, a params file that does not exist -- is dead within a couple of
+    # seconds, and its error goes to $LOG where nobody is looking. Without this
+    # check the next line cheerfully announced that we were waiting for the
+    # simulator while nothing at all was running, and the symptom presented as
+    # "the bridge never connects" -- which sends you to the network, the port
+    # and the sim, none of which are the problem. The follower starts on a 2 s
+    # timer, so a bad path_csv only surfaces after the rest is already up: wait
+    # past that before deciding the stack is healthy.
+    sleep 4
+    if ! kill -0 "$RACER_PID" 2>/dev/null; then
+        echo "[entrypoint] ERROR the race stack died during startup. Last errors:" >&2
+        grep -iE 'error|exception|no raceline' "$LOG" | tail -5 >&2
+        echo "[entrypoint] full log: $LOG" >&2
+        echo "[entrypoint] the simulator is NOT being driven." >&2
+        RACER_PID=""
+    else
+        echo "[entrypoint] waiting for the simulator to connect on port 4567"
+    fi
 else
     RACER_PID=""
     echo "[entrypoint] RACER_AUTOSTART=0 -- not starting the stack."

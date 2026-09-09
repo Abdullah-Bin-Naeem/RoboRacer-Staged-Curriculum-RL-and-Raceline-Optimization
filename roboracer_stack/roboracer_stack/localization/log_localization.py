@@ -90,12 +90,15 @@ from std_msgs.msg import Float32MultiArray
 
 try:
     from roboracer_stack.common import restricted
-    from roboracer_stack.common.frames import MAPS_DIR
+    from roboracer_stack.common.frames import DEFAULT_FIT_MAP, MAPS_DIR
 except ImportError:                                     # run outside the ws
     restricted = None
+    # THREE dirnames: localization/ -> the python package -> the package
+    # directory, which is what holds maps/. A fourth landed on the repo root.
     MAPS_DIR = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(
-            os.path.dirname(os.path.abspath(__file__))))), 'maps')
+        os.path.dirname(os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__)))), 'maps')
+    DEFAULT_FIT_MAP = os.path.join(MAPS_DIR, 'track_clean')
 
 
 def _distance_field(img, res):
@@ -173,10 +176,11 @@ class Logger(Node):
         p('out', 'localization_log.csv')
         p('rate', 20.0)
         p('seconds', 0.0)
-        # Grid to score the scan against. Default is the one slam_toolbox
-        # localizes against, so the fit columns answer a question about the
-        # map actually in use rather than a different one.
-        p('map', os.path.join(MAPS_DIR, 'track_sm'))
+        # Grid to score the scan against. Follows the current track and
+        # points at AMCL's map, so the fit columns answer a question about the
+        # map actually in use rather than a different one. See
+        # common.frames.DEFAULT_FIT_MAP.
+        p('map', DEFAULT_FIT_MAP)
         p('wheel_radius', 0.0581)       # MEASURED; see dead_reckoning.py
         g = lambda n: self.get_parameter(n).value   # noqa: E731
         path = path if path is not None else str(g('out'))

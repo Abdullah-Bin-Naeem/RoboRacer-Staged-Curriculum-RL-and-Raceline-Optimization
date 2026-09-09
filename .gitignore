@@ -11,3 +11,9 @@ __pycache__/
 
 # Run logs written by the entrypoint inside the container.
 *.log
+
+# Benchmark output: scripts/bench.sh mounts this into the bench container and
+# every recording, report and generated AMCL variant lands here. Runs are
+# machine- and session-specific (the sim tick rate moves with the host), so
+# they are evidence for one sitting, not artefacts to carry in the repo.
+runs/

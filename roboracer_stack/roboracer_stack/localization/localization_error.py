@@ -74,7 +74,12 @@ LATCHED = QoSProfile(durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
                      history=QoSHistoryPolicy.KEEP_LAST, depth=1)
 
 # The raceline's tightest point sits this far from a wall, so sustained error
-# above it will put the car into one.
+# above it will put the car into one. It is a DEFAULT, not a constant: the
+# margin belongs to the line being driven (0.134 for raceline_a7.0, 0.367 for
+# the centreline), so instruments.launch.py passes the right one as
+# wall_margin_m. It used to pass it to a parameter this node never declared,
+# which rclpy discards in silence -- every run was scored against 0.134
+# whatever the launch said.
 WALL_MARGIN_M = 0.134
 
 
@@ -131,6 +136,7 @@ class LocalizationError(Node):
         p('map_frame', 'map')
         p('base_frame', 'roboracer_1')
         p('tf_rate', 20.0)         # sampling rate for the TF path
+        p('wall_margin_m', WALL_MARGIN_M)
 
         g = lambda n: self.get_parameter(n).value
         est_topic = g('estimate_topic')
@@ -140,6 +146,7 @@ class LocalizationError(Node):
         self.use_tf = bool(g('use_tf'))
         self.map_frame = str(g('map_frame'))
         self.base_frame = str(g('base_frame'))
+        self.wall_margin = float(g('wall_margin_m'))
 
         self.truth = None            # (x, y, yaw)
         self.estimate = None
@@ -275,12 +282,12 @@ class LocalizationError(Node):
               f'p95 {math.degrees(self.yaw.p95):.2f}  '
               f'max {math.degrees(self.yaw.peak):.2f}  deg')
         print('=' * 62)
-        if self.pos.p95 > WALL_MARGIN_M:
+        if self.pos.p95 > self.wall_margin:
             print(f'  WARNING: p95 error exceeds the raceline wall margin '
-                  f'({WALL_MARGIN_M:.3f} m).')
+                  f'({self.wall_margin:.3f} m).')
             print('           Expect contact at the tightest point of the lap.')
-        elif self.pos.peak > WALL_MARGIN_M:
-            print(f'  NOTE: peak error exceeded {WALL_MARGIN_M:.3f} m but p95 did '
+        elif self.pos.peak > self.wall_margin:
+            print(f'  NOTE: peak error exceeded {self.wall_margin:.3f} m but p95 did '
                   'not -- occasional excursions, not a systematic offset.')
 
 

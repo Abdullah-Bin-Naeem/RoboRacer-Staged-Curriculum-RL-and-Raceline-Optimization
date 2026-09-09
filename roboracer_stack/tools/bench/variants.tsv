@@ -1,0 +1,26 @@
+# A/B variants for scripts/bench.sh sweep.  TAB-separated, three fields:
+#
+#   name <TAB> amcl.yaml overrides <TAB> extra race.launch.py arguments
+#
+# Overrides are comma-separated key=value pairs applied to the SHIPPED
+# config/amcl.yaml, so a variant is a one-line diff against what actually races
+# and can never drift from it. Leave the field as `-` for no override.
+#
+# There is deliberately NO dead-reckoning-only variant. Every run already
+# carries a `dr_err` column -- dead reckoning measured on the SAME trajectory at
+# the SAME instants -- so the comparison is paired and free. A separate run
+# would be a worse experiment, not a better one.
+#
+# Keep this list short. Each line is a full recording, and the sweep is
+# sequential.
+#
+# name        overrides                              extra launch args
+baseline      -                                      -
+beams360      max_beams=360                          -
+beams540      max_beams=540                          -
+update05      update_min_d=0.05,update_min_a=0.05    -
+sigma05       sigma_hit=0.05                         -
+parts16k      max_particles=16000                    -
+alpha_old     alpha1=0.30,alpha2=0.30,alpha3=0.50,alpha4=0.30   -
+zhit_hard     z_hit=0.85,z_rand=0.05                 -
+slam          -                                      localizer:=slam

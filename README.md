@@ -27,7 +27,9 @@ Dockerfile              FROM the official devkit image; adds one package
 autodrive_devkit.sh     the entrypoint the rules name — the only automation
 autodrive_devkit/       the provided package, unmodified, NOT copied into the image
 roboracer_stack/        ours: perception, localization, planning, control, mapping
-scripts/build.sh run.sh convenience wrappers for us; not part of the image
+                        + tools/, offline analysis; NOT installed into the image
+scripts/                build.sh, run.sh, bench.sh, raceline_editor.py — for us;
+                        not part of the image
 ```
 
 `autodrive_roboracer` is never modified — the rules forbid it, and the base
@@ -101,19 +103,89 @@ Every knob is an environment variable read by `/home/autodrive_devkit.sh`:
 
 | variable | default | what it does |
 |---|---|---|
-| `RACER_PATH_CSV` | `raceline_a7.0.csv` | which line to drive (absolute path) |
+| `RACER_TRACK` | `icra` | which circuit: `icra` or `porto`. Selects the map, the spawn pose, the scan-fit grid and the default line together |
+| `RACER_RACELINE` | per track | which line to drive, by **bare filename** — `raceline_a4.0.csv`. Looked up in that track's raceline directory |
+| `RACER_PATH_CSV` | — | the older form: a full path. Use `RACER_RACELINE` instead |
 | `RACER_LOCALIZER` | `amcl` | `amcl`, `slam`, or `none` |
 | `RACER_BOOTSTRAP_MODE` | `truth` | `truth` seeds the pose once from `/ips`; `global` searches with no prior |
 | `RACER_CONTROL_HZ` | `40` | follower loop rate |
-| `RACER_MODE` | `race` | `dev` re-enables the instruments |
+| `RACER_MODE` | `race` | `dev` re-enables the instruments; needed for any localization measurement, since `race` omits `instruments.launch.py` entirely |
 | `RACER_AUTOSTART` | `1` | `0` gives a shell with nothing running |
 | `RACER_EXTRA_ARGS` | — | anything else, e.g. `"v_max:=7.5 lookahead_k:=0.6"` |
 
+`scripts/run.sh racer` forwards every one of these from your shell, so the
+usual invocation stays one command:
+
+```bash
+RACER_TRACK=porto RACER_RACELINE=raceline_a6.5.csv ./scripts/run.sh racer
+```
+
+or against the image directly:
+
 ```bash
 docker run --rm -it --network=host --ipc=host \
-  -e RACER_PATH_CSV=/home/autodrive_devkit/install/roboracer_stack/share/roboracer_stack/raceline/raceline_a6.5.csv \
+  -e RACER_TRACK=icra -e RACER_RACELINE=raceline_a4.0.csv \
   autodrive_racer:qualification-1
 ```
+
+Both tracks and all twenty racing lines are baked into the image, so switching
+between them never needs a rebuild. `RACER_LOCALIZER=slam` works on `porto`
+only — icra ships no pose graph.
+
+## Benchmarking the localizer
+
+The simulator knows exactly where the car is, so localization quality is a
+measurable number rather than an impression. Two containers as usual, plus a
+third command:
+
+```bash
+./scripts/run.sh sim --headless       # terminal 1
+./scripts/bench.sh up                 # terminal 2
+./scripts/bench.sh record baseline --seconds 90
+./scripts/bench.sh score baseline     # -> runs/baseline.html
+./scripts/bench.sh sweep              # every AMCL variant, ranked
+```
+
+`runs/` is bind-mounted, so the CSV and the report land on the host and survive
+the container. The report opens in a browser with no server and no network.
+
+**What is compared.** Truth is `/ips` position with `/imu` heading. The estimate
+is TF `map->odom` composed with `odom->roboracer_1` -- AMCL's correction applied
+on top of dead reckoning, which is literally what `pure_pursuit` reads, so the
+benchmark scores the pose the car actually races on rather than `/amcl_pose`.
+
+**Why a separate container from `run.sh racer`.** That one is the submission,
+run exactly as the organizers run it. Benchmarking needs a host mount (or the
+CSV dies with `--rm`), `RACER_MODE=dev` (both ground-truth readers live in
+`instruments.launch.py`, which `mode:=race` omits wholesale), and scipy (the
+image does not ship it). `bench.sh` supplies all three without touching the
+image: the tools are bind-mounted, never baked in. `mode:=dev` changes no part
+of the control path -- the car steers on the estimate either way.
+
+**scipy is installed with `--no-deps` on purpose.** A plain `pip install scipy`
+pulls numpy 2.x over the image's 1.22.2 and every compiled ROS Humble extension
+stops importing. `bench.sh` pins `scipy==1.10.1`, checks numpy did not move, and
+rolls back if it did.
+
+**The error floor is about 0.03 m.** Comparing an estimate in `map` against
+truth in `world` assumes the frames coincide, which holds to 0.024 m RMS and
+0.19 deg. A result at that magnitude is the frame alignment, not the localizer.
+
+**It will not agree with what `localization_error` prints, on purpose.** That
+node compares the *latest* transform against the *latest* truth with no time
+alignment, so the two poses are typically one bridge frame apart -- and at 7 m/s
+a 40 ms offset is 0.3 m of pure bookkeeping. The CSV looks the odometry leg up
+*at the truth's own timestamp*, so both poses describe the same instant. On a
+real 90 s run the two read 0.32 m and 0.13 m. The aligned one is the honest
+number; the node's is a live upper bound.
+
+The report answers four questions in order: does the error matter (cross-track
+error against the wall margin actually available at that point of the lap), is
+the localizer contributing anything (against the `dr_err` column, which is dead
+reckoning measured on the same trajectory at the same instants), is it rotating
+the pose when it should only ever translate it, and -- from the scan-vs-map fit
+at the true pose versus the estimated one -- whether the remaining error is
+tunable at all or is the map.
 
 ## The three racing lines
 

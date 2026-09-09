@@ -39,7 +39,7 @@ from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import (QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile,
                        QoSReliabilityPolicy)
-from roboracer_stack.common.frames import MAPS_DIR
+from roboracer_stack.common.frames import DEFAULT_FIT_MAP, MAPS_DIR
 from sensor_msgs.msg import LaserScan
 import yaml
 
@@ -47,12 +47,13 @@ NS = '/autodrive/roboracer_1'
 QOS = QoSProfile(durability=QoSDurabilityPolicy.VOLATILE,
                  reliability=QoSReliabilityPolicy.RELIABLE,
                  history=QoSHistoryPolicy.KEEP_LAST, depth=1)
-# Which grid to score against. track_clean is AMCL's map; track_sm is the grid
-# that came out of the SAME mapping run as the pose graph slam_toolbox
-# localizes against, so that is the one to use when debugging the slam stack --
-# scoring the scan against a different map than the localizer uses answers the
-# wrong question. Override with argv[2].
-DEFAULT_MAP = os.path.join(MAPS_DIR, 'track_sm')
+# Which grid to score against: the current track's, from common.frames, which
+# is AMCL's map. Scoring the scan against a different map than the localizer
+# uses answers the wrong question. Was hardcoded to Porto's track_sm -- the grid
+# from the same mapping run as slam_toolbox's pose graph, which is the right
+# choice when debugging the slam stack but does not exist for every track.
+# Override with argv[2], e.g. `track_sm` when debugging slam on Porto.
+DEFAULT_MAP = DEFAULT_FIT_MAP
 LIDAR_X = 0.2733          # lidar offset forward of the rear axle, from the bridge
 
 

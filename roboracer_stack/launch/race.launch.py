@@ -207,6 +207,28 @@ def _launch(context, *args, **kwargs):
                     'require_convergence': cfg('require_convergence')}
         loc_args['map_yaml' if localizer == 'amcl' else 'map_graph'] = (
             cfg('map_yaml') if localizer == 'amcl' else cfg('map_graph'))
+        # A/B one AMCL tuning against another without rebuilding: amcl.launch.py
+        # has always accepted amcl_params_file, but nothing forwarded it, so the
+        # only way to change a filter parameter from here was to edit
+        # config/amcl.yaml -- which is the file that ships in the submission.
+        # tools/bench/ holds the variants; the shipped config stays untouched.
+        #
+        # The argument is called amcl_params HERE and amcl_params_file THERE, and
+        # the difference is load-bearing. IncludeLaunchDescription inherits the
+        # parent's launch configurations, and DeclareLaunchArgument only supplies
+        # a default when the name is not already set -- so declaring
+        # `amcl_params_file` in this file would OVERRIDE amcl.launch.py's default
+        # with our empty string. nav2 then reports
+        #     Parameter file path is not a file: .
+        # as a WARNING, not an error, and AMCL comes up on pure nav2 defaults:
+        # scan_topic `scan` instead of the devkit's lidar, base_frame_id
+        # `base_footprint`, 60 beams. It receives no scan at all, publishes no
+        # pose, never broadcasts map->odom, and the bootstrap seed is never
+        # confirmed -- so the follower parks forever and every symptom points at
+        # AMCL rather than at a launch-argument name. A different name here
+        # cannot collide.
+        if localizer == 'amcl' and cfg('amcl_params'):
+            loc_args['amcl_params_file'] = cfg('amcl_params')
 
         # Warn only when nothing will seed this localizer: no global search AND
         # no one-shot truth seed leaves it on the hardcoded constant, which
@@ -254,6 +276,7 @@ def _launch(context, *args, **kwargs):
             'wall_margin': cfg('wall_margin'),
             'log_csv': cfg('log_csv'),
             'log_rate': cfg('log_rate'),
+            'log_map': cfg('log_map'),
         }.items(),
         condition=IfCondition(measure_error),
     ))
@@ -346,6 +369,19 @@ def generate_launch_description():
                         'per sample; empty disables it. dev mode only'),
         DeclareLaunchArgument('log_rate', default_value='20.0',
                               description='CSV samples per second'),
+        DeclareLaunchArgument(
+            'log_map', default_value='',
+            description="grid the CSV's fit_* columns score the scan against; "
+                        'empty keeps log_localization\'s default of track_sm. '
+                        'Pass maps/track_clean with localizer:=amcl -- that is '
+                        'the map AMCL localizes on, and scoring against a '
+                        'different one makes fit_ratio meaningless'),
+        DeclareLaunchArgument(
+            'amcl_params', default_value='',
+            description='alternative AMCL parameter file; empty uses the '
+                        'shipped config/amcl.yaml. AMCL only. Deliberately NOT '
+                        "named amcl_params_file -- see the note where it is "
+                        'forwarded'),
         DeclareLaunchArgument('wall_margin', default_value='0.15'),
         DeclareLaunchArgument(
             'follower_delay', default_value='2.0',

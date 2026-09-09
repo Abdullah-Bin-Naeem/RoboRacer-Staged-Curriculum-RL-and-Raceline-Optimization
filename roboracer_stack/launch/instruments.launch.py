@@ -14,6 +14,11 @@ race.launch.py can withhold it wholesale with mode:=race.
                        wrong. The CSV carries the signed along/cross/yaw
                        decomposition plus yaw_rate so drift can be plotted and
                        correlated instead of eyeballed in RViz.
+                       `log_map` names the grid those fit columns score
+                       against. It must be the map THE LOCALIZER IS USING --
+                       AMCL runs on track_clean, while the node's own default
+                       is track_sm -- or fit_est/fit_true compare the estimate
+                       against a map it never saw and the ratio means nothing.
   map_world_tf         map -> world identity, so RViz can draw the true pose
                        beside the estimate. /odom and /ips are published in the
                        devkit's `world` frame, which leaves /tf when the bridge
@@ -24,7 +29,7 @@ race.launch.py can withhold it wholesale with mode:=race.
 """
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
@@ -38,6 +43,26 @@ def generate_launch_description():
     # argument, and naming the file is what turns it on.
     logging = IfCondition(PythonExpression(
         ["'", LaunchConfiguration('log_csv'), "' != ''"]))
+
+    # An empty log_map must leave the node's own default alone, and a launch
+    # substitution cannot be conditionally omitted from a parameter dict. So
+    # resolve it at launch time instead: OpaqueFunction gets the string, and
+    # the key is simply absent when it is empty.
+    def _log_params(context):
+        params = {
+            'out': LaunchConfiguration('log_csv').perform(context),
+            # float(): log_rate:=50 would otherwise be inferred as an int
+            # against a double parameter.
+            'rate': float(LaunchConfiguration('log_rate').perform(context)),
+        }
+        grid = LaunchConfiguration('log_map').perform(context)
+        if grid:
+            params['map'] = grid
+        return [Node(
+            package='roboracer_stack', executable='log_localization',
+            name='log_localization', output='screen', emulate_tty=True,
+            parameters=[params],
+        )]
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -55,6 +80,12 @@ def generate_launch_description():
                         'Relative paths land in the directory you launched from'),
         DeclareLaunchArgument('log_rate', default_value='20.0',
                               description='CSV samples per second'),
+        DeclareLaunchArgument(
+            'log_map', default_value='',
+            description='grid (without .pgm/.yaml) the fit_* columns score the '
+                        'scan against. Empty keeps the node default, track_sm; '
+                        'pass maps/track_clean when localizer:=amcl, which is '
+                        'the map AMCL actually localizes on.'),
         DeclareLaunchArgument('wall_margin', default_value='0.089',
                               description='clearance at the tightest point of the '
                                           'line being driven; 0.367 for the centreline'),
@@ -67,21 +98,20 @@ def generate_launch_description():
                 'map_frame': MAP,
                 'base_frame': BASE,
                 'require_ready': LaunchConfiguration('require_ready'),
-                'wall_margin_m': LaunchConfiguration('wall_margin'),
+                # cast for the same reason as log_rate below: wall_margin:=1
+                # would be inferred as an int against a double parameter.
+                'wall_margin_m': ParameterValue(
+                    LaunchConfiguration('wall_margin'), value_type=float),
             }],
         ),
         # Same comparison as localization_error, but every sample and to disk.
         # Writes to the directory the launch was started from.
-        Node(
-            package='roboracer_stack', executable='log_localization',
-            name='log_localization', output='screen', emulate_tty=True,
-            condition=logging,
-            parameters=[{
-                'out': LaunchConfiguration('log_csv'),
-                # cast: log_rate:=50 arrives as an int and the node declares a double
-                'rate': ParameterValue(LaunchConfiguration('log_rate'), value_type=float),
-            }],
-        ),
+        #
+        # Built by OpaqueFunction rather than declared inline because log_map
+        # has to be able to mean "leave the node's default alone", and a
+        # LaunchConfiguration in a parameter dict is always present -- an empty
+        # one would set the map to '' and the node would fail to open ''.pgm.
+        OpaqueFunction(function=_log_params, condition=logging),
 
         Node(
             package='tf2_ros', executable='static_transform_publisher',

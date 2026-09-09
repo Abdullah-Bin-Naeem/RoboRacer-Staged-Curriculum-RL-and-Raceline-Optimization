@@ -29,7 +29,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from roboracer_stack.common.frames import DEFAULT_RACELINE, NS
+from roboracer_stack.common.frames import DEFAULT_RACELINE, NS, raceline_path
 
 # Overridable at launch time; empty string keeps whatever the params file says.
 # curvature_preview_m matters more than it looks: with no v_mps column in the
@@ -73,7 +73,12 @@ def _nodes(context, *args, **kwargs):
             emulate_tty=True,
             parameters=[
                 cfg('pp_params_file'),
-                {'path_csv': cfg('path_csv'),
+                # raceline_path passes a real path through untouched and
+                # resolves a bare filename inside the current track's raceline
+                # directory. Resolved HERE rather than in race.launch.py because
+                # this is where the value finally lands, so `path_csv:=<name>`
+                # means the same thing whichever launch file you enter through.
+                {'path_csv': raceline_path(cfg('path_csv')),
                  'pose_topic': cfg('pose_topic'),
                  'use_tf_pose': cfg('use_tf_pose').lower() == 'true',
                  'wait_for_ready': cfg('wait_for_ready').lower() == 'true',
@@ -95,7 +100,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'path_csv',
             default_value=DEFAULT_RACELINE,
-            description='path to follow (s,x,y,psi,kappa,w_r,w_l)'),
+            description='path to follow (s,x,y,psi,kappa,w_r,w_l). A bare '
+                        "filename is looked up in the current track's raceline "
+                        'directory; a path is used as given'),
         DeclareLaunchArgument('wait_for_ready', default_value='false'),
         DeclareLaunchArgument('bootstrap_seconds', default_value='0.0'),
         DeclareLaunchArgument(

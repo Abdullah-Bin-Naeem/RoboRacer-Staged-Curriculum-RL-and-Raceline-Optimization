@@ -219,6 +219,11 @@ through `a7.0.csv`): the same geometry at several lateral limits, so grip is
 stepped up on the car instead of guessed. Geometry does not depend on grip, only
 the velocity profile does. The notebooks import from it for plots;
 `make_speed_variants.py` re-profiles any other line under the same physics.
+`line_editor/` is the interactive version (`python -m line_editor --track ...`
+from `raceline/` in `.venv-rl`): a page where the line is dragged on the map and
+the speed shaped with the same zone flags or by hand, saving a CSV in the
+follower's layout plus an `.edit.json` with the arguments and the hand edits.
+Its `README.md` has the details and the Selenium test.
 
 ## Tracks
 

@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Raceline editor</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="brand">Raceline editor <span id="title" class="title">loading…</span></div>
+    <nav class="tabs" role="tablist">
+      <button id="tab-map" class="tab active" data-view="map" title="Geometry on the map, curvature below (1)">Map <kbd>1</kbd></button>
+      <button id="tab-speed" class="tab" data-view="speed" title="The speed profile, full window (2)">Speed <kbd>2</kbd></button>
+    </nav>
+    <div id="status" class="status"></div>
+    <div class="actions">
+      <label class="chk" title="Recompute the profile while dragging: a fast pass without the wall widths, the full one on release">
+        <input id="live" type="checkbox"> live</label>
+      <button id="undo" title="Undo (Ctrl-Z)">Undo</button>
+      <button id="redo" title="Redo (Ctrl-Y)">Redo</button>
+      <button id="reset" title="Back to the line as loaded">Reset</button>
+      <button id="fit" title="Fit the map to the window (F)">Fit</button>
+      <button id="help" title="Keys and tools (?)">?</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="view-map" class="view active">
+      <div id="mapwrap"><canvas id="map"></canvas></div>
+      <canvas id="curv" class="strip"></canvas>
+    </section>
+    <section id="view-speed" class="view">
+      <canvas id="speed"></canvas>
+    </section>
+  </main>
+
+  <aside>
+    <div id="readout" class="readout">hover the line</div>
+    <div id="note" class="note"></div>
+
+    <section class="panel for-speed" id="minipanel">
+      <canvas id="minimap"></canvas>
+      <div class="hint">where you are: the cursor follows the charts, hover or click here to jump · amber = edited points · ◆ = s 0</div>
+    </section>
+
+    <section class="panel for-map">
+      <h3>Geometry</h3>
+      <div class="row"><label>brush <input id="brush" type="range" min="0.2" max="5" step="0.1" value="1.5"><output id="brushv">1.5 m</output></label></div>
+      <div class="row"><label>smooth radius <input id="g_radius" type="range" min="0.2" max="3" step="0.1" value="0.8"><output id="g_radiusv">0.8 m</output></label></div>
+      <div class="row"><label>strength <input id="g_strength" type="range" min="0.1" max="1" step="0.05" value="0.6"><output id="g_strengthv">0.60</output></label></div>
+      <div class="row">
+        <button id="g_smooth" class="primary" title="Gaussian-smooth x and y over the region you dragged, blended to zero at its ends so nothing else moves. Apply again for more.">Smooth edited region</button>
+        <button id="g_forget" class="link" title="Stop tracking the edited region">forget region</button>
+      </div>
+      <div id="g_region" class="hint">no edited region yet: drag the line to create one</div>
+      <div class="row">resample <input id="n" type="number" step="1" class="w4"> pts, spline smooth <input id="smooth" type="number" step="0.01" value="0" class="w4">
+        <button id="resample" title="Uniform spacing again; smooth > 0 fits a smoothing spline through the whole line">Resample all</button></div>
+    </section>
+
+    <section class="panel for-speed">
+      <h3>Tools</h3>
+      <div class="tools">
+        <button class="tool active" data-tool="draw" id="tool-draw" title="Draw the speed curve; the stroke is smoothed on release (D)">Draw <kbd>D</kbd></button>
+        <button class="tool" data-tool="smooth" id="tool-smooth" title="Smooth your edits under the brush (S)">Smooth <kbd>S</kbd></button>
+        <button class="tool" data-tool="erase" id="tool-erase" title="Erase edits under the brush, back to the profile (E)">Erase <kbd>E</kbd></button>
+        <button class="tool" data-tool="zone" id="tool-zone" title="Drag a level: speed zone on the speed panel, lateral zone on the lateral panel; shift-click a band removes it (Z)">Zone <kbd>Z</kbd></button>
+      </div>
+      <div class="row"><label>brush <input id="s_radius" type="range" min="0.2" max="6" step="0.1" value="1.5"><output id="s_radiusv">1.5 m</output></label></div>
+      <div class="row"><label>strength <input id="s_strength" type="range" min="0.1" max="1" step="0.05" value="0.5"><output id="s_strengthv">0.50</output></label></div>
+      <div class="row"><label>stroke smoothing <input id="s_stroke" type="range" min="0" max="2" step="0.1" value="0.4"><output id="s_strokev">0.4 m</output></label></div>
+    </section>
+
+    <section class="panel for-speed">
+      <h3>Speed edits <span class="hint">m/s on top of the profile</span></h3>
+      <div class="row">from s <input id="e_s0" type="number" step="0.1" value="0" class="w4"> to <input id="e_s1" type="number" step="0.1" value="5" class="w4">
+        by <input id="e_dv" type="number" step="0.1" value="0.5" class="w4"> <button id="e_apply">Apply</button></div>
+      <div class="row"><button id="e_clear">Clear edits</button>
+        <button id="e_file" title="Set the edits so the curve equals the file's own speed column">Use file's speeds</button></div>
+      <div class="row"><label class="chk"><input id="resweep" type="checkbox"> re-impose the accel / brake budgets (a step becomes the ramp)</label></div>
+      <div id="e_info" class="hint">no edits</div>
+    </section>
+
+    <section class="panel">
+      <h3>Profile <span class="hint">the optimize_raceline flags</span></h3>
+      <div class="row grid4">
+        <label>a_lat <input id="a_lat" type="number" step="0.1"></label>
+        <label>a_long <input id="a_long" type="number" step="0.1"></label>
+        <label>a_brake <input id="a_brake" type="number" step="0.1"></label>
+        <label>v_max <input id="v_max" type="number" step="0.1"></label>
+      </div>
+      <div class="row"><button id="recompute">Recompute</button> <span class="hint">zones override these over an s-range and may exceed them</span></div>
+      <h4>Speed zones <span class="hint">s0 : s1 : v</span></h4>
+      <table class="z" id="vz"></table><button id="vz_add" class="link">+ zone</button>
+      <h4>Lateral zones <span class="hint">s0 : s1 : a_lat</span></h4>
+      <table class="z" id="lz"></table><button id="lz_add" class="link">+ zone</button>
+    </section>
+
+    <section class="panel">
+      <h3>File</h3>
+      <div class="row"><select id="files"></select> <button id="load">Load</button></div>
+      <div class="row">save as <input id="name" class="w12"> <button id="save" class="primary" title="Ctrl-S">Save</button></div>
+      <div id="saved" class="hint"></div>
+    </section>
+  </aside>
+
+  <footer><span id="hint"></span></footer>
+
+  <div id="helpbox" hidden>
+    <div class="card">
+      <h3>Keys</h3>
+      <table>
+        <tr><td><kbd>1</kbd> <kbd>2</kbd></td><td>Map view, Speed view</td></tr>
+        <tr><td><kbd>D</kbd> <kbd>S</kbd> <kbd>E</kbd> <kbd>Z</kbd></td><td>Speed tools: draw, smooth, erase, zone</td></tr>
+        <tr><td><kbd>F</kbd></td><td>fit the map</td></tr>
+        <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Y</kbd></td><td>undo / redo</td></tr>
+        <tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>save</td></tr>
+        <tr><td><kbd>?</kbd> <kbd>Esc</kbd></td><td>this box</td></tr>
+      </table>
+      <h3>Map</h3>
+      <p>Drag a point to move the line: neighbours follow with a brush falloff. Drag empty space or right-drag to pan, wheel to zoom. Points you dragged form the <em>edited region</em>, tinted yellow; <em>Smooth edited region</em> rounds it off without moving anything else. Red rings mark body margin under the safety value. Dashed grey is the line as loaded.</p>
+      <h3>Speed</h3>
+      <p>Everything drawn is a layer on top of the physics profile (dashed when edits exist; the file's own column in grey). <em>Draw</em> sets the curve under the mouse and smooths the stroke on release. <em>Smooth</em> and <em>Erase</em> act under the brush. <em>Zone</em> drags a level to add a speed or lateral zone, which the profile solver honours. Lap time and the implied acceleration update live while you draw; the server confirms on release. The lap is a closed loop: the shaded ↺ margins at both ends of the axis show the loop continuing, and a stroke can be drawn across the start line. The minimap in the sidebar shows where the cursor is on the track; hover or click it to jump.</p>
+      <button id="help_close" class="primary">Close</button>
+    </div>
+  </div>
+</div>
+<script src="/static/app.js"></script>
+<script src="/static/map.js"></script>
+<script src="/static/speed.js"></script>
+<script src="/static/main.js"></script>
+</body>
+</html>

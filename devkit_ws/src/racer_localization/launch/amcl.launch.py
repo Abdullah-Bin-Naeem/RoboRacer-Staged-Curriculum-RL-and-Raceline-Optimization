@@ -86,6 +86,7 @@ def _nodes(context, *args, **kwargs):
                 'estimate_topic': '/amcl_pose',
                 'require_convergence': cfg('require_convergence').lower() == 'true',
                 'recover': cfg('recover').lower() == 'true',
+                'recover_use_checkpoints': cfg('recover_use_checkpoints').lower() == 'true',
             }],
             condition=IfCondition(LaunchConfiguration('bootstrap')),
         ),
@@ -130,6 +131,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'recover', default_value='true',
             description='after a wall reset, hold the follower, re-seed AMCL at the checkpoint behind the last pose, confirm, creep, resume'),
+        DeclareLaunchArgument(
+            'recover_use_checkpoints', default_value='true',
+            description='false forces the no-data recovery tier (last pose 0.9 m back, wide prior), to test it where truth exists'),
         # Fallback pose, used only when the bootstrap seed is unavailable.
         DeclareLaunchArgument('initial_x', default_value=''),
         DeclareLaunchArgument('initial_y', default_value=''),

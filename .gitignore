@@ -52,3 +52,4 @@ events.out.tfevents.*
 # deliverable, since slam_localization.launch.py loads them.
 /.posegraph
 /.data
+tools/libnodelay.so

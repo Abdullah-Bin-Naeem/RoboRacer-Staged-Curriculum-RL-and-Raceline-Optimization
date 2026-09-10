@@ -14,9 +14,17 @@ simulator. The car stays parked (throttle 0); the rate does not depend on it.
 
     python3 tools/sim_rate_probe.py            # 30 s
     python3 tools/sim_rate_probe.py 60         # 60 s
+    python3 tools/sim_rate_probe.py 30 --nodelay   # TCP_NODELAY on the accepted socket
+
+--nodelay tests the finding another team reported: Nagle's algorithm holding
+each small websocket write until the previous one is acknowledged, while the
+receiver's delayed ACK holds that acknowledgment for up to 40 ms. Two such
+waits per round trip is a 10-20 Hz loop on any machine. If the rate jumps
+with this switch, the period was the TCP stack, not the simulator's frame.
 
 System python3: it needs the bridge's own socketio / gevent, not the venv's.
 """
+import socket
 import sys
 import time
 
@@ -25,8 +33,19 @@ import socketio
 from gevent import pywsgi
 from geventwebsocket.handler import WebSocketHandler
 
-DURATION = float(sys.argv[1]) if len(sys.argv) > 1 else 30.0
+NODELAY = '--nodelay' in sys.argv
+ARGS = [a for a in sys.argv[1:] if not a.startswith('--')]
+DURATION = float(ARGS[0]) if ARGS else 30.0
 PORT = 4567
+
+
+class NoDelayHandler(WebSocketHandler):
+    """The bridge's handler, with Nagle switched off on every accepted socket."""
+
+    def __init__(self, sock, *args, **kwargs):
+        if NODELAY:
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        super().__init__(sock, *args, **kwargs)
 
 sio = socketio.Server(async_mode='gevent')
 app = socketio.WSGIApp(sio)
@@ -71,8 +90,9 @@ def report():
 
 
 if __name__ == '__main__':
-    print(f'listening on :{PORT} as a stand-in bridge -- stop the real bridge first, then press Connect in the simulator')
+    print(f'listening on :{PORT} as a stand-in bridge, TCP_NODELAY {"ON" if NODELAY else "off (default, as the devkit bridge)"} '
+          '-- stop the real bridge first, then press Connect in the simulator')
     try:
-        pywsgi.WSGIServer(('', PORT), app, handler_class=WebSocketHandler, log=None).serve_forever()
+        pywsgi.WSGIServer(('', PORT), app, handler_class=NoDelayHandler, log=None).serve_forever()
     except SystemExit:
         pass

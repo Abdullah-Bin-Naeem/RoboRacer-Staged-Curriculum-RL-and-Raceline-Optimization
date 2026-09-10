@@ -197,6 +197,7 @@ def _launch(context, *args, **kwargs):
     actions.append(IncludeLaunchDescription(
         src(own_share, 'bridge.launch.py'),
         condition=IfCondition(LaunchConfiguration('bridge')),
+        launch_arguments={'tcp_nodelay': cfg('tcp_nodelay')}.items(),
     ))
 
     # 2. chassis -- odom -> base -> lidar. Needed by every localizer, and by the
@@ -333,6 +334,8 @@ def generate_launch_description():
 
         # Turn pieces off when running them yourself.
         DeclareLaunchArgument('bridge', default_value='true'),
+        DeclareLaunchArgument('tcp_nodelay', default_value='false',
+                              description='TCP_NODELAY on the bridge websocket via LD_PRELOAD; see bridge.launch.py'),
         DeclareLaunchArgument('chassis', default_value='true'),
         DeclareLaunchArgument('localization', default_value='true'),
         DeclareLaunchArgument('follower', default_value='true'),

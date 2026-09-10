@@ -334,7 +334,7 @@ def generate_launch_description():
 
         # Turn pieces off when running them yourself.
         DeclareLaunchArgument('bridge', default_value='true'),
-        DeclareLaunchArgument('tcp_nodelay', default_value='false',
+        DeclareLaunchArgument('tcp_nodelay', default_value='true',
                               description='TCP_NODELAY on the bridge websocket via LD_PRELOAD; see bridge.launch.py'),
         DeclareLaunchArgument('chassis', default_value='true'),
         DeclareLaunchArgument('localization', default_value='true'),

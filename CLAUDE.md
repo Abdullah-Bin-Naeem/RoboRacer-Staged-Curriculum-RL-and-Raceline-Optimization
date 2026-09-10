@@ -377,9 +377,21 @@ telemetry only in reply to the bridge's message (`Socket.cs`, `OnBridge` ->
 simulator's socket plugin dispatches the reply from `FixedUpdate` with the emit
 queued to a once-per-frame dispatcher -- so the rate is the simulator's frame
 rate (occasionally half), which `targetFrameRate = -1` leaves unlimited and the
-1 kHz physics step (`TimeManager.asset`) bounds on the main thread. Expect a
-faster machine to run faster. `tools/sim_rate_probe.py` measures it with an
-ideal replier and no ROS: stop the bridge, run it, press Connect.
+1 kHz physics step (`TimeManager.asset`) bounds on the main thread: the frame
+period is R / (1 - c), c the share of real time the physics takes, R the rest,
+so a laptop at c ~ 0.8 sits at 50 ms and a fast machine at 10. The loop runs
+at whichever is slower of that and a TCP deadlock: Nagle holding each small
+websocket write until the previous is acknowledged while the receiver delays
+the acknowledgment up to 40 ms, two waits a cycle, which caps a FAST machine at
+10-20 Hz (another team: 10 Hz at 60 fps). On this laptop the frame is the
+limit and TCP_NODELAY / TCP_QUICKACK on our side change nothing (18.5 Hz each
+way, measured); on the evaluation machine the frame will be short and the
+socket would be, so `tcp_nodelay:=true` (default) preloads `tools/libnodelay.so`
+into the bridge: NODELAY on its writes, QUICKACK re-armed on every read. The
+devkit is untouched; it is the process's environment. The `.so` must exist in
+the container (`gcc -shared -fPIC -O2 -o tools/libnodelay.so tools/nodelay.c
+-ldl`). `tools/sim_rate_probe.py [--nodelay] [--quickack]` measures all of this
+with an ideal replier and no ROS: stop the bridge, run it, press Connect.
 
 ## Gotchas
 

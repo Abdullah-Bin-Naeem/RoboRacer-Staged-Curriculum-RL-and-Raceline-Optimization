@@ -362,7 +362,7 @@ were re-derived at cost.
 |---|---|---|
 | Encoder units | **radians** (wheel angle) | "ticks, 1920/rev" — off by ~300× |
 | Wheel radius | **0.0581 m** | 0.0590 m |
-| Sim tick rate | **~18 Hz** | bridge advertises 40 Hz |
+| Sim tick rate | **~18 Hz** (graphics), 20 headless; not a clock but a round trip, see below | bridge advertises 40 Hz |
 | Speed vs throttle | **≈ 24 × throttle** | 22.88 m/s top speed |
 | `twist.linear` frame | **body**, not world | unstated |
 | `/imu` vs `/odom` angular | identical — one source | unstated |
@@ -370,6 +370,16 @@ were re-derived at cost.
 
 `LidarFOV` derives its crop indices from the live scan header rather than
 hard-coding them, precisely because of that last row.
+
+The tick rate is not a constant in either program. The simulator emits
+telemetry only in reply to the bridge's message (`Socket.cs`, `OnBridge` ->
+`EmitTelemetry`), the bridge publishes and replies inside its handler, and the
+simulator's socket plugin dispatches the reply from `FixedUpdate` with the emit
+queued to a once-per-frame dispatcher -- so the rate is the simulator's frame
+rate (occasionally half), which `targetFrameRate = -1` leaves unlimited and the
+1 kHz physics step (`TimeManager.asset`) bounds on the main thread. Expect a
+faster machine to run faster. `tools/sim_rate_probe.py` measures it with an
+ideal replier and no ROS: stop the bridge, run it, press Connect.
 
 ## Gotchas
 

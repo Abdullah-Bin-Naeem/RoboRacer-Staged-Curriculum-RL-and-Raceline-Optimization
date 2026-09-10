@@ -15,6 +15,15 @@ simulator. The car stays parked (throttle 0); the rate does not depend on it.
     python3 tools/sim_rate_probe.py            # 30 s
     python3 tools/sim_rate_probe.py 60         # 60 s
     python3 tools/sim_rate_probe.py 30 --nodelay   # TCP_NODELAY on the accepted socket
+    python3 tools/sim_rate_probe.py 30 --quickack  # TCP_QUICKACK re-armed after every message
+
+--quickack tests the other half of the same mechanism from OUR side. If the
+simulator's client writes a message as two small pieces, Nagle holds the second
+until the first is acknowledged, and this receiver, with nothing to send back
+until the whole message has arrived, delays that acknowledgment up to 40 ms.
+TCP_NODELAY here cannot touch that (measured: 18.5 -> 18.6 Hz); immediate
+acknowledgment can. Linux resets TCP_QUICKACK by itself, so it is re-armed on
+every message.
 
 --nodelay tests the finding another team reported: Nagle's algorithm holding
 each small websocket write until the previous one is acknowledged, while the
@@ -34,6 +43,8 @@ from gevent import pywsgi
 from geventwebsocket.handler import WebSocketHandler
 
 NODELAY = '--nodelay' in sys.argv
+QUICKACK = '--quickack' in sys.argv
+conn_sockets = {}
 ARGS = [a for a in sys.argv[1:] if not a.startswith('--')]
 DURATION = float(ARGS[0]) if ARGS else 30.0
 PORT = 4567
@@ -53,17 +64,42 @@ stamps = []
 t_connect = None
 
 
+def _find_socket(environ):
+    """The TCP socket under this connection's websocket, if the stack exposes it."""
+    ws = environ.get('wsgi.websocket')
+    for path in (('handler', 'socket'), ('stream', 'handler', 'socket'), ('socket',)):
+        obj = ws
+        for attr in path:
+            obj = getattr(obj, attr, None)
+            if obj is None:
+                break
+        if obj is not None and hasattr(obj, 'setsockopt'):
+            return obj
+    return None
+
+
 @sio.on('connect')
 def on_connect(sid, environ):
     global t_connect
     t_connect = time.monotonic()
-    print(f'simulator connected ({sid}); measuring for {DURATION:.0f} s ...', flush=True)
+    sock = _find_socket(environ)
+    conn_sockets[sid] = sock
+    print(f'simulator connected ({sid}); measuring for {DURATION:.0f} s ...'
+          + (f'  [socket found for quickack]' if (QUICKACK and sock is not None) else
+             '  [WARNING: no socket handle; --quickack has no effect]' if QUICKACK else ''), flush=True)
 
 
 @sio.on('Bridge')
 def on_bridge(sid, data):
     now = time.monotonic()
     stamps.append(now)
+    if QUICKACK:
+        sock = conn_sockets.get(sid)
+        if sock is not None:
+            try:
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_QUICKACK, 1)
+            except OSError:
+                pass
     # Answer at once, exactly the fields the simulator reads (autodrive_bridge.py).
     sio.emit('Bridge', data={'V1 Throttle': '0.0', 'V1 Steering': '0.0', 'V1 Reset': 'False'})
     if t_connect is not None and now - t_connect >= DURATION:
@@ -90,7 +126,7 @@ def report():
 
 
 if __name__ == '__main__':
-    print(f'listening on :{PORT} as a stand-in bridge, TCP_NODELAY {"ON" if NODELAY else "off (default, as the devkit bridge)"} '
+    print(f'listening on :{PORT} as a stand-in bridge, TCP_NODELAY {"ON" if NODELAY else "off"}, TCP_QUICKACK {"ON" if QUICKACK else "off"} '
           '-- stop the real bridge first, then press Connect in the simulator')
     try:
         pywsgi.WSGIServer(('', PORT), app, handler_class=NoDelayHandler, log=None).serve_forever()

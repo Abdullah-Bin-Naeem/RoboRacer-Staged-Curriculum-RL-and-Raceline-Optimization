@@ -180,6 +180,14 @@ def analyze(path, explicit_line, min_speed):
                         if m.any(): err_after = float(np.nanmean(ed[m[:len(ed)]] if len(m) == len(ed) else np.nan))
             rows.append((t[j] - t[0], rec, err_after))
         print(f"\nresets: {len(resets)}  at +" + ", ".join(f"{r[0]:.0f}s" for r in rows))
+        cps = []
+        for j in resets:
+            k = min(j + 2, len(t) - 1)                       # a couple of samples after the jump: the reset pose
+            cps.append((log['true_x'][k], log['true_y'][k], yaw_r[k]))
+        uniq = []
+        for c in cps:
+            if all(np.hypot(c[0] - u[0], c[1] - u[1]) > 0.5 for u in uniq): uniq.append(c)
+        print("reset poses (registry form, from ground truth): " + ", ".join(f"('{c[0]:.3f}', '{c[1]:.3f}', '{c[2]:.3f}')" for c in uniq))
         if rdy is not None:
             recs = [r[1] for r in rows if np.isfinite(r[1])]
             print(f"recovery: {len(recs)}/{len(rows)} re-confirmed, time to ready "

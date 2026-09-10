@@ -193,6 +193,10 @@ class LocalizationBootstrap(Node):
         p('reset_yaw_step_deg', 20.0)       # an IMU heading step this size in one tick is a reset
         p('reset_speed_from', 1.0)          # encoder speed collapsing from >= this ...
         p('reset_speed_to', 0.3)            # ... to <= this between two samples is a reset
+        p('recover_use_checkpoints', True)  # False forces the no-data tier, to test it where truth exists
+        p('recover_local_back_m', 0.9)      # no-data tier: seed this far back along the last pose (mean of 9 resets)
+        p('recover_local_std_m', 1.0)       # ... with this much position uncertainty (resets spread 0.15-2.8 m)
+        p('recover_std_ok_m', 0.30)         # a recovery seed counts as adopted only if AMCL's own pos std is under this
 
         g = lambda n: self.get_parameter(n).value
         self.throttle = g('throttle')
@@ -225,6 +229,10 @@ class LocalizationBootstrap(Node):
         self.recover_creep = float(g('recover_creep_s'))
         self.reset_yaw_step = math.radians(float(g('reset_yaw_step_deg')))
         self.reset_v_from, self.reset_v_to = float(g('reset_speed_from')), float(g('reset_speed_to'))
+        self.recover_use_cps = bool(g('recover_use_checkpoints'))
+        self.recover_back = float(g('recover_local_back_m'))
+        self.recover_local_std = float(g('recover_local_std_m'))
+        self.recover_std_ok = float(g('recover_std_ok_m'))
         self.checkpoints = frames.checkpoints(str(g('track')) or None)
         # The centreline orders the lap: "the checkpoint behind the car" is the
         # one with the largest arc length not exceeding the car's, wrapping at
@@ -680,7 +688,7 @@ class LocalizationBootstrap(Node):
                  and self.est_t >= self.seeded_at and self.est_err is not None)
         if fresh:
             gap, dyaw = self.est_err, self.est_dyaw
-            if gap <= self.tol_m and dyaw <= self.tol_yaw:
+            if gap <= self.tol_m and dyaw <= self.tol_yaw and self._recover_ok():
                 std = f'{self.pos_std:.3f} m' if self.pos_std is not None else 'unknown'
                 moving = ' while driving' if abs(self.speed) > 0.3 else ''
                 self._finish(
@@ -773,7 +781,9 @@ class LocalizationBootstrap(Node):
         lg = self.last_good
         if lg is not None:
             best = None
-            if self._cl is not None and self._cp_s:
+            if not self.recover_use_cps:
+                pass                                              # forced to the no-data tier
+            elif self._cl is not None and self._cp_s:
                 # Arc length behind the last pose along the centreline, wrapping.
                 lap = float(self._cl[0][-1]); s_last = self._s_of(lg[0], lg[1])
                 for (cx, cy, _), cs in zip(self.checkpoints, self._cp_s):
@@ -788,11 +798,21 @@ class LocalizationBootstrap(Node):
                     if 0.0 <= ahead <= 25.0 and dist <= 25.0 and (best is None or dist < best[0]):
                         best = (dist, cx, cy)
             if best is not None:
-                return best[1], best[2], yaw, 0.15, 5.0, f'checkpoint {best[0]:.1f} m behind the last pose along the track'
-            x = lg[0] - 0.9 * math.cos(lg[2])
-            y = lg[1] - 0.9 * math.sin(lg[2])
-            return x, y, yaw, 0.5, 10.0, 'no known checkpoint behind the last pose; 0.9 m back along it'
+                return best[1], best[2], yaw, 0.15, 5.0, self.recover_tol, f'checkpoint {best[0]:.1f} m behind the last pose along the track'
+            # No data for this stretch: the reset is somewhere 0.15-2.8 m behind
+            # the contact. Seed the mean, spread the particles over the range, and
+            # accept wherever AMCL converges within it (tolerance 3 m, plus the
+            # pos-std check in _recover_ok) instead of demanding it land on the seed.
+            x = lg[0] - self.recover_back * math.cos(lg[2])
+            y = lg[1] - self.recover_back * math.sin(lg[2])
+            return x, y, yaw, self.recover_local_std, 15.0, 3.0, f'no known checkpoint behind the last pose; {self.recover_back:.1f} m back along it, wide'
         return None
+
+    def _recover_ok(self):
+        """Extra acceptance for a RECOVERY seed: AMCL must also have converged."""
+        if self.rec_state != 'seed':
+            return True
+        return self.pos_std is not None and self.pos_std <= self.recover_std_ok
 
     def _tick_recover(self, now):
         if self.rec_state == 'watch':
@@ -807,10 +827,10 @@ class LocalizationBootstrap(Node):
                 self.get_logger().error('reset before any trusted pose; searching the whole map')
                 self._recover_global('no prior available')
                 return
-            x, y, yaw, std_m, std_deg, why = prior
+            x, y, yaw, std_m, std_deg, tol_m, why = prior
             self.truth_pos, self.truth_quat = (x, y), (0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0))
             self.seed_std_m, self.seed_std_deg = std_m, std_deg
-            self.tol_m, self.settle_s, self.max_attempts = self.recover_tol, self.recover_settle, self.recover_attempts
+            self.tol_m, self.settle_s, self.max_attempts = tol_m, self.recover_settle, self.recover_attempts
             self.seeded_at, self.attempts, self.est_err, self.est_dyaw = None, 0, None, None
             self.rec_state = 'seed'
             self.get_logger().warn(
@@ -841,6 +861,11 @@ class LocalizationBootstrap(Node):
         self.rec_state, self._creep_t0, self.distance = 'creep', now, 0.0
         if self.est is not None:
             self.last_good = self.est
+            # Where the car actually was after the reset: a checkpoint. On a new
+            # track this is how the table gets filled -- paste into frames.TRACKS.
+            x, y, yaw = self.est
+            self.get_logger().info(
+                f"CHECKPOINT CANDIDATE (converged after reset): ('{x:.3f}', '{y:.3f}', '{yaw:.3f}')")
 
     def _recover_global(self, message):
         now = self.get_clock().now().nanoseconds * 1e-9

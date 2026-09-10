@@ -6,7 +6,7 @@ Serves BOTH localizers. Everything AMCL-shaped is a parameter, so slam_toolbox
 reuses this handshake rather than getting a second copy of it -- see
 "THE TWO LOCALIZERS" below.
 
-Two modes:
+Three modes:
 
   mode:=truth   (default)  Read /ips and /imu ONCE, seed the localizer with that
                            pose, verify it actually adopted it, release /ips,
@@ -28,14 +28,25 @@ Two modes:
                            has to reach a corner before the ambiguity breaks.
                            AMCL ONLY: slam_toolbox has no global search.
 
+  mode:=spawn              Seed from the MEASURED spawn constant (spawn_x/y/yaw,
+                           defaulting to common/frames SPAWN_*) plus the IMU's
+                           absolute heading, confirm the localizer adopted it,
+                           and hand over. Reads NO restricted topic at any
+                           point: the position is a constant measured offline
+                           and the IMU is a permitted sensor. The practice
+                           spawn is fixed to 2 mm, so this is as exact as
+                           truth. Works for both localizers. THE RACE DEFAULT.
+
 Either way it latches /localization_ready when done, which the follower waits on
 instead of a fixed timer.
 
 WHICH MODE TO RACE
 ------------------
-truth. It is legal, it is exact, and it is the only one slam_toolbox can use at
-all. global exists to prove the stack can start with no prior, and as AMCL's
-fallback if the warmup rule ever changes.
+spawn. It is exact on a track whose spawn has been measured, it works for both
+localizers, and nothing in it can be mistaken for ground-truth use by a steward
+reading the ROS graph. truth is the organizer-confirmed alternative (restricted
+topics may be read in the warm-up lap); keep it for the day the spawn constant
+is stale. global exists to prove the stack can start with no prior at all.
 
 WHY THIS IS A HANDSHAKE AND NOT A PUBLISH
 -----------------------------------------
@@ -90,13 +101,14 @@ nowhere to put the competing hypotheses a map-wide search produces. With
 global_service:='' this node says so and falls back to the localizer's
 configured map_start_pose.
 
-THAT FALLBACK IS WHY THE SEED IS LOGGED VERBATIM. mode:=race forbids /ips, so a
-slam race run starts on roboracer_stack.common.frames.SPAWN_* and nothing else. If that
-constant is wrong the error is frozen for the whole run: slam_toolbox seeds with
-a +-0.5 m correlative search (correlation_search_space_dimension: 1.0) and
-cannot recover a larger one. So every truth-mode seed prints a paste-ready
-SPAWN_X/Y/YAW block -- run once in dev, paste into frames.py, and race mode
-inherits a measured spawn instead of a guess.
+THAT FALLBACK IS WHY THE SEED IS LOGGED VERBATIM. mode:=spawn seeds from
+roboracer_stack.common.frames.SPAWN_* directly, and a slam run with no seed at
+all starts on the same constant. If that constant is wrong the error is frozen
+for the whole run: slam_toolbox seeds with a +-0.5 m correlative search
+(correlation_search_space_dimension: 1.0) and cannot recover a larger one. So
+every truth-mode seed prints a paste-ready SPAWN_X/Y/YAW block -- run once in
+dev, paste into frames.py, and spawn mode inherits a measured spawn instead of
+a guess.
 
 The seed assumes map coordinates match the simulator's world frame. They do
 here: the SLAM run had scan matching disabled, so slam_toolbox's map->world
@@ -117,6 +129,7 @@ from rclpy.qos import (QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile,
 from rclpy.time import Time
 from roboracer_stack.common import restricted
 from roboracer_stack.common.frames import NS as COMMON_NS
+from roboracer_stack.common.frames import SPAWN_X, SPAWN_Y, SPAWN_YAW
 from sensor_msgs.msg import Imu, JointState, LaserScan
 from std_msgs.msg import Bool, Float32
 from std_srvs.srv import Empty
@@ -151,7 +164,17 @@ class LocalizationBootstrap(Node):
         p('yaw_std_target', 0.09)        # [rad] ~5 degrees
         p('straight_distance_m', 3.0)    # creep straight this far, then seek a corner
         p('timeout_s', 60.0)
-        p('mode', 'truth')               # 'truth' seeds from /ips; 'global' searches
+        p('mode', 'spawn')               # 'spawn' seeds from the constant below,
+        #                                  'truth' from /ips, 'global' searches
+        # ---- spawn mode: the measured spawn, position only -------------------
+        # Defaults from common/frames; the launch files pass initial_x/y/yaw
+        # through so there is one source. The heading comes from the IMU
+        # (absolute, world-referenced, a permitted sensor) unless
+        # spawn_use_imu_yaw is off, in which case spawn_yaw is used verbatim.
+        p('spawn_x', float(SPAWN_X))
+        p('spawn_y', float(SPAWN_Y))
+        p('spawn_yaw', float(SPAWN_YAW))
+        p('spawn_use_imu_yaw', True)
         p('settle_s', 2.0)               # after seeding, let the filter absorb a few scans
         p('wheel_radius', 0.0581)        # MEASURED; see dead_reckoning.py
         # ---- seed handshake (see the module docstring) ----
@@ -185,6 +208,10 @@ class LocalizationBootstrap(Node):
         self.timeout = g('timeout_s')
         self.wheel_r = g('wheel_radius')
         self.mode = str(g('mode')).lower()
+        if self.mode not in ('spawn', 'truth', 'global'):
+            raise RuntimeError(f"mode must be 'spawn', 'truth' or 'global', not {self.mode!r}")
+        self.spawn = (float(g('spawn_x')), float(g('spawn_y')), float(g('spawn_yaw')))
+        self.spawn_imu_yaw = bool(g('spawn_use_imu_yaw'))
         self.settle_s = g('settle_s')
         self.localizer_wait = float(g('localizer_wait_s'))
         self.est_topic = str(g('estimate_topic'))
@@ -199,8 +226,13 @@ class LocalizationBootstrap(Node):
         self.tol_yaw = math.radians(float(g('seed_tolerance_deg')))
         self.max_attempts = int(g('max_seed_attempts'))
         self.require_convergence = bool(g('require_convergence'))
-        self.truth_pos = None
+        self.truth_pos = None            # ground truth as read; truth mode only
         self.truth_quat = None
+        # What _seed() publishes: /ips + /imu in truth mode, the spawn constant
+        # + /imu in spawn mode. Kept apart from truth_* so that spawn mode never
+        # holds a ground-truth value at all.
+        self.src_pos = None
+        self.src_quat = None
         self.seeded_at = None
 
         self.scan = None
@@ -244,6 +276,14 @@ class LocalizationBootstrap(Node):
             self._ips_sub = self.create_subscription(
                 Point, f'{NS}/ips', self._cb_ips, QOS)
             self.create_subscription(Imu, f'{NS}/imu', self._cb_imu, QOS)
+        elif self.mode == 'spawn':
+            # No /ips subscription exists in this mode, not even a dormant one.
+            self.src_pos = (self.spawn[0], self.spawn[1])
+            if self.spawn_imu_yaw:
+                self.create_subscription(Imu, f'{NS}/imu', self._cb_imu, QOS)
+            else:
+                half = 0.5 * self.spawn[2]
+                self.src_quat = (0.0, 0.0, math.sin(half), math.cos(half))
 
         # TF is needed to notice slam_toolbox coming up (ready_check=tf) and to
         # read the estimate the follower actually drives on (verify_via_tf).
@@ -278,6 +318,16 @@ class LocalizationBootstrap(Node):
                 'mode=truth: seeding the initial pose from /ips + /imu before the '
                 'car moves, then releasing /ips. Tracking is lidar + map + dead '
                 'reckoning from there on.')
+        else:
+            restricted.banner(self, [f'{NS}/lidar', f'{NS}/imu', f'{NS}/left_encoder',
+                                     f'{NS}/right_encoder', self.est_topic])
+            if self.mode == 'spawn':
+                x, y, yaw = self.spawn
+                heading = 'heading from /imu' if self.spawn_imu_yaw else 'heading from spawn_yaw'
+                self.get_logger().info(
+                    f'mode=spawn: seeding the initial pose from the measured spawn '
+                    f'x={x:+.3f} y={y:+.3f} yaw={math.degrees(yaw):+.1f} deg ({heading}). '
+                    'No restricted topic is read at any point.')
         if self.ready_check == 'lifecycle':
             self.get_logger().info(
                 f'waiting for {self.localizer_name} to reach the active state '
@@ -365,15 +415,18 @@ class LocalizationBootstrap(Node):
 
     def _cb_ips(self, msg):
         self.truth_pos = (msg.x, msg.y)
+        self.src_pos = self.truth_pos
 
     def _cb_imu(self, msg):
         q = msg.orientation
-        self.truth_quat = (q.x, q.y, q.z, q.w)
+        self.src_quat = (q.x, q.y, q.z, q.w)
+        if self.mode == 'truth':
+            self.truth_quat = self.src_quat
 
     def _seed(self):
-        """Publish the true pose to /initialpose and remember what was sent."""
-        x, y = self.truth_pos
-        qx, qy, qz, qw = self.truth_quat
+        """Publish the seed pose to /initialpose and remember what was sent."""
+        x, y = self.src_pos
+        qx, qy, qz, qw = self.src_quat
         m = PoseWithCovarianceStamped()
         m.header.stamp = self.get_clock().now().to_msg()
         m.header.frame_id = 'map'
@@ -391,7 +444,7 @@ class LocalizationBootstrap(Node):
         self.get_logger().info(
             f'seed {self.attempts}/{self.max_attempts}: x={x:+.3f} y={y:+.3f} '
             f'yaw={math.degrees(yaw):+.1f} deg -- awaiting confirmation')
-        if self.attempts == 1:
+        if self.attempts == 1 and self.mode == 'truth':
             self._report_spawn(x, y, yaw)
 
     def _report_spawn(self, x, y, yaw):
@@ -407,7 +460,6 @@ class LocalizationBootstrap(Node):
         Only printed when the car is actually parked: seeding while moving
         measures where the car IS, not where it STARTS.
         """
-        from roboracer_stack.common.frames import SPAWN_X, SPAWN_Y, SPAWN_YAW
         gap = math.hypot(x - float(SPAWN_X), y - float(SPAWN_Y))
         dyaw = abs(wrap(yaw - float(SPAWN_YAW)))
         if abs(self.speed) > 0.1:
@@ -477,9 +529,20 @@ class LocalizationBootstrap(Node):
         """
         self.est = (x, y, yaw)
         self.est_t = self.get_clock().now().nanoseconds * 1e-9
-        if self.truth_pos is not None and self.truth_quat is not None:
-            self.est_err = math.hypot(x - self.truth_pos[0], y - self.truth_pos[1])
-            self.est_dyaw = abs(wrap(yaw - yaw_from_quat_xyzw(self.truth_quat)))
+        ref = None
+        if self.mode == 'truth':
+            if self.truth_pos is not None and self.truth_quat is not None:
+                ref = (*self.truth_pos, yaw_from_quat_xyzw(self.truth_quat))
+        elif self.seed_pose is not None and abs(self.speed) < 0.3:
+            # No truth to score against in spawn mode: the seed itself is the
+            # reference, which is only meaningful while the car is parked --
+            # the normal case, since the follower waits on this node.
+            ref = self.seed_pose
+        if ref is not None:
+            self.est_err = math.hypot(x - ref[0], y - ref[1])
+            self.est_dyaw = abs(wrap(yaw - ref[2]))
+        else:
+            self.est_err = self.est_dyaw = None
 
     def _cb_enc(self, side, msg):
         if not msg.position:
@@ -584,14 +647,15 @@ class LocalizationBootstrap(Node):
                         'come up?')
             return
 
-        if self.mode == 'truth':
-            self._tick_truth(now)
-        else:
+        if self.mode == 'global':
             self._tick_global(now)
+        else:
+            self._tick_seeded(now)
 
-    def _tick_truth(self, now):
-        if self.truth_pos is None or self.truth_quat is None:
-            return                      # still waiting for the first /ips and /imu
+    def _tick_seeded(self, now):
+        """truth and spawn modes: seed, confirm the localizer adopted it, hand over."""
+        if self.src_pos is None or self.src_quat is None:
+            return                      # still waiting for /ips and/or /imu
         if self.seeded_at is None:
             self._seed()
             return
@@ -601,23 +665,35 @@ class LocalizationBootstrap(Node):
         if now - self.seeded_at < self.settle_s:
             return
 
+        ref_name = 'truth' if self.mode == 'truth' else 'the seed'
         fresh = (self.est is not None and self.est_t is not None
-                 and self.est_t >= self.seeded_at and self.est_err is not None)
-        if fresh:
+                 and self.est_t >= self.seeded_at)
+        std = f'{self.pos_std:.3f} m' if self.pos_std is not None else 'unknown'
+        moving = ' while driving' if abs(self.speed) > 0.3 else ''
+        if fresh and self.est_err is not None:
             gap, dyaw = self.est_err, self.est_dyaw
             if gap <= self.tol_m and dyaw <= self.tol_yaw:
-                std = f'{self.pos_std:.3f} m' if self.pos_std is not None else 'unknown'
-                moving = ' while driving' if abs(self.speed) > 0.3 else ''
                 self._finish(
                     f'seed CONFIRMED on attempt {self.attempts}{moving}: the '
-                    f'estimate is {gap * 100:.1f} cm / {math.degrees(dyaw):.1f} deg from truth '
-                    f'(pos std {std}). Tracking is now lidar + map + dead '
+                    f'estimate is {gap * 100:.1f} cm / {math.degrees(dyaw):.1f} deg from '
+                    f'{ref_name} (pos std {std}). Tracking is now lidar + map + dead '
                     'reckoning only.')
                 return
             reason = (f'the estimate is {gap:.2f} m / {math.degrees(dyaw):.1f} deg from '
-                      f'TRUTH, tolerance {self.tol_m:.2f} m / '
+                      f'{ref_name.upper()}, tolerance {self.tol_m:.2f} m / '
                       f'{math.degrees(self.tol_yaw):.1f} deg '
                       f'(speed {abs(self.speed):.1f} m/s)')
+        elif fresh and self.mode == 'spawn' and self._converged():
+            # Moving, so the seed is no longer a valid reference (see _record);
+            # the filter's own covariance is what is left to go on.
+            self._finish(
+                f'seed CONFIRMED on attempt {self.attempts}{moving}: the filter '
+                f'converged (pos std {std}, yaw std {math.degrees(self.yaw_std):.1f} deg). '
+                'Tracking is now lidar + map + dead reckoning only.')
+            return
+        elif fresh:
+            reason = (f'the filter has not converged while moving (pos std {std})'
+                      if self.mode == 'spawn' else f'no {ref_name} reference to score against')
         else:
             source = (f'TF {self.map_frame} -> {self.base_frame}'
                       if self.verify_via_tf else self.est_topic)
@@ -640,9 +716,9 @@ class LocalizationBootstrap(Node):
                 'on its configured map_start_pose, UNVERIFIED: if that is more '
                 'than ~0.5 m from the true spawn it cannot be recovered and the '
                 'offset is frozen for the run. You almost certainly want '
-                'bootstrap_mode:=truth instead -- it is race-legal (one /ips '
-                'read inside the warmup window, then released) and it is the '
-                'only way this localizer starts on the true pose.')
+                'bootstrap_mode:=spawn instead (the measured spawn constant, no '
+                'restricted topic) or bootstrap_mode:=truth (one /ips read '
+                'inside the warmup window, then released).')
             return
 
         if not self.scattered:
@@ -718,12 +794,13 @@ class LocalizationBootstrap(Node):
                 f'waiting for {what} ({waited:.0f} s of '
                 f'{self.localizer_wait:.0f} s)')
             return
-        if self.mode == 'truth' and self.seeded_at is None:
+        if self.mode != 'global' and self.seeded_at is None:
+            where = '/ips' if self.mode == 'truth' else 'spawn constant'
             self.get_logger().info(
-                f'waiting for ground truth: ips={"ok" if self.truth_pos else "--"} '
-                f'imu={"ok" if self.truth_quat else "--"}')
+                f'waiting for the seed inputs: position={"ok" if self.src_pos else "--"} '
+                f'({where}) heading={"ok" if self.src_quat else "--"} (/imu)')
             return
-        if self.mode == 'truth':
+        if self.mode != 'global':
             source = (f'TF {self.map_frame} -> {self.base_frame}'
                       if self.verify_via_tf else self.est_topic)
             self.get_logger().info(

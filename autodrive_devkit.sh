@@ -87,13 +87,18 @@ unset _dds
 #   mode:=race        instruments off, no lap telemetry, steer on the estimate.
 #                     race.launch.py refuses every restricted reader in this
 #                     mode; see roboracer_stack/common/restricted.py.
-#   bootstrap_mode:=truth
-#                     ONE read of /ips before the car moves, then the
-#                     subscription is destroyed (restricted.seed / released).
-#                     Inside the warmup window, and the timed laps never see
-#                     ground truth. Set `global` for AMCL's particle search if
-#                     the organizers read the rule more strictly -- it costs a
-#                     convergence phase and is occasionally slower to settle.
+#   bootstrap_mode:=spawn
+#                     Seed AMCL from the MEASURED spawn constant
+#                     (common/frames.py SPAWN_*: 0.800, 3.158, -1.5707) plus
+#                     the IMU heading. No restricted topic is read at any
+#                     point, so there is nothing for a steward to question in
+#                     the ROS graph. Alternatives, via RACER_BOOTSTRAP_MODE:
+#                       truth   ONE read of /ips before the car moves, then the
+#                               subscription is destroyed (restricted.seed /
+#                               released). The organizers confirmed restricted
+#                               topics may be read in the warm-up lap.
+#                       global  AMCL's particle search with no prior at all;
+#                               costs a convergence phase.
 #   control_hz:=40    the follower loop. Runs 29-41 were all measured at 40
 #                     against a headless sim so that the loop is never the
 #                     limiter. Harmless when the sim is slower -- pure_pursuit
@@ -108,7 +113,7 @@ ARGS=(
   "localizer:=${RACER_LOCALIZER:-amcl}"
   "mode:=${RACER_MODE:-race}"
   "bootstrap:=true"
-  "bootstrap_mode:=${RACER_BOOTSTRAP_MODE:-truth}"
+  "bootstrap_mode:=${RACER_BOOTSTRAP_MODE:-spawn}"
   "control_hz:=${RACER_CONTROL_HZ:-40}"
   "rviz:=${RACER_RVIZ:-false}"
 )

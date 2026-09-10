@@ -58,8 +58,11 @@ Pinning it was actively harmful. slam_toolbox has no global search at all, so
 `mode:=race localizer:=slam` fell through to the hardcoded map_start_pose, and
 slam seeds with a +-0.5 m correlative search -- an error larger than that could
 never be recovered and stayed frozen for the whole run. The default is now
-bootstrap_mode:=truth in both modes; pass bootstrap_mode:=global explicitly to
-start with no prior at all (AMCL only).
+bootstrap_mode:=spawn in both modes: the measured spawn constant
+(common/frames.SPAWN_*) plus the IMU heading, which reads no restricted topic
+at all. bootstrap_mode:=truth is the organizer-confirmed alternative (one /ips
+read in the warm-up lap); pass bootstrap_mode:=global explicitly to start with
+no prior at all (AMCL only).
 """
 
 import os
@@ -161,7 +164,10 @@ def _launch(context, *args, **kwargs):
     # map_start_pose -- and slam seeds with a +-0.5 m correlative search, so a
     # wrong constant was frozen for the entire timed run. The seed is both legal
     # and the only thing that makes that combination work.
-    bootstrap_mode = cfg('bootstrap_mode')
+    bootstrap_mode = cfg('bootstrap_mode').lower()
+    if bootstrap_mode not in ('spawn', 'truth', 'global'):
+        raise RuntimeError(
+            f"bootstrap_mode:={bootstrap_mode} is not one of ['spawn', 'truth', 'global']")
 
     loc_share = get_package_share_directory('roboracer_stack')
     ctl_share = get_package_share_directory('roboracer_stack')
@@ -173,12 +179,16 @@ def _launch(context, *args, **kwargs):
               f'instruments={"off" if measure_error == "false" else "ON"}  '
               f'bootstrap={bootstrap_mode}')
     if race_mode:
-        banner += ('  -- RACE MODE: nothing reads ground truth continuously'
-                   + ('; the initial pose is seeded once from /ips inside the '
-                      'warmup window, then released'
-                      if bootstrap_mode == 'truth' and
-                      cfg('bootstrap').lower() == 'true'
-                      else '; no ground truth at all'))
+        seeding = cfg('bootstrap').lower() == 'true'
+        if seeding and bootstrap_mode == 'truth':
+            how = ('; the initial pose is seeded once from /ips inside the warmup '
+                   'window (organizer-confirmed), then released')
+        elif seeding and bootstrap_mode == 'spawn':
+            how = ('; the initial pose is seeded from the measured spawn constant '
+                   '+ IMU heading -- no ground truth at all')
+        else:
+            how = '; no ground truth at all'
+        banner += '  -- RACE MODE: nothing reads ground truth continuously' + how
 
     actions = [LogInfo(msg=f'[race] {banner}')]
 
@@ -211,14 +221,14 @@ def _launch(context, *args, **kwargs):
         # Warn only when nothing will seed this localizer: no global search AND
         # no one-shot truth seed leaves it on the hardcoded constant, which
         # slam_toolbox's +-0.5 m search cannot correct.
-        seeded = (cfg('bootstrap').lower() == 'true' and bootstrap_mode == 'truth')
+        seeded = (cfg('bootstrap').lower() == 'true' and bootstrap_mode in ('truth', 'spawn'))
         if not spec['has_global'] and not seeded:
             actions.append(LogInfo(msg=(
                 f'[race] WARNING: {localizer} has no global relocalization and '
                 'no truth seed, so it starts on roboracer_stack.common.frames.SPAWN_* '
                 f'({cfg("initial_x")}, {cfg("initial_y")}, {cfg("initial_yaw")}) '
                 'and cannot recover an error larger than ~0.5 m. '
-                'bootstrap_mode:=truth is race-legal and fixes this.')))
+                'bootstrap_mode:=spawn (or truth) fixes this.')))
         # The localizer owns its own RViz (so that launching it standalone is
         # not blind); we just pass our value through rather than opening a
         # second window.
@@ -317,7 +327,12 @@ def generate_launch_description():
             description='compare the estimate against ground truth (RESTRICTED)'),
         DeclareLaunchArgument('dev_lap_telemetry', default_value='true'),
         DeclareLaunchArgument('bootstrap', default_value='true'),
-        DeclareLaunchArgument('bootstrap_mode', default_value='truth'),
+        DeclareLaunchArgument(
+            'bootstrap_mode', default_value='spawn',
+            description="'spawn' seeds from the measured spawn constant + IMU "
+                        "heading and reads no restricted topic (RACE DEFAULT); "
+                        "'truth' seeds once from /ips in the warm-up lap "
+                        "(organizer-confirmed); 'global' searches with no prior"),
         DeclareLaunchArgument(
             'bootstrap_seconds', default_value='0.0',
             description='DIAGNOSTIC: drive on ground truth this long before '

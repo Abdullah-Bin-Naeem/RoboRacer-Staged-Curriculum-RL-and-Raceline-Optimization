@@ -118,6 +118,10 @@ def _nodes(context, *args, **kwargs):
                 # map_start_pose and says so loudly.
                 'nudge_service': '',
                 'global_service': '',
+                # spawn mode seeds from these; one source with map_start_pose.
+                'spawn_x': float(cfg('initial_x')),
+                'spawn_y': float(cfg('initial_y')),
+                'spawn_yaw': float(cfg('initial_yaw')),
                 'require_convergence': cfg('require_convergence').lower() == 'true',
             }],
             condition=IfCondition(LaunchConfiguration('bootstrap')),
@@ -153,10 +157,11 @@ def generate_launch_description():
             description='seed the initial pose and latch /localization_ready '
                         'instead of living on map_start_pose alone'),
         DeclareLaunchArgument(
-            'bootstrap_mode', default_value='truth',
-            description="'truth' seeds the pose from /ips once (DEVELOPMENT); "
-                        "'global' is UNSUPPORTED by slam_toolbox and falls back "
-                        'to map_start_pose'),
+            'bootstrap_mode', default_value='spawn',
+            description="'spawn' seeds from the measured spawn constant + IMU "
+                        "heading, no restricted topic (RACE DEFAULT); 'truth' "
+                        "seeds from /ips once in the warm-up lap; 'global' is "
+                        'UNSUPPORTED by slam_toolbox and falls back to map_start_pose'),
         DeclareLaunchArgument(
             'require_convergence', default_value='true',
             description='refuse to latch /localization_ready unless the pose was '

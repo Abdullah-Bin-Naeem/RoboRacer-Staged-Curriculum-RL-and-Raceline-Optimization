@@ -95,6 +95,18 @@ The DDS settings are not in that line: they are `ENV` in the image, so every
 shell on a different RMW would find none — an empty `ros2 node list` and no
 error.
 
+One more way to get an empty list: the container shares the host's network, so
+if a `ros2` daemon is already running on the host (from any earlier `ros2 topic`
+command there), the CLI in the container talks to *that* daemon, which is on a
+different RMW and reports nothing. Verified on the development machine. The fix
+is one command, once per container, and touches nothing else:
+
+```bash
+ros2 daemon stop      # the next ros2 command starts a fresh daemon inside the container
+```
+
+`ros2 bag record -a` and `rqt_graph` do not use the daemon and are unaffected.
+
 ## Changing the configuration without rebuilding
 
 Every knob is an environment variable read by `/home/autodrive_devkit.sh`:
@@ -103,7 +115,7 @@ Every knob is an environment variable read by `/home/autodrive_devkit.sh`:
 |---|---|---|
 | `RACER_PATH_CSV` | `raceline_a7.0.csv` | which line to drive (absolute path) |
 | `RACER_LOCALIZER` | `amcl` | `amcl`, `slam`, or `none` |
-| `RACER_BOOTSTRAP_MODE` | `truth` | `truth` seeds the pose once from `/ips`; `global` searches with no prior |
+| `RACER_BOOTSTRAP_MODE` | `spawn` | `spawn` seeds from the measured spawn constant + IMU heading, no restricted topic; `truth` seeds once from `/ips` in the warm-up lap (organizer-confirmed); `global` searches with no prior |
 | `RACER_CONTROL_HZ` | `40` | follower loop rate |
 | `RACER_MODE` | `race` | `dev` re-enables the instruments |
 | `RACER_AUTOSTART` | `1` | `0` gives a shell with nothing running |
@@ -151,13 +163,21 @@ nine defaults that each have to be right:
 - lap telemetry off, and the follower steers on the localizer's estimate rather
   than on `/odom`.
 
-Ground truth is read in exactly one place: `localization_bootstrap` takes **one**
-sample of `/ips` before the car has moved, seeds AMCL with it, and destroys the
-subscription (`roboracer_stack/common/restricted.py`, `seed()` / `released()`).
-The first lap is a warmup and the timer starts after it, so that read is inside
-the permitted window, and nothing reads ground truth during the timed laps. Set
-`RACER_BOOTSTRAP_MODE=global` for AMCL's particle search if a stricter reading is
-wanted; it costs a convergence phase.
+The default container reads **no restricted topic at all**. AMCL is seeded by
+`localization_bootstrap` in `spawn` mode from the measured spawn constant
+(`common/frames.py` `SPAWN_*` = 0.800, 3.158, -1.5707, measured with the car
+parked on 2026-09-10 and identical in 30 logged launches) plus the IMU's
+absolute heading, and the node confirms AMCL adopted it before the follower is
+released. Nothing subscribes to `/ips`, so the organizers' `rqt_graph` and bag
+show a stack that never touches ground truth.
+
+`RACER_BOOTSTRAP_MODE=truth` keeps the previous behaviour: **one** sample of
+`/ips` before the car has moved, then the subscription is destroyed
+(`roboracer_stack/common/restricted.py`, `seed()` / `released()`). The
+organizers confirmed that restricted topics may be read during the warm-up lap,
+so this is legal too; it is the fallback for a track whose spawn has not been
+measured yet. `global` runs AMCL's particle search with no prior at all and
+costs a convergence phase.
 
 ## Submitting
 
@@ -223,6 +243,10 @@ source /home/autodrive_devkit/install/setup.bash
 ros2 topic list
 tail -f /home/autodrive_devkit/log/racer_*.log
 ```
+
+If `ros2 topic list` comes back empty, a `ros2` daemon from the host is
+answering (the container is on the host network); run `ros2 daemon stop` once
+and repeat. `ros2 bag record -a` and `rqt_graph` do not use the daemon.
 
 **Contents.** `autodrive_roboracer` is the provided devkit package, unmodified.
 `roboracer_stack` is our separate package: dead reckoning, nav2 AMCL against the

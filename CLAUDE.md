@@ -343,6 +343,30 @@ Keep this separation intact when adding code:
   checks, and `pure_pursuit`'s `pose_topic` DEFAULTED to ground-truth `/odom`, so
   development runs produced lap times that read as race-legal and were not.
 
+**Recovery after a wall contact** (`localization_bootstrap`, `recover:=true`,
+the default). The simulator resets a hit car to the last checkpoint and zeroes
+its velocity; the rules add 10 s per contact and say localization "will have
+to be robust against this re-setting action". Before this, dead reckoning kept
+integrating from the old pose, AMCL's particles no longer explained the scan and
+the follower drove blind (runs 14 and 24). Now the bootstrap stays alive after
+the first handover and watches two legal signatures, the encoder speed
+collapsing to zero in one sample and an IMU heading step the yaw rate cannot
+explain. On either it drops `/localization_ready` (the follower stops and
+publishes nothing), re-seeds AMCL at the **checkpoint behind the last trusted
+pose** with the IMU heading, confirms the estimate against the seed, creeps for
+a second on lidar so the filter tightens on motion, and latches ready again;
+if the prior is not adopted it falls back to the global search, and if that
+times out it resumes on the current estimate rather than park for the rest of
+the race. The checkpoints are measured, not guessed: `frames.TRACKS[...]
+['checkpoints']` holds the reset poses seen in logged runs (three on ICRA 2026,
+repeatable to the centimetre, on the centreline), ordered along the lap by the
+centreline's arc length, and the bootstrap prints any reset it cannot match so
+the list can grow. Seeds are built from the yaw as planar quaternions: nav2
+rejects a copied IMU quaternion whose norm is off by 1e-4, which the bridge's
+rounded components produce intermittently ("malformed" re-seeds, run 24). The
+logger records `ready`, and `analyze_run.py` reports resets, time to
+re-confirmation and the error afterwards.
+
 `mode:=race` deliberately does **not** force `bootstrap_mode:=global` any more.
 It used to, and that was a bug rather than caution: slam_toolbox has no global
 relocalization at all, so `mode:=race localizer:=slam` fell through to the

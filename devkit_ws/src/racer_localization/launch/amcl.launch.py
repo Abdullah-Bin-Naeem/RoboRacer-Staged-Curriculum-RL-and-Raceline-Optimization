@@ -85,6 +85,7 @@ def _nodes(context, *args, **kwargs):
                 'localizer_node': 'amcl',
                 'estimate_topic': '/amcl_pose',
                 'require_convergence': cfg('require_convergence').lower() == 'true',
+                'recover': cfg('recover').lower() == 'true',
             }],
             condition=IfCondition(LaunchConfiguration('bootstrap')),
         ),
@@ -126,6 +127,9 @@ def generate_launch_description():
             'require_convergence', default_value='true',
             description='refuse to latch /localization_ready unless the pose was '
                         'actually confirmed; false hands over regardless'),
+        DeclareLaunchArgument(
+            'recover', default_value='true',
+            description='after a wall reset, hold the follower, re-seed AMCL at the checkpoint behind the last pose, confirm, creep, resume'),
         # Fallback pose, used only when the bootstrap seed is unavailable.
         DeclareLaunchArgument('initial_x', default_value=''),
         DeclareLaunchArgument('initial_y', default_value=''),

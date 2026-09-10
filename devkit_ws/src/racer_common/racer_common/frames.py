@@ -72,6 +72,7 @@ TRACKS = {
         # Porto's straights top out at 7.3 in the profile and the car reached
         # 7.24. target_lead_s 0.08 is Porto's tuned value (short braking zones).
         'follower': {'v_max': '8.0', 'target_lead_s': '0.08'},
+        'checkpoints': [],          # none logged yet; recovery falls back to the local prior
     },
     'icra2026': {
         # The pose the simulator resets the car to, read by the bootstrap on
@@ -163,6 +164,16 @@ TRACKS = {
         # costs apex speed). Together: plan delivery 91 -> 95-99 %.
         'follower': {'v_max': '8.0', 'lookahead_max': '2.6', 'target_lead_s': '0.0',
                      'slip_circle': '0.12', 'accel_ff': '1.0'},
+        # Where the simulator puts the car after a wall contact: the last
+        # checkpoint behind it. Measured from nine resets over four runs
+        # (14, 16, 21, 24): three fixed poses, repeatable to the centimetre, on
+        # the centreline (-0.03 m), facing along the track (+2 deg). They are
+        # the recovery prior (localization_bootstrap, recover). More will show
+        # up as resets are logged elsewhere on the lap; the bootstrap prints
+        # any reset it cannot match so the list can grow.
+        'checkpoints': [('0.723', '-3.159', '-1.632'),     # centreline s 14.9
+                        ('-1.102', '-0.529', '1.557'),     # s 35.3
+                        ('-5.234', '0.179', '1.666')],     # s 49.6
     },
 }
 
@@ -214,6 +225,11 @@ def v_max(track=None):
 def spawn(track=None):
     """(x, y, yaw) as strings, for launch arguments."""
     return TRACKS[_track(track)]['spawn']
+
+
+def checkpoints(track=None):
+    """Known reset poses [(x, y, yaw) floats] for this track; may be empty."""
+    return [tuple(float(v) for v in c) for c in TRACKS[_track(track)].get('checkpoints', [])]
 
 
 # Back-compatible module constants, resolved for the current TRACK. Launch

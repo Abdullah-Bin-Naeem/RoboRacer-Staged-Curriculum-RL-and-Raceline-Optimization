@@ -805,6 +805,14 @@ class PurePursuit(Node):
         if msg.data and not self.ready:
             self.ready = True
             self.get_logger().info('localization converged, taking over')
+        elif not msg.data and self.ready:
+            # The bootstrap detected a wall reset and is re-localizing; it owns
+            # the actuators until it latches true again. Nothing is published
+            # from here meanwhile (the control tick returns on not ready).
+            self.ready = False
+            self.v_est = 0.0
+            self._pose_hist.clear()
+            self.get_logger().warn('localization lost after a reset: holding until it is re-confirmed')
 
     def _limit_accel(self, v_target):
         """Hold the speed TARGET down while the car is barely moving.

@@ -87,7 +87,7 @@ from rclpy.qos import (QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile,
 from rclpy.time import Time
 from scipy import ndimage
 from sensor_msgs.msg import Imu, JointState, LaserScan
-from std_msgs.msg import Float32MultiArray
+from std_msgs.msg import Bool, Float32MultiArray
 
 try:
     from racer_common import restricted
@@ -117,6 +117,7 @@ COLUMNS = [
     'fit_true',        # scan-to-wall fit with the scan placed at the TRUE pose
     'fit_est',         # ... and at the ESTIMATED pose
     'fit_ratio',       # fit_est / fit_true -- THE decisive column, see below
+    'ready',           # /localization_ready: 0 while the bootstrap re-localizes after a reset
 ]
 
 # Follower status, in the order pure_pursuit.STATUS_FIELDS publishes it.
@@ -206,6 +207,7 @@ class Logger(Node):
         self._ds = {}                # side -> metres awaiting accumulation
         self._odom0 = None           # truth at the first sample, to zero DR
         self.pp = None               # latest /pure_pursuit/status payload
+        self.ready_flag = 1          # 1 unless the bootstrap has dropped /localization_ready
         self.rows = 0
         self.peak = 0.0
         self.peak_yaw = 0.0
@@ -225,6 +227,9 @@ class Logger(Node):
                                  lambda m: self._cb_enc('r', m), QOS)
         # Not restricted: the follower's own state. Absent when it is not running.
         self.create_subscription(Float32MultiArray, '/pure_pursuit/status', self._cb_pp, QOS)
+        self.create_subscription(Bool, '/localization_ready', self._cb_ready, QoSProfile(
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL, reliability=QoSReliabilityPolicy.RELIABLE,
+            history=QoSHistoryPolicy.KEEP_LAST, depth=1))
 
         self.fh = open(path, 'w', newline='')
         self.csv = csv.writer(self.fh)
@@ -256,6 +261,9 @@ class Logger(Node):
 
     def _cb_scan(self, msg):
         self.scan = msg
+
+    def _cb_ready(self, msg):
+        self.ready_flag = 1 if msg.data else 0
 
     def _cb_pp(self, msg):
         self.pp = list(msg.data)
@@ -423,6 +431,7 @@ class Logger(Node):
             f'{self.speed:.3f}', f'{self.yaw_rate:.4f}',
             f'{self.enc_dist:.3f}', f'{dr_err:.4f}',
             f'{fit_t:.4f}', f'{fit_e:.4f}', f'{ratio:.4f}',
+            f'{self.ready_flag:d}',
         ] + [f'{v:.4f}' for v in (self.pp if self.pp is not None and len(self.pp) == len(PP_FIELDS)
                                   else [float('nan')] * len(PP_FIELDS))])
         self.rows += 1

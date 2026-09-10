@@ -217,7 +217,8 @@ def _launch(context, *args, **kwargs):
                     'initial_yaw': initial[2],
                     'bootstrap': cfg('bootstrap'),
                     'bootstrap_mode': bootstrap_mode,
-                    'require_convergence': cfg('require_convergence')}
+                    'require_convergence': cfg('require_convergence'),
+                    'recover': cfg('recover')}
         loc_args['map_yaml' if localizer == 'amcl' else 'map_graph'] = (
             map_yaml if localizer == 'amcl' else map_graph)
 
@@ -336,6 +337,8 @@ def generate_launch_description():
         DeclareLaunchArgument('bridge', default_value='true'),
         DeclareLaunchArgument('tcp_nodelay', default_value='false',
                               description='TCP_NODELAY on the bridge websocket via LD_PRELOAD; see bridge.launch.py'),
+        DeclareLaunchArgument('recover', default_value='true',
+                              description='re-localize after a wall reset; see localization_bootstrap'),
         DeclareLaunchArgument('chassis', default_value='true'),
         DeclareLaunchArgument('localization', default_value='true'),
         DeclareLaunchArgument('follower', default_value='true'),

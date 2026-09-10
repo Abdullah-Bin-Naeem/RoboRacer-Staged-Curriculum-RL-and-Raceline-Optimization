@@ -159,6 +159,35 @@ def analyze(path, explicit_line, min_speed):
     # ---- localization ----------------------------------------------------
     ed, ec = log['err_dist'][mov], log['err_cross'][mov]
     enc_ratio = log['enc_dist'][-1] / max(log['dist_m'][-1], 1e-6)
+    # ---- resets and recovery --------------------------------------------
+    yaw_r = np.deg2rad(log['true_yaw_deg'])
+    step = np.abs(np.angle(np.exp(1j * np.diff(yaw_r))))
+    jump = np.hypot(np.diff(log['true_x']), np.diff(log['true_y']))
+    resets = [j for j in np.flatnonzero((step > np.radians(20)) & (jump > 0.3))]
+    resets = [j for n, j in enumerate(resets) if n == 0 or j - resets[n - 1] > 5]
+    if resets:
+        rdy = log['ready'] if 'ready' in log.dtype.names else None
+        rows = []
+        for j in resets:
+            rec = float('nan'); err_after = float('nan')
+            if rdy is not None:
+                lost = np.flatnonzero((rdy[j:] < 0.5))
+                if len(lost):
+                    back = np.flatnonzero(rdy[j + lost[0]:] > 0.5)
+                    if len(back):
+                        k = j + lost[0] + back[0]; rec = t[k] - t[j]
+                        m = (t >= t[k] + 1.0) & (t <= t[k] + 3.0)
+                        if m.any(): err_after = float(np.nanmean(ed[m[:len(ed)]] if len(m) == len(ed) else np.nan))
+            rows.append((t[j] - t[0], rec, err_after))
+        print(f"\nresets: {len(resets)}  at +" + ", ".join(f"{r[0]:.0f}s" for r in rows))
+        if rdy is not None:
+            recs = [r[1] for r in rows if np.isfinite(r[1])]
+            print(f"recovery: {len(recs)}/{len(rows)} re-confirmed, time to ready "
+                  + (f"median {np.median(recs):.1f} s max {max(recs):.1f} s" if recs else "--")
+                  + "; localization error 1-3 s after: " + ", ".join(f"{r[2]:.2f}" if np.isfinite(r[2]) else "--" for r in rows) + " m")
+        else:
+            print("recovery: no 'ready' column in this log (older logger); rerun to measure recovery times")
+
     print(f"\nlocalization: error mean {ed.mean():.3f}  p90 {pct(ed, 90):.3f}  max {ed.max():.3f} m   "
           f"cross mean {np.abs(ec).mean():.3f} m   m2o yaw std {np.nanstd(log['m2o_yaw_deg'][mov]):.2f} deg   "
           f"encoder/true distance {enc_ratio:.3f}")

@@ -41,7 +41,7 @@ def generate_launch_description():
             'tf_topic', default_value='/tf_ground_truth',
             description="where the devkit's ground-truth TF goes instead of /tf"),
         DeclareLaunchArgument(
-            'tcp_nodelay', default_value='true',
+            'tcp_nodelay', default_value='false',
             description='preload tools/libnodelay.so into the bridge: TCP_NODELAY on its '
                         'websocket, see the module docstring'),
         LogInfo(

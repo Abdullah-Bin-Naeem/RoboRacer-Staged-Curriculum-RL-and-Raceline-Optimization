@@ -386,9 +386,11 @@ the acknowledgment up to 40 ms, two waits a cycle, which caps a FAST machine at
 10-20 Hz (another team: 10 Hz at 60 fps). On this laptop the frame is the
 limit and TCP_NODELAY / TCP_QUICKACK on our side change nothing (18.5 Hz each
 way, measured); on the evaluation machine the frame will be short and the
-socket would be, so `tcp_nodelay:=true` (default) preloads `tools/libnodelay.so`
-into the bridge: NODELAY on its writes, QUICKACK re-armed on every read. The
-devkit is untouched; it is the process's environment. The `.so` must exist in
+socket would be, so `tcp_nodelay:=true` (OFF by default: the first run with
+it on measured the command delay at 77 ms instead of 175 and hit, on an
+unvalidated hand-edited line, so cause and effect are not yet separated)
+preloads `tools/libnodelay.so` into the bridge: NODELAY on its writes, QUICKACK
+re-armed on every read. The devkit is untouched; it is the process's environment. The `.so` must exist in
 the container (`gcc -shared -fPIC -O2 -o tools/libnodelay.so tools/nodelay.c
 -ldl`). `tools/sim_rate_probe.py [--nodelay] [--quickack]` measures all of this
 with an ideal replier and no ROS: stop the bridge, run it, press Connect.

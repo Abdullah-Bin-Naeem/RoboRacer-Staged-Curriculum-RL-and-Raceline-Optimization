@@ -64,6 +64,7 @@ DEVELOPMENT tool -- for validating a path and a controller offline. Point
 """
 
 import math
+from collections import deque
 
 import numpy as np
 import rclpy
@@ -120,6 +121,15 @@ class PurePursuit(Node):
         p('path_csv', '')
         p('pose_topic', f'{NS}/odom')          # or an AMCL PoseWithCovarianceStamped
         p('control_hz', 20.0)
+        # Follow the simulator's tick instead of assuming it. A fixed 20 Hz was
+        # right when the tick WAS 17.5 Hz, but on the 40 Hz evaluation machine
+        # it throws away every second frame and adds up to 25 ms of command
+        # staleness on top of the round trip. Clamped: never below the proven
+        # 20 Hz, never above hz_max. Retuned from a 1 s timer, not from inside
+        # _control, so the timer is never destroyed from its own callback.
+        p('control_hz_auto', True)
+        p('control_hz_min', 20.0)
+        p('control_hz_max', 50.0)
         # Pose arrives in /odom's frame, which the devkit calls 'world'.
         p('viz_frame', 'world')
 
@@ -150,6 +160,16 @@ class PurePursuit(Node):
         p('steer_a_lat_max', 7.0)              # cap |kappa_cmd| at this / v^2 [m/s^2]; 0 = off
         p('lookahead_sag_frac', 0.5)           # chord sagitta <= frac * inside margin; 0 = off
         p('lookahead_delay_ref', 0.175)        # k and max scale by cmd_delay / this; 0 = off
+        # Exponent applied to (cmd_delay / ref) when the loop is FASTER than the
+        # reference. 1.0 reproduces the old proportional law in both directions;
+        # 0.5 (sqrt) is the default because proportional extrapolates badly
+        # downward -- at 40 Hz it asks for 0.37 * 2.2 = 0.82 m, which is under
+        # lookahead_min and would clamp the lookahead flat at every speed.
+        # Above the reference the law stays proportional and untouched: that
+        # side is the one that was actually proven on a slow machine.
+        p('lookahead_delay_exp_fast', 0.5)
+        p('lookahead_delay_min_scale', 0.62)
+        p('lookahead_delay_max_scale', 1.2)
         # ---- derating on a slow loop ------------------------------------
         # The profile's lateral limit was proven on a 175 ms round trip. A slower
         # machine (the evaluation box is unknown; this one decayed from 17.3 to
@@ -234,6 +254,42 @@ class PurePursuit(Node):
         p('cmd_delay_auto', True)
         p('cmd_delay_window_s', 6.0)
         p('cmd_delay_update_s', 2.0)
+        # Lag grid for the cross-correlation. 25 ms was fine against a 175 ms
+        # round trip (7 %); against the 60-75 ms of a 40-50 Hz machine it is a
+        # 19 % quantisation, and it lands straight in the lookahead scale and
+        # the derate. 5 ms is the resolution the original throttle-to-wheel
+        # regression used. 72 lags over a 6 s window is a few ms of numpy every
+        # cmd_delay_update_s -- immaterial next to being wrong by a third.
+        p('cmd_delay_lag_step_s', 0.005)
+        p('cmd_delay_lag_max_s', 0.36)
+        # The round trip is a fixed number of SIM FRAMES (three: 171 ms at 17.5
+        # Hz, 75 ms at 40 Hz, 60 ms at 50 Hz), so the measured tick gives the
+        # delay directly -- no throttle variation required and no 6 s window.
+        p('cmd_delay_frames', 3.0)
+        # Seed cmd_delay from the first measured tick. Without this the value
+        # starts at cmd_delay_s and the 0.3-per-2 s blend needs ~20 s to walk
+        # from 175 ms down to 75 ms: on a 40 Hz machine that is three laps
+        # driven on slow-machine lookahead, which on a timed run is the run.
+        p('cmd_delay_tick_seed', True)
+        # Floor cmd_delay at frames / tick. The correlator needs ~10 s to react
+        # (6 s window, 2 s update, 0.3 blend); the tick moves in half a second,
+        # so this is what lets the derate fire on a mid-lap collapse instead of
+        # a lap later. It only ever RAISES the delay, and releases as soon as
+        # the tick recovers -- self.cmd_delay is recomputed, never ratcheted.
+        p('cmd_delay_tick_floor', True)
+        # Window for the median, in FRAMES rather than seconds. A time window
+        # keeps the fast tail in the majority: 0.5 s after a 40 Hz machine falls
+        # to 12 Hz, a 1 s window still holds 20 fast gaps against 6 slow ones and
+        # the median still reads 40 Hz. A count window self-scales -- the median
+        # flips once half the retained frames are slow, 0.7 s into a collapse,
+        # while a single stall is 1 gap in 16 and moves nothing.
+        p('cmd_delay_tick_frames', 16)
+        # Ceiling on the effective delay. A freeze is scored as silence (below),
+        # which is unbounded, and cmd_delay multiplies the speed lead and the
+        # landing-speed prediction -- a 1 s freeze must derate the car, not ask
+        # it to aim three seconds down the track. 0.35 s is the correlator's own
+        # lag ceiling and is already past full derate.
+        p('cmd_delay_max_s', 0.35)
         # Proportional gain on (v_target - v_land) added to the wheel command inside
         # the band; 0.76 = 25.25 * throttle_kp, the legacy law's effective gain.
         p('slip_kp', 0.76)
@@ -319,14 +375,31 @@ class PurePursuit(Node):
         self.steer_a_lat_max = float(g('steer_a_lat_max'))
         self.ld_sag_frac = float(g('lookahead_sag_frac'))
         self.ld_delay_ref = float(g('lookahead_delay_ref'))
+        self.ld_delay_exp = float(g('lookahead_delay_exp_fast'))
+        self.ld_scale_min = float(g('lookahead_delay_min_scale'))
+        self.ld_scale_max = float(g('lookahead_delay_max_scale'))
         self.derate_from = float(g('derate_delay_from'))
         self.derate_to = float(g('derate_delay_to'))
         self.derate_a_lat = float(g('derate_a_lat'))
+        # lookahead_max * the smallest delay scale must still clear
+        # lookahead_min, or np.clip below collapses the lookahead to a constant
+        # at EVERY speed -- the same trap the lookahead_max note warns about,
+        # reached through the scale instead of through the raw value.
+        if self.ld_delay_ref > 0.0 and self.ld_max * self.ld_scale_min <= self.ld_min:
+            raise RuntimeError(
+                f'lookahead_max ({self.ld_max}) * lookahead_delay_min_scale '
+                f'({self.ld_scale_min}) = {self.ld_max * self.ld_scale_min:.3f} '
+                f'does not clear lookahead_min ({self.ld_min}): the lookahead '
+                f'would clamp flat at every speed on a fast loop')
         self.wheelbase = g('wheelbase')
         self.max_steer = g('max_steer_rad')
         self.steer_gain = g('steering_gain')
         self.a_lat, self.v_min, self.v_max = g('a_lat_max'), g('v_min'), g('v_max')
         self.hz = float(g('control_hz'))
+        self.hz_auto = bool(g('control_hz_auto'))
+        self.hz_min = float(g('control_hz_min'))
+        self.hz_max = float(g('control_hz_max'))
+        self._control_timer = None
         self.a_long_launch = float(g('a_long_launch'))
         self.a_long_launch_v = float(g('a_long_launch_v'))
         self._v_cmd = 0.0               # rate-limited speed target, m/s
@@ -343,11 +416,27 @@ class PurePursuit(Node):
         if self.speed_source not in ('tire', 'fused', 'encoder'):
             raise RuntimeError(f"speed_source must be 'tire', 'fused' or 'encoder', not {self.speed_source!r}")
         self.tire_m = float(g('tire_rise_slope'))
-        self.cmd_delay = float(g('cmd_delay_s'))
+        # _delay_base is what the correlator estimates (or the fixed value when
+        # auto is off); self.cmd_delay is the EFFECTIVE delay every consumer
+        # reads, recomputed each control cycle as max(base, tick-implied). The
+        # split is what lets the tick floor release cleanly: with a single
+        # variable a stall would ratchet the delay up and never let it back.
+        self._delay_base = float(g('cmd_delay_s'))
+        self.cmd_delay = self._delay_base
         self.slip_kp = float(g('slip_kp'))
         self.delay_auto = bool(g('cmd_delay_auto'))
         self.delay_win = float(g('cmd_delay_window_s'))
         self.delay_every = float(g('cmd_delay_update_s'))
+        self.delay_lag_step = float(g('cmd_delay_lag_step_s'))
+        self.delay_lag_max = float(g('cmd_delay_lag_max_s'))
+        self.delay_frames = float(g('cmd_delay_frames'))
+        self.delay_tick_seed = bool(g('cmd_delay_tick_seed'))
+        self.delay_tick_floor = bool(g('cmd_delay_tick_floor'))
+        self.tick_frames = max(4, int(g('cmd_delay_tick_frames')))
+        self.delay_max = float(g('cmd_delay_max_s'))
+        self.tick_hz = float('nan')     # measured simulator tick, for both of the above
+        self._tick_t = deque()          # last tick_frames+1 frame stamps
+        self._delay_seeded = False
         self._thr_hist = []             # (t, throttle published)
         self._enc_hist = []             # (t, wheel speed measured)
         self._delay_next = None
@@ -487,7 +576,9 @@ class PurePursuit(Node):
         self.pub_target = self.create_publisher(Marker, '~/lookahead', 1)
         self.pub_status = self.create_publisher(Float32MultiArray, '~/status', 1)
 
-        self.create_timer(1.0 / g('control_hz'), self._control)
+        self._control_timer = self.create_timer(1.0 / self.hz, self._control)
+        if self.hz_auto:
+            self.create_timer(1.0, self._retune_control_timer)
         self.create_timer(2.0, self._publish_path)
 
     # ---- callbacks -------------------------------------------------------
@@ -534,6 +625,8 @@ class PurePursuit(Node):
         if dt <= 1e-4 or dt > 0.5:
             return   # stale or duplicate frame; a bad dt yields a garbage speed
         self._enc_rate[side] = (ang - prev[0]) / dt * self.wheel_r
+        if side == 'l':
+            self._note_tick(t)
         rates = [v for v in self._enc_rate.values() if v is not None]
         if rates:
             self.v_enc = float(np.mean(rates))
@@ -826,6 +919,108 @@ class PurePursuit(Node):
         self.u_cmd = u
         return float(np.clip(u / self.u_per_thr, 0.0, self.thr_max))
 
+    def _note_tick(self, t):
+        """One simulator frame arrived; keep a short history of frame stamps.
+
+        The bridge publishes all fourteen topics from a single @sio.on('Bridge')
+        handler, one burst per WebSocket frame, so a left-encoder message IS a
+        frame and its rate is the simulator's tick. Measuring it costs a deque
+        append and gives the loop the one thing the cross-correlation cannot: a
+        delay estimate that moves within half a second of the rate changing,
+        needs no throttle variation, and exists on the very first lap.
+
+        The MEDIAN gap, not the mean: one 200 ms stall in a second of frames
+        must not read as a halved tick and derate the whole car for it. A
+        sustained collapse moves the median within half a window; a single
+        freeze does not move it at all.
+        """
+        if self._tick_t and t <= self._tick_t[-1]:
+            return                      # duplicate or out-of-order stamp
+        self._tick_t.append(t)
+        while len(self._tick_t) > self.tick_frames + 1:
+            self._tick_t.popleft()
+        if len(self._tick_t) < 4:
+            return
+        gaps = sorted(b - a for a, b in zip(self._tick_t, list(self._tick_t)[1:]))
+        med = gaps[len(gaps) // 2]
+        if med > 1e-4:
+            self.tick_hz = 1.0 / med
+
+    def _tick_delay(self, now=None):
+        """Round trip implied by the tick, or NaN before a tick is known.
+
+        A freeze that is still going produces no frames AT ALL, so the median
+        cannot see it -- the last stamp simply stops moving. The silence since
+        that stamp is therefore taken as the current frame gap whenever it is
+        the larger of the two, which is what makes a stall visible while it is
+        still happening rather than one frame after it ends.
+        """
+        if self.tick_hz != self.tick_hz or self.tick_hz <= 0.0:
+            return float('nan')
+        gap = 1.0 / self.tick_hz
+        if now is not None and self._tick_t:
+            silence = now - self._tick_t[-1]
+            if silence > gap:
+                gap = silence
+        return min(self.delay_frames * gap, self.delay_max)
+
+    def _apply_tick_delay(self, now=None):
+        """Seed and floor the effective delay from the measured tick.
+
+        Called once per control cycle. self.cmd_delay is recomputed rather than
+        adjusted, so the floor RELEASES the moment the tick recovers instead of
+        leaving the car derated for the rest of the run.
+        """
+        d = self._tick_delay(now)
+        if d != d:
+            self.cmd_delay = self._delay_base
+            return
+        # The SEED takes the median alone, never the silence-aware value: this
+        # fires once and sticks, and a control cycle that happens to land late
+        # in a frame gap would otherwise seed 150 ms on a 40 Hz machine and
+        # leave the correlator to walk it back. It also waits for a full window
+        # rather than the four frames tick_hz needs, so the one number that is
+        # never re-measured is not taken off three gaps during startup.
+        if (self.delay_tick_seed and not self._delay_seeded
+                and len(self._tick_t) > self.tick_frames):
+            self._delay_seeded = True
+            self._delay_base = self._tick_delay()
+            self.get_logger().info(
+                f'cmd_delay seeded from a {self.tick_hz:.1f} Hz tick: '
+                f'{self._delay_base * 1e3:.0f} ms '
+                f'({self.delay_frames:.0f} frames). '
+                f'lookahead scale {self._delay_scale(self._delay_base):.2f}')
+        self.cmd_delay = max(self._delay_base, d) if self.delay_tick_floor \
+            else self._delay_base
+
+    def _delay_scale(self, delay):
+        """Lookahead scale for a round trip: see lookahead_delay_exp_fast."""
+        if self.ld_delay_ref <= 0.0:
+            return 1.0
+        r = delay / self.ld_delay_ref
+        s = r if r >= 1.0 else r ** self.ld_delay_exp
+        return max(self.ld_scale_min, min(self.ld_scale_max, s))
+
+    def _retune_control_timer(self):
+        """Track the simulator tick with the control rate, within the clamp.
+
+        Runs on its own 1 s timer: rclpy does not promise anything sane about a
+        timer destroying itself from inside its own callback. The 10 % deadband
+        keeps a tick that jitters across a boundary from rebuilding the timer
+        every second.
+        """
+        if self.tick_hz != self.tick_hz:
+            return
+        target = min(self.hz_max, max(self.hz_min, self.tick_hz))
+        if abs(target - self.hz) <= 0.1 * self.hz:
+            return
+        old, self.hz = self.hz, target
+        if self._control_timer is not None:
+            self.destroy_timer(self._control_timer)
+        self._control_timer = self.create_timer(1.0 / self.hz, self._control)
+        self.get_logger().info(
+            f'control_hz {old:.1f} -> {self.hz:.1f} (tick {self.tick_hz:.1f} Hz)')
+
     def _update_delay(self, now):
         """Cross-correlate published throttle against measured wheel speed.
 
@@ -848,11 +1043,11 @@ class PurePursuit(Node):
         te = np.array([p[0] for p in self._enc_hist]); ve = np.array([p[1] for p in self._enc_hist])
         if ut.std() < 0.3:                          # throttle barely moved: nothing to correlate
             return
-        lags = np.arange(0.0, 0.36, 0.025)
+        lags = np.arange(0.0, self.delay_lag_max + 1e-9, self.delay_lag_step)
         rms = [math.sqrt(np.mean((ve - np.interp(te - lag, tt, ut)) ** 2)) for lag in lags]
         best = float(lags[int(np.argmin(rms))])
         self.delay_meas = best
-        self.cmd_delay += 0.3 * (best - self.cmd_delay)
+        self._delay_base += 0.3 * (best - self._delay_base)
 
     def _publish_status(self, values):
         m = Float32MultiArray()
@@ -864,6 +1059,7 @@ class PurePursuit(Node):
             return
 
         now = self.get_clock().now().nanoseconds * 1e-9
+        self._apply_tick_delay(now)
         pose = self.pose
         if self.use_tf_pose:
             tf_pose = self._pose_from_tf()
@@ -930,9 +1126,16 @@ class PurePursuit(Node):
         # gave a 2.9 m lookahead whose
         # lateral gain (2/Ld^2) was too soft to catch a 0.1 m drift with 5 deg of
         # heading before a wall 0.33 m away, twice, on the straight after R1.
-        d_scale = 1.0
-        if self.ld_delay_ref > 0.0:
-            d_scale = max(0.7, min(1.2, self.cmd_delay / self.ld_delay_ref))
+        # Above the reference the law is PROPORTIONAL and bit-identical to what
+        # was proven here: 2.2 m weaved into a wall at 210 ms until the scale
+        # lengthened it. Below the reference -- the 40-50 Hz evaluation machine,
+        # 60-75 ms -- proportional would ask for 0.82 m at 40 Hz, under
+        # lookahead_min, clamping the lookahead flat at every speed. The sqrt
+        # spends half the gain on phase margin and half on tracking: at 40 Hz
+        # the scale is 0.65, so Ld_max is 1.44 m and the phase lag at 6.7 m/s is
+        # 28 deg, against 43 deg for the 2.2 m this replaces. Shorter line, more
+        # margin, and the corner cut (kappa Ld^2 / 8) falls by more than half.
+        d_scale = self._delay_scale(self.cmd_delay)
         ld = float(np.clip(self.ld_k * d_scale * abs(self.speed), self.ld_min, self.ld_max * d_scale))
         # Shorten the lookahead where the path AHEAD curves. Pure pursuit aims at
         # the chord to the lookahead point, so on corner entry it cuts inside by

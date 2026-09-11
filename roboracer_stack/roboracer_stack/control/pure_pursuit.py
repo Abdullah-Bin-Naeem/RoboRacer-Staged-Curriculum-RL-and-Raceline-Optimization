@@ -82,7 +82,8 @@ NS = '/autodrive/roboracer_1'
 
 # ~/status: one Float32MultiArray per control tick, fields in this order.
 # log_localization records them as pp_<name> columns; raceline/analyze_run.py
-# reads them back. Keep the three in step.
+# reads them back; tools/rate_monitor.py reads 'delay' and 'v_est' by index.
+# Keep the four in step.
 STATUS_FIELDS = ('v_est', 'v_enc', 'v_pose', 'v_target', 'u_cmd', 'throttle', 'steering',
                  'ld', 'e_lat', 'e_head', 'kappa', 's', 'slip', 'a_imu', 'delay')
 

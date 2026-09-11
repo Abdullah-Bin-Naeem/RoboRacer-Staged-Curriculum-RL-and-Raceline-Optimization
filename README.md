@@ -27,7 +27,7 @@ Dockerfile              FROM the official devkit image; adds one package
 autodrive_devkit.sh     the entrypoint the rules name — the only automation
 autodrive_devkit/       the provided package, unmodified, NOT copied into the image
 roboracer_stack/        ours: perception, localization, planning, control, mapping
-scripts/build.sh run.sh convenience wrappers for us; not part of the image
+scripts/                build.sh, run.sh, hz.sh — for us; not part of the image
 ```
 
 `autodrive_roboracer` is never modified — the rules forbid it, and the base
@@ -95,6 +95,137 @@ The DDS settings are not in that line: they are `ENV` in the image, so every
 shell on a different RMW would find none — an empty `ros2 node list` and no
 error.
 
+## Running the sim and the racer on two machines
+
+The bridge is a WebSocket server on 4567 and the simulator is its *client*, so
+the two never had to share a host — and on a machine that cannot feed the bridge
+fast enough, they should not. Everything the bridge publishes comes out of a
+single `@sio.on('Bridge')` handler, one burst per frame, and the throttle and
+steering go back to the sim only after that handler returns. So the tick rate is
+whatever the racer machine can sustain: put the simulator and ten ROS nodes on
+one desktop and the whole loop slows down together.
+
+Measured here: ~17.5 Hz with both containers on one machine, 40–50 Hz with the
+racer container on its own. The organizers tune and verify at 40–50 Hz.
+
+**On the racer machine** (Docker Desktop for Windows):
+
+```powershell
+docker load -i autodrive_racer_qualification-1.tar
+docker run --name autodrive_roboracer_api --rm -it -p 4567:4567 autodrive_racer:qualification-1
+```
+
+`--network=host` is deliberately **not** used here. On Docker Desktop it puts the
+container in the WSL2 VM's namespace rather than on the Windows LAN interface, so
+the sim cannot reach 4567 at all; `-p 4567:4567` publishes it properly.
+`--ipc=host` is meaningless there too. On a Linux racer machine, keep both flags
+and use `./scripts/run.sh racer` unchanged.
+
+Allow inbound TCP 4567 through Windows Defender Firewall — Docker Desktop
+prompts the first time it binds; accept **Private networks**. `ipconfig` gives
+the address the simulator connects to.
+
+**On this machine:**
+
+```bash
+./scripts/run.sh sim --headless 192.168.1.42   # the racer machine's address
+./scripts/run.sh sim                           # or with a window: type it into Connect
+```
+
+Prefer headless for anything timed. Unity throttles its frame rate whenever its
+window is minimised, occluded or on another workspace, and the symptom is not an
+error — every rate in the system drops silently and the lap times still look
+plausible. Watching a rate readout in another window is exactly the situation
+that triggers it.
+
+Use a wire. Wi-Fi jitter arrives as tick jitter, one for one.
+
+## Watching the sensor rate
+
+`tools/rate_monitor.py` reports the simulator tick and the control-loop rate once
+a second, live, while the car drives. It needs no rebuild — it is copied into the
+running container and imports nothing from `roboracer_stack`:
+
+```bash
+./scripts/hz.sh                          # Linux racer machine
+./scripts/hz.sh --laps --csv runs/rate_run62.csv
+```
+
+```powershell
+# Windows: the same two steps by hand
+docker cp roboracer_stack\tools\rate_monitor.py autodrive_roboracer_api:/tmp/
+docker exec -it autodrive_roboracer_api bash -lc "source /opt/ros/humble/setup.bash && python3 /tmp/rate_monitor.py --csv /tmp/rate.csv"
+docker cp autodrive_roboracer_api:/tmp/rate.csv .    # afterwards
+```
+
+```
+t=  42.0 | imu  44.8Hz   p5  38.1 gap   41ms | cmd  39.9Hz   | pp  39.9Hz   p5  38.4 delay   71ms | stalls imu=0 pp=2(+1)
+```
+
+| column | what it tells you |
+|---|---|
+| `imu` | the simulator tick. All sensors ship from one bridge callback, so this *is* the lidar rate, measured with a 40-byte message instead of a 1080-float scan (`--lidar` to confirm rather than assume). |
+| `cmd` | our own `steering_command`. Sensors fast but `cmd` slow ⇒ **our** loop is the limiter. Both slow ⇒ the bridge, the machine, or the LAN. |
+| `pp` | the pure pursuit loop, and `delay`, its own online round-trip estimate. |
+| `p5` | the 5th-percentile rate — sustained jitter. |
+| `gap`, `stalls` | the largest single gap, and a count of gaps over twice the median. **These** catch one 200 ms freeze; the mean does not. |
+
+With `--laps`, the CSV also carries `lap_count`, `last_lap_s` and `best_lap_s`.
+
+That last row is the point. A 300 ms freeze moved the mean from 45.0 to 40.6 Hz —
+nothing you would notice — while `gap` went to 313 ms and `stalls` ticked to
+`1(+1)`. One such freeze per lap is a wall. `ros2 topic hz` reports only the mean,
+which is why this took a race admin to spot rather than showing up in testing.
+`--` means a topic never published (a name or a QoS fault, not a speed one);
+`DEAD` means it published and then stopped.
+
+### Lap times
+
+`--laps` adds a line as each lap closes, with the tick that produced it:
+
+```
+LAP   7    6.382 s   best   6.351   tick  44.9 Hz   worst gap   31 ms   stalls 0
+LAP   8    7.104 s   best   6.351   tick  41.2 Hz   worst gap  287 ms   stalls 3
+```
+
+That is the whole diagnosis on one line: lap 8 lost 0.7 s, and it lost it to
+three interruptions, not to the racing line. A closing table repeats every lap of
+the session, and flags the best lap that had no stall in it — the one that is
+actually representative of the setup rather than of a quiet moment on the
+machine.
+
+The per-lap worst gap is accumulated as the lap runs rather than read from the
+rolling window: the window is 3 s and a lap is ~6.4 s, so a stall in the first
+half would otherwise have aged out before the lap closed.
+
+**The lap topics are restricted** (`common/restricted.py` — they are race
+telemetry), so `--laps` is off by default and announces itself when on, exactly
+like pure_pursuit's `dev_lap_telemetry`. Use it while testing; leave it off for
+anything you intend to quote as a result. The simulator shows lap times in its
+own window either way, so an official run loses nothing by running without it.
+
+Without `--laps` the monitor reads no restricted topic and publishes nothing, so
+it is race-legal and safe to leave running through a timed lap. If you want a
+number without copying anything in at all:
+
+```bash
+docker exec -it autodrive_roboracer_api bash -lc \
+  "source /opt/ros/humble/setup.bash && ros2 topic hz /autodrive/roboracer_1/imu"
+```
+
+### Once you can see the rate
+
+- **Match the loop to the tick.** `RACER_CONTROL_HZ` is an environment variable
+  (below), so if `imu` lands at 45–50 Hz, `-e RACER_CONTROL_HZ=50` costs nothing
+  and keeps the follower off the critical path.
+- **Watch `delay` against the tune.** `cmd_delay` is roughly three sim frames:
+  ~175 ms at 17.5 Hz, ~65 ms at 45 Hz. Two things key off it and were both tuned
+  at 17.5 Hz — `derate_delay_from: 0.175` gives lateral grip back once the delay
+  drops (pure gain), but `lookahead_delay_ref: 0.175` scales the lookahead by
+  `cmd_delay / 0.175` clamped to `[0.7, 1.2]`, so a fast machine pins it at 0.7:
+  a 30 % shorter lookahead than any measured lap used. Worth a deliberate A/B
+  once the rate is known, not a blind edit.
+
 ## Changing the configuration without rebuilding
 
 Every knob is an environment variable read by `/home/autodrive_devkit.sh`:
@@ -150,6 +281,13 @@ nine defaults that each have to be right:
   continuously — is **not included at all**;
 - lap telemetry off, and the follower steers on the localizer's estimate rather
   than on `/odom`.
+
+`tools/rate_monitor.py` is built to the same rule: by default it subscribes only
+to `/imu`, `/left_encoder`, `/lidar`, our own `steering_command` and
+`/pure_pursuit/status`, publishes nothing, and touches no lap or collision
+counter — so it can be left running through a timed lap. Its `--laps` flag does
+read the restricted lap topics; it is off by default and says so when on, and a
+lap time measured with it is a development number.
 
 Ground truth is read in exactly one place: `localization_bootstrap` takes **one**
 sample of `/ips` before the car has moved, seeds AMCL with it, and destroys the

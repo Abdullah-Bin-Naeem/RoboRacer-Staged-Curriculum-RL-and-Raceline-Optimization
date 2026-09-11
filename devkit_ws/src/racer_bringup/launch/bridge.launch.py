@@ -14,12 +14,15 @@ the race-legal estimate actually is.
 autodrive_devkit itself is not modified; this is a topic remap only.
 
 tcp_nodelay:=true preloads tools/libnodelay.so into the bridge process, which
-sets TCP_NODELAY on every TCP socket it creates or accepts. The simulator only
+sets TCP_NODELAY on every TCP socket it creates or accepts and re-arms
+TCP_QUICKACK after every recv AND every send syscall on them. The simulator only
 emits telemetry in reply to the bridge's message, over a websocket on loopback;
 Nagle's algorithm holds each small write until the previous one is acknowledged
 and the receiver's delayed ACK holds that acknowledgment for up to 40 ms, so the
 loop runs at 10-20 Hz on any machine -- every rate measured here, and what
-another team traced to this cause. Still a launch-level change: the devkit's
+another team traced to this cause. Measured 2026-09-12 on the lidar topic,
+same session: 18.6 Hz off, 77.3 Hz on (tools/nodelay.c has the table; the
+send-side re-arm is the half that matters). Still a launch-level change: the devkit's
 code is untouched, only the environment the process starts with.
 """
 
@@ -42,8 +45,8 @@ def generate_launch_description():
             description="where the devkit's ground-truth TF goes instead of /tf"),
         DeclareLaunchArgument(
             'tcp_nodelay', default_value='false',
-            description='preload tools/libnodelay.so into the bridge: TCP_NODELAY on its '
-                        'websocket, see the module docstring'),
+            description='preload tools/libnodelay.so into the bridge: TCP_NODELAY and a QUICKACK '
+                        're-arm on its websocket, 18.6 -> 77 Hz here; see the module docstring'),
         LogInfo(
             condition=IfCondition(LaunchConfiguration('tcp_nodelay')),
             msg=(f'[bridge] TCP_NODELAY via LD_PRELOAD={NODELAY_SHIM}'

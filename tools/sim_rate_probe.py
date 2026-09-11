@@ -23,7 +23,17 @@ until the first is acknowledged, and this receiver, with nothing to send back
 until the whole message has arrived, delays that acknowledgment up to 40 ms.
 TCP_NODELAY here cannot touch that (measured: 18.5 -> 18.6 Hz); immediate
 acknowledgment can. Linux resets TCP_QUICKACK by itself, so it is re-armed on
-every message.
+every message. Measured 2026-09-12: this option does NOT work either (19.4 Hz),
+and neither does re-arming after sio.emit(), because gevent-websocket writes the
+frame later from another greenlet and Linux re-enters delayed-ACK mode on that
+write. The re-arm has to follow the send syscall, which only the LD_PRELOAD shim
+can do; that is the measurement that matters:
+
+    LD_PRELOAD=$PWD/tools/libnodelay.so python3 tools/sim_rate_probe.py 60 --bind=127.0.0.1
+
+19.3 Hz -> 101.6 Hz on this laptop (lo MTU 65536, HUD 144 fps). Cross-check:
+`sudo ip link set lo mtu 1500` alone gives 107 Hz, the 13 KB telemetry then
+being full segments Nagle does not hold.
 
 --nodelay tests the finding another team reported: Nagle's algorithm holding
 each small websocket write until the previous one is acknowledged, while the
@@ -32,6 +42,10 @@ waits per round trip is a 10-20 Hz loop on any machine. If the rate jumps
 with this switch, the period was the TCP stack, not the simulator's frame.
 
 System python3: it needs the bridge's own socketio / gevent, not the venv's.
+On another machine, pin python-socketio==4.2.0 and python-engineio==3.13.0
+(the devkit's versions): the simulator speaks Socket.IO 2, and a 5.x server
+completes the TCP handshake and then silently never raises 'connect'.
+The bind is 0.0.0.0 on purpose: '' resolves to IPv6-only on Windows.
 """
 import socket
 import sys
@@ -48,6 +62,9 @@ conn_sockets = {}
 ARGS = [a for a in sys.argv[1:] if not a.startswith('--')]
 DURATION = float(ARGS[0]) if ARGS else 30.0
 PORT = 4567
+# --bind=ADDR listens on one address only (default all). Use --bind=127.0.0.1 for a
+# loopback measurement when another simulator on the LAN could connect instead.
+BIND = next((a.split('=', 1)[1] for a in sys.argv if a.startswith('--bind=')), '0.0.0.0')
 
 
 class NoDelayHandler(WebSocketHandler):
@@ -126,9 +143,9 @@ def report():
 
 
 if __name__ == '__main__':
-    print(f'listening on :{PORT} as a stand-in bridge, TCP_NODELAY {"ON" if NODELAY else "off"}, TCP_QUICKACK {"ON" if QUICKACK else "off"} '
+    print(f'listening on {BIND}:{PORT} as a stand-in bridge, TCP_NODELAY {"ON" if NODELAY else "off"}, TCP_QUICKACK {"ON" if QUICKACK else "off"} '
           '-- stop the real bridge first, then press Connect in the simulator')
     try:
-        pywsgi.WSGIServer(('', PORT), app, handler_class=NoDelayHandler, log=None).serve_forever()
+        pywsgi.WSGIServer((BIND, PORT), app, handler_class=NoDelayHandler, log=None).serve_forever()
     except SystemExit:
         pass

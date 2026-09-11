@@ -386,7 +386,7 @@ were re-derived at cost.
 |---|---|---|
 | Encoder units | **radians** (wheel angle) | "ticks, 1920/rev" — off by ~300× |
 | Wheel radius | **0.0581 m** | 0.0590 m |
-| Sim tick rate | **~18 Hz** (graphics), 20 headless; not a clock but a round trip, see below | bridge advertises 40 Hz |
+| Sim tick rate | **18.6 Hz** with the stock bridge, **77 Hz** with `tcp_nodelay:=true`; not a clock but a round trip, see below | bridge advertises 40 Hz |
 | Speed vs throttle | **≈ 24 × throttle** | 22.88 m/s top speed |
 | `twist.linear` frame | **body**, not world | unstated |
 | `/imu` vs `/odom` angular | identical — one source | unstated |
@@ -397,27 +397,33 @@ hard-coding them, precisely because of that last row.
 
 The tick rate is not a constant in either program. The simulator emits
 telemetry only in reply to the bridge's message (`Socket.cs`, `OnBridge` ->
-`EmitTelemetry`), the bridge publishes and replies inside its handler, and the
-simulator's socket plugin dispatches the reply from `FixedUpdate` with the emit
-queued to a once-per-frame dispatcher -- so the rate is the simulator's frame
-rate (occasionally half), which `targetFrameRate = -1` leaves unlimited and the
-1 kHz physics step (`TimeManager.asset`) bounds on the main thread: the frame
-period is R / (1 - c), c the share of real time the physics takes, R the rest,
-so a laptop at c ~ 0.8 sits at 50 ms and a fast machine at 10. The loop runs
-at whichever is slower of that and a TCP deadlock: Nagle holding each small
-websocket write until the previous is acknowledged while the receiver delays
-the acknowledgment up to 40 ms, two waits a cycle, which caps a FAST machine at
-10-20 Hz (another team: 10 Hz at 60 fps). On this laptop the frame is the
-limit and TCP_NODELAY / TCP_QUICKACK on our side change nothing (18.5 Hz each
-way, measured); on the evaluation machine the frame will be short and the
-socket would be, so `tcp_nodelay:=true` (OFF by default: the first run with
-it on measured the command delay at 77 ms instead of 175 and hit, on an
-unvalidated hand-edited line, so cause and effect are not yet separated)
-preloads `tools/libnodelay.so` into the bridge: NODELAY on its writes, QUICKACK
-re-armed on every read. The devkit is untouched; it is the process's environment. The `.so` must exist in
-the container (`gcc -shared -fPIC -O2 -o tools/libnodelay.so tools/nodelay.c
--ldl`). `tools/sim_rate_probe.py [--nodelay] [--quickack]` measures all of this
-with an ideal replier and no ROS: stop the bridge, run it, press Connect.
+`EmitTelemetry`) and the bridge publishes and replies inside its handler, so
+the loop is a round trip, and it runs at whichever is slower of the
+simulator's frame and a TCP deadlock: the simulator's ~13 KB telemetry is one
+sub-MSS segment on loopback (MTU 65536), Nagle holds it until our side
+acknowledges, and Linux delays that acknowledgment up to 40 ms, so the cycle
+is ~50 ms on any machine whose frame is shorter than that. Measured
+2026-09-12 on this laptop (HUD at 144 fps), same session, loopback: stock
+bridge 18.6 Hz on the lidar topic; `tcp_nodelay:=true` 77.3 Hz (median
+12.8 ms, max 25); the ideal replier in `tools/sim_rate_probe.py` 19.3 ->
+101.6 Hz; `sudo ip link set lo mtu 1500` alone 107 Hz (full-size segments
+Nagle does not hold); the same simulator replied to by a second machine over
+a LAN cable, 63.6 Hz. The earlier reading that the frame period was the limit
+here was wrong. `tcp_nodelay:=true` preloads `tools/libnodelay.so` into the
+bridge: NODELAY on its sockets and QUICKACK re-armed after every recv AND
+every send syscall. The send half is what matters: Linux re-enters delayed-ACK
+mode on a reply sent right after a receive, and a Python-level re-arm after
+`emit` lands before the actual write and does nothing (measured, 19.4 Hz). It
+stays OFF by default: every follower constant was tuned at a 175 ms command
+delay, and the first run with it on (run 24, hand-edited line) measured a far
+shorter delay and hit, so the follower has to be re-validated at the fast
+loop before racing with it; the organizers say the evaluation machine runs
+40-50 Hz, so that validation is due regardless. The devkit is untouched; it is
+the process's environment. The `.so` must exist in the container (`gcc -shared
+-fPIC -O2 -o tools/libnodelay.so tools/nodelay.c -ldl`).
+`tools/sim_rate_probe.py [--bind=127.0.0.1]` measures the loop with an ideal
+replier and no ROS (stop the bridge, run it, press Connect); with
+`LD_PRELOAD=tools/libnodelay.so` in front it measures the shim.
 
 ## Gotchas
 

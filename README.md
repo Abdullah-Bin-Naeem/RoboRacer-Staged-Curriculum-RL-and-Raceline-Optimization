@@ -127,6 +127,14 @@ docker run --rm -it --network=host --ipc=host \
   autodrive_racer:qualification-1
 ```
 
+## Loop rate
+
+The simulator loop ran at 18 Hz on the development laptop and now runs at 77-85
+Hz, or at any capped rate, on the same machine: the cause was a TCP
+Nagle/delayed-ACK deadlock on loopback, not the simulator. `LOOP_RATE.md` has
+the measurements, the fix (`tools/libnodelay.so`, preloaded into the bridge
+from the `docker run` line) and the tools to measure it (`tools/topic_rates.py`).
+
 ## The three racing lines
 
 Same geometry, three velocity profiles. All measured on the car with AMCL and

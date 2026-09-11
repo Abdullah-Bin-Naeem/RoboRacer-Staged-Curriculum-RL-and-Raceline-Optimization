@@ -42,12 +42,24 @@
  * machine, which is exactly what every rate measurement here showed and what
  * another team traced to this cause. TCP_NODELAY sends small writes at once.
  *
+ * NODELAY_CAP_HZ=<hz> paces the loop from the same place. The simulator emits
+ * telemetry only in reply, so spacing the bridge's replies at least 1/hz apart
+ * caps the whole loop at hz: before every send on a TCP socket the shim sleeps
+ * until the previous send on that socket is 1/hz old, scheduled against the
+ * previous target (not the previous wake-up) so jitter does not accumulate
+ * into drift. It blocks only the bridge's gevent thread, which has nothing else
+ * to do between messages; the ROS spin is another thread. The organizers say
+ * the evaluation machine runs 40-50 Hz, and with the deadlock gone this laptop
+ * runs 77-85, so the cap is how the stack is tuned at the evaluation rate
+ * without a slower machine. 0 or unset = no cap. Exposed as loop_hz_cap:= on
+ * bridge.launch.py / race.launch.py, and as -e NODELAY_CAP_HZ on docker run.
+ *
  * Applied from bridge.launch.py (tcp_nodelay:=true) as the bridge process's
  * environment, so the devkit package stays unmodified. It can also be put in
  * front of the simulator binary for a local test of the other direction.
  *
  *   gcc -shared -fPIC -O2 -o tools/libnodelay.so tools/nodelay.c -ldl
- *   NODELAY_VERBOSE=1 to log each socket it touches.
+ *   NODELAY_VERBOSE=1 to log each socket it touches and the cap in force.
  */
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -58,7 +70,57 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/uio.h>
+#include <time.h>
 #include <unistd.h>
+
+/* ---- NODELAY_CAP_HZ: pace sends on each TCP socket to at most cap Hz ---- */
+#define CAP_MAX_FD 4096
+static double cap_period = 0.0;            /* seconds between sends; 0 = no cap */
+static int cap_parsed = 0;
+static struct timespec cap_next[CAP_MAX_FD];   /* earliest time the next send may go */
+
+static void cap_init(void)
+{
+    if (cap_parsed) return;
+    cap_parsed = 1;
+    const char *e = getenv("NODELAY_CAP_HZ");
+    double hz = e ? atof(e) : 0.0;
+    if (hz > 0.0) cap_period = 1.0 / hz;
+    if (getenv("NODELAY_VERBOSE"))
+        fprintf(stderr, "[libnodelay] NODELAY_CAP_HZ=%s -> %s\n", e ? e : "(unset)",
+                cap_period > 0.0 ? "capped" : "no cap");
+}
+
+static void cap_reset(int fd)
+{
+    if (fd >= 0 && fd < CAP_MAX_FD) cap_next[fd].tv_sec = cap_next[fd].tv_nsec = 0;
+}
+
+static void pace(int fd)
+{
+    cap_init();
+    if (cap_period <= 0.0 || fd < 0 || fd >= CAP_MAX_FD) return;
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    struct timespec *nx = &cap_next[fd];
+    if (nx->tv_sec || nx->tv_nsec) {
+        double wait = (nx->tv_sec - now.tv_sec) + (nx->tv_nsec - now.tv_nsec) * 1e-9;
+        if (wait > 0.0) {
+            struct timespec ts = { (time_t)wait, (long)((wait - (double)(time_t)wait) * 1e9) };
+            while (nanosleep(&ts, &ts) == -1) { /* EINTR: finish the remainder */ }
+            clock_gettime(CLOCK_MONOTONIC, &now);
+        } else if (wait < -cap_period) {
+            /* the loop was slower than the cap for a while: no credit is banked */
+            *nx = now;
+        }
+    } else {
+        *nx = now;
+    }
+    /* next allowed send: previous target + period, not wake-up + period */
+    double t = nx->tv_sec + nx->tv_nsec * 1e-9 + cap_period;
+    nx->tv_sec = (time_t)t;
+    nx->tv_nsec = (long)((t - (double)(time_t)t) * 1e9);
+}
 
 static int is_tcp(int fd)
 {
@@ -78,6 +140,7 @@ static void quickack(int fd)
 static void nodelay(int fd)
 {
     if (fd < 0 || !is_tcp(fd)) return;
+    cap_reset(fd);
     int one = 1;
     if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one)) == 0 && getenv("NODELAY_VERBOSE"))
         fprintf(stderr, "[libnodelay] TCP_NODELAY on fd %d\n", fd);
@@ -144,6 +207,7 @@ ssize_t send(int fd, const void *buf, size_t len, int flags)
 {
     static ssize_t (*real)(int, const void *, size_t, int) = NULL;
     if (!real) real = dlsym(RTLD_NEXT, "send");
+    if (is_tcp(fd)) pace(fd);
     ssize_t n = real(fd, buf, len, flags);
     if (n > 0 && is_tcp(fd)) quickack(fd);
     return n;
@@ -153,6 +217,7 @@ ssize_t sendto(int fd, const void *buf, size_t len, int flags, const struct sock
 {
     static ssize_t (*real)(int, const void *, size_t, int, const struct sockaddr *, socklen_t) = NULL;
     if (!real) real = dlsym(RTLD_NEXT, "sendto");
+    if (is_tcp(fd)) pace(fd);
     ssize_t n = real(fd, buf, len, flags, dst, dstlen);
     if (n > 0 && is_tcp(fd)) quickack(fd);
     return n;
@@ -162,6 +227,7 @@ ssize_t sendmsg(int fd, const struct msghdr *msg, int flags)
 {
     static ssize_t (*real)(int, const struct msghdr *, int) = NULL;
     if (!real) real = dlsym(RTLD_NEXT, "sendmsg");
+    if (is_tcp(fd)) pace(fd);
     ssize_t n = real(fd, msg, flags);
     if (n > 0 && is_tcp(fd)) quickack(fd);
     return n;
@@ -171,6 +237,7 @@ ssize_t write(int fd, const void *buf, size_t count)
 {
     static ssize_t (*real)(int, const void *, size_t) = NULL;
     if (!real) real = dlsym(RTLD_NEXT, "write");
+    if (fd > 2 && is_tcp(fd)) pace(fd);
     ssize_t n = real(fd, buf, count);
     if (n > 0 && fd > 2 && is_tcp(fd)) quickack(fd);
     return n;
@@ -180,6 +247,7 @@ ssize_t writev(int fd, const struct iovec *iov, int iovcnt)
 {
     static ssize_t (*real)(int, const struct iovec *, int) = NULL;
     if (!real) real = dlsym(RTLD_NEXT, "writev");
+    if (fd > 2 && is_tcp(fd)) pace(fd);
     ssize_t n = real(fd, iov, iovcnt);
     if (n > 0 && fd > 2 && is_tcp(fd)) quickack(fd);
     return n;

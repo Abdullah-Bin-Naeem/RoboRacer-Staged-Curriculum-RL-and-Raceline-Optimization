@@ -197,7 +197,7 @@ def _launch(context, *args, **kwargs):
     actions.append(IncludeLaunchDescription(
         src(own_share, 'bridge.launch.py'),
         condition=IfCondition(LaunchConfiguration('bridge')),
-        launch_arguments={'tcp_nodelay': cfg('tcp_nodelay')}.items(),
+        launch_arguments={'tcp_nodelay': cfg('tcp_nodelay'), 'loop_hz_cap': cfg('loop_hz_cap')}.items(),
     ))
 
     # 2. chassis -- odom -> base -> lidar. Needed by every localizer, and by the
@@ -338,6 +338,8 @@ def generate_launch_description():
         DeclareLaunchArgument('bridge', default_value='true'),
         DeclareLaunchArgument('tcp_nodelay', default_value='false',
                               description='TCP_NODELAY on the bridge websocket via LD_PRELOAD; see bridge.launch.py'),
+        DeclareLaunchArgument('loop_hz_cap', default_value='0',
+                              description='with tcp_nodelay, cap the simulator loop at this many Hz (0 = uncapped); see bridge.launch.py'),
         DeclareLaunchArgument('recover', default_value='true',
                               description='re-localize after a wall reset; see localization_bootstrap'),
         DeclareLaunchArgument('recover_use_checkpoints', default_value='true',

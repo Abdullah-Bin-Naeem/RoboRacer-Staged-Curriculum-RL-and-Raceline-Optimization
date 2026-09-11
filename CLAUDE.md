@@ -418,8 +418,10 @@ stays OFF by default: every follower constant was tuned at a 175 ms command
 delay, and the first run with it on (run 24, hand-edited line) measured a far
 shorter delay and hit, so the follower has to be re-validated at the fast
 loop before racing with it; the organizers say the evaluation machine runs
-40-50 Hz, so that validation is due regardless. The devkit is untouched; it is
-the process's environment. The `.so` must exist in the container (`gcc -shared
+40-50 Hz, so that validation is due regardless. `loop_hz_cap:=45` (with
+`tcp_nodelay:=true`) paces the bridge's replies so the loop runs at that rate
+here; the simulator only emits in reply, so the cap holds the whole loop. The
+devkit is untouched; it is the process's environment. The `.so` must exist in the container (`gcc -shared
 -fPIC -O2 -o tools/libnodelay.so tools/nodelay.c -ldl`).
 `tools/sim_rate_probe.py [--bind=127.0.0.1]` measures the loop with an ideal
 replier and no ROS (stop the bridge, run it, press Connect); with

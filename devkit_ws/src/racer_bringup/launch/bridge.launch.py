@@ -24,6 +24,12 @@ another team traced to this cause. Measured 2026-09-12 on the lidar topic,
 same session: 18.6 Hz off, 77.3 Hz on (tools/nodelay.c has the table; the
 send-side re-arm is the half that matters). Still a launch-level change: the devkit's
 code is untouched, only the environment the process starts with.
+
+loop_hz_cap:=45 (needs tcp_nodelay:=true) paces the bridge's replies so the
+simulator loop runs at most that fast. The simulator only emits in reply, so
+the whole loop follows. The organizers quote 40-50 Hz for the evaluation
+machine; this laptop runs 77-85 with the deadlock gone, and the cap is how the
+stack is tuned at the evaluation rate. 0 = uncapped.
 """
 
 import os
@@ -47,6 +53,13 @@ def generate_launch_description():
             'tcp_nodelay', default_value='false',
             description='preload tools/libnodelay.so into the bridge: TCP_NODELAY and a QUICKACK '
                         're-arm on its websocket, 18.6 -> 77 Hz here; see the module docstring'),
+        DeclareLaunchArgument(
+            'loop_hz_cap', default_value='0',
+            description='with tcp_nodelay: pace the bridge replies so the simulator loop runs at most '
+                        'this many Hz (organizers: evaluation is 40-50); 0 = uncapped'),
+        LogInfo(
+            condition=IfCondition(LaunchConfiguration('tcp_nodelay')),
+            msg=['[bridge] loop cap NODELAY_CAP_HZ=', LaunchConfiguration('loop_hz_cap'), ' (0 = uncapped)']),
         LogInfo(
             condition=IfCondition(LaunchConfiguration('tcp_nodelay')),
             msg=(f'[bridge] TCP_NODELAY via LD_PRELOAD={NODELAY_SHIM}'
@@ -60,7 +73,10 @@ def generate_launch_description():
             output='screen',
             emulate_tty=True,
             remappings=[('/tf', LaunchConfiguration('tf_topic'))],
-            additional_env={'LD_PRELOAD': PythonExpression([
-                "'", NODELAY_SHIM, "' if '", LaunchConfiguration('tcp_nodelay'), "'.lower() == 'true' else ''"])},
+            additional_env={
+                'LD_PRELOAD': PythonExpression([
+                    "'", NODELAY_SHIM, "' if '", LaunchConfiguration('tcp_nodelay'), "'.lower() == 'true' else ''"]),
+                'NODELAY_CAP_HZ': LaunchConfiguration('loop_hz_cap'),
+            },
         ),
     ])

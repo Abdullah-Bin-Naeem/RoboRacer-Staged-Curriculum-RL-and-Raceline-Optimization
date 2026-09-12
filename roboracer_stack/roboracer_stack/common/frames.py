@@ -97,7 +97,7 @@ DEFAULT_POSE_GRAPH = os.path.join(MAPS_DIR, 'track_sm')
 #                          NOT the default; see VEHICLE_MODEL.md section 7.
 #
 # Override without rebuilding:  race.launch.py path_csv:=<abs path>
-DEFAULT_RACELINE = os.path.join(RACELINE_DIR, 'raceline_a7.0_rec_6.36.csv')
+DEFAULT_RACELINE = os.path.join(RACELINE_DIR, 'raceline_a7.0.csv')
 
 # ---- Vehicle ---------------------------------------------------------------
 NS = '/autodrive/roboracer_1'

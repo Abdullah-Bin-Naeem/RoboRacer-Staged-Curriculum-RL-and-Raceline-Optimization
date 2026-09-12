@@ -54,6 +54,7 @@ The CSV logger needs scipy in the image; the Dockerfile has the layer, so
     # on the host (needs ROS Humble installed)
     source /opt/ros/humble/setup.bash
     export ROS_LOCALHOST_ONLY=1 RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+    export CYCLONEDDS_URI=file://$PWD/roboracer_stack/config/cyclonedds.xml   # else: "Failed to find a free participant index"
     python3 tools/topic_rates.py 15 /autodrive/roboracer_1/
 
     # or inside the running container

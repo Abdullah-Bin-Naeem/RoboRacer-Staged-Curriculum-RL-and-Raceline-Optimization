@@ -3,6 +3,8 @@
 
     python3 tools/analyze_caps.py            # all sections
     python3 tools/analyze_caps.py --caps 40,80
+    python3 tools/analyze_caps.py --line roboracer_stack/raceline/raceline_a7.0.csv \\
+        --csv 'logs/run_default_cap{}.csv' --logs 40=racer_<stamp>.log,45=... --caps 40,45
 
 Inputs: logs/run_cap<hz>.csv (log_localization, 20 Hz), the stack logs mapped
 in LOGS below (lap times), the raceline the runs followed, and the map. Needs
@@ -23,8 +25,15 @@ MAP_PGM, MAP_YAML = 'roboracer_stack/maps/track_clean.pgm', 'roboracer_stack/map
 FOOT_L, FOOT_W = 0.50, 0.28          # assumed footprint, centred on the IPS point
 T_SKIP = 25.0                        # launch lap
 
+CSV_PATTERN = 'logs/run_cap{}.csv'
 if '--caps' in sys.argv:
     CAPS = [int(c) for c in sys.argv[sys.argv.index('--caps') + 1].split(',')]
+if '--line' in sys.argv:                     # another raceline (the runs must have followed it)
+    LINE = sys.argv[sys.argv.index('--line') + 1]
+if '--csv' in sys.argv:                      # e.g. 'logs/run_default_cap{}.csv'
+    CSV_PATTERN = sys.argv[sys.argv.index('--csv') + 1]
+if '--logs' in sys.argv:                     # e.g. 40=racer_...log,45=racer_...log
+    LOGS = {int(k): v for k, v in (kv.split('=') for kv in sys.argv[sys.argv.index('--logs') + 1].split(','))}
 
 raw = np.loadtxt(LINE, delimiter=',', comments='#')
 s_l, x_l, y_l, psi_l, k_l, wr_l, wl_l, v_l = raw.T[:8]
@@ -50,7 +59,7 @@ def corners(thr=0.45):
 
 
 def load(cap):
-    rows = list(csv.DictReader(open(f'logs/run_cap{cap}.csv')))
+    rows = list(csv.DictReader(open(CSV_PATTERN.format(cap))))
     col = lambda k: np.array([float(r[k]) if r[k] not in ('', 'nan') else np.nan for r in rows])
     d = {k: col(k) for k in ('t', 'true_x', 'true_y', 'true_yaw_deg', 'speed', 'pp_v_est', 'pp_v_enc', 'pp_v_pose',
                              'pp_v_target', 'pp_u_cmd', 'pp_throttle', 'pp_steering', 'pp_e_lat', 'pp_slip',

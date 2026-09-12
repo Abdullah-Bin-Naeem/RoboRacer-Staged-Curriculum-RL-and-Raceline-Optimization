@@ -3,6 +3,8 @@
 #
 #     ./scripts/run.sh sim --headless   simulator, no window, auto-connects
 #     ./scripts/run.sh sim              simulator with a window; hit Connect
+#     ./AutoDRIVE\ Simulator.x86_64
+
 #     ./scripts/run.sh racer            our stack -- starts driving on its own
 #
 # Order does not matter. The bridge listens on 4567 and blocks until the

@@ -1,176 +1,20 @@
-# Qualification 1 — pure pursuit
+# RoboRacer Sim Racing League 2026 — Qualification 1
 
-Submission branch for the AutoDRIVE RoboRacer Sim Racing League 2026,
-qualification round 1, Porto track.
+Our submission for qualification round 1 on the Porto track: one Docker image
+that drives the car by itself.
 
-**Algorithm:** minimum-curvature raceline → AMCL localization → pure pursuit.
-No RL, no online mapping. The map and the racing line are built offline on
-`main` and baked into the image as finished artefacts.
+**How it drives.** Wheel encoders and IMU give dead reckoning. AMCL matches
+the LiDAR against a map of the track that ships inside the image. Pure pursuit
+follows a racing line that also ships inside the image. No ground truth is used.
 
-**Measured:** 6.45 s best on `raceline_a7.0.csv`, more than 500 laps without a
-contact across loop rates from 18 to 85 Hz (2026-09-12).
+**Result.** Best lap 6.45 s; more than 500 laps without touching a wall
+(2026-09-12).
 
-This branch carries only what has to be in the container. The RL stack, the
-raceline optimizer, the notebooks and the run logs stay on `main`; the
-development tooling, the loop-rate measurements and the other racing lines stay
-on `qualification_1_pure_pursuit`, which this branch was cut from.
+## Run it the way the organizers do
 
----
+Two containers on the same host network.
 
-## Layout
-
-The repository root is a copy of the devkit workspace's `src/`, the same place
-our package lives inside the container (`/home/autodrive_devkit/src/`):
-
-```
-Dockerfile              FROM the official devkit image; adds one package
-autodrive_devkit.sh     the entrypoint the rules name — the only automation
-roboracer_stack/        ours: localization, planning, control
-scripts/                build.sh, run.sh — for us; not part of the image
-```
-
-`autodrive_roboracer` is never modified — the rules forbid it, and the base
-image already ships it built. Where its behaviour has to change we do it with a
-launch-level remap (`roboracer_stack/launch/bridge.launch.py` moves the
-ground-truth TF off `/tf`, because otherwise `roboracer_1` has two parents and
-the TF tree breaks). Our code is one separate package, as the guide requires; see
-[`roboracer_stack/README.md`](roboracer_stack/README.md) for what is in it.
-
-## Build and run
-
-Two containers, same host network. The simulator image is the organizers'; the
-racer image is ours.
-
-```bash
-./scripts/build.sh                 # -> autodrive_racer:qualification-1
-
-./scripts/run.sh sim --headless    # terminal 1: simulator
-./scripts/run.sh racer             # terminal 2: our stack
-```
-
-Order does not matter — the bridge listens on 4567 and blocks until the
-simulator connects. In graphics mode, hit **Connect** in the simulator; the car
-starts driving on its own.
-
-## How the organizers run it
-
-The default entrypoint is the whole submission. No arguments, no manual step:
-
-```bash
-docker run --name autodrive_roboracer_api --rm -it \
-  --network=host --ipc=host \
-  <dockerhub-user>/roboracer:qualification-1
-```
-
-`/home/autodrive_devkit.sh` sets the environment, sources the workspace, and
-launches the devkit bridge together with our nodes. It then hands the terminal
-to `bash`, so the container is immediately usable for inspection with the car
-already driving.
-
-If the container is started with `--entrypoint /bin/bash` — the form printed in
-the technical guide — the entrypoint never runs. Bring the stack up by running
-it by hand:
-
-```bash
-/home/autodrive_devkit.sh
-```
-
-### Inspection shells
-
-```bash
-docker exec -it autodrive_roboracer_api bash
-source /home/autodrive_devkit/install/setup.bash   # needed: see below
-ros2 topic list
-tail -f /home/autodrive_devkit/log/racer_*.log
-```
-
-Nothing is appended to `~/.bashrc` and nothing is automated from it, per the
-guide, so a new shell starts no nodes — and, as a consequence, has no ROS on
-its path until you source the workspace yourself. That one line is the whole
-cost, and it is what guarantees a second stack can never come up behind you.
-
-The DDS settings are not in that line: they are `ENV` in the image, so every
-`docker exec` shell inherits them and can actually see the running nodes. A
-shell on a different RMW would find none — an empty `ros2 node list` and no
-error.
-
-## Changing the configuration without rebuilding
-
-Every knob is an environment variable read by `/home/autodrive_devkit.sh`.
-None is needed for the submission; the defaults are the race configuration.
-
-| variable | default | what it does |
-|---|---|---|
-| `RACER_BOOTSTRAP_MODE` | `spawn` | `spawn` seeds AMCL from the measured spawn constant + IMU heading, no restricted topic; `truth` seeds once from `/ips` in the warm-up lap (organizer-confirmed); `global` searches with no prior |
-| `RACER_CONTROL_HZ` | `40` | follower loop rate |
-| `RACER_MODE` | `race` | `dev` turns lap telemetry (restricted lap topics) back on |
-| `RACER_AUTOSTART` | `1` | `0` gives a shell with nothing running |
-| `RACER_EXTRA_ARGS` | — | any `race.launch.py` argument, e.g. `"v_max:=7.5 lookahead_k:=0.6"` |
-
-## The racing line
-
-`raceline_a7.0.csv`: minimum-curvature geometry, velocity profile at 7.0 m/s²
-lateral, 0.15 m body-to-wall margin with extra margin on the straight after R1
-and the S-exit approach. It passes 0.25 m from the wall at its tightest point
-(the C2 apex). Chosen over the faster `a7.0_rec` line (0.03 m of S-exit
-clearance) because qualification rewards clean laps, not tenths.
-
-## Competition legality
-
-Legal inputs: LiDAR, camera, IMU, wheel encoders, steering/throttle feedback.
-`/ips`, `/odom`, `/tf` and all lap and collision telemetry are restricted.
-
-The container launches with `mode:=race`: lap telemetry off, and the follower
-steers on the localizer's estimate rather than on `/odom`. No node that reads a
-restricted topic continuously exists on this branch at all.
-
-The default container reads **no restricted topic at all**. AMCL is seeded by
-`localization_bootstrap` in `spawn` mode from the measured spawn constant
-(`common/frames.py` `SPAWN_*` = 0.800, 3.158, -1.5707, measured with the car
-parked on 2026-09-10 and identical in 30 logged launches) plus the IMU's
-absolute heading, and the node confirms AMCL adopted it before the follower is
-released. Nothing subscribes to `/ips`, so the organizers' `rqt_graph` and bag
-show a stack that never touches ground truth.
-
-`RACER_BOOTSTRAP_MODE=truth` keeps the previous behaviour: **one** sample of
-`/ips` before the car has moved, then the subscription is destroyed
-(`roboracer_stack/common/restricted.py`, `seed()` / `released()`). The
-organizers confirmed that restricted topics may be read during the warm-up lap,
-so this is legal too; it is the fallback for a track whose spawn has not been
-measured yet. `global` runs AMCL's particle search with no prior at all and
-costs a convergence phase.
-
-## Submitting
-
-```bash
-docker tag autodrive_racer:qualification-1 <user>/roboracer:qualification-1
-docker login
-docker push <user>/roboracer:qualification-1
-```
-
-Then submit the Docker Hub link. The guide requires the repository overview
-there to carry step-by-step instructions for that exact tag — the next section
-is written to be pasted in as-is.
-
----
-
-## Docker Hub overview (paste this into the repository overview)
-
-### RoboRacer Sim Racing League 2026 — Qualification 1
-
-AMCL localization and pure pursuit along a pre-optimized minimum-curvature
-raceline, on the Porto track. Built on
-`autodriveecosystem/autodrive_roboracer_api:2026-iros-practice`. The map and the
-racing line ship inside the image; there is nothing to mount and nothing to
-configure.
-
-**1. Pull the tag**
-
-```bash
-docker pull <user>/roboracer:qualification-1
-```
-
-**2. Start the simulator** (organizers' image, in its own terminal)
+**1. Start the simulator** (the organizers' image):
 
 ```bash
 docker run --name autodrive_roboracer_sim --rm -it \
@@ -179,24 +23,22 @@ docker run --name autodrive_roboracer_sim --rm -it \
   autodriveecosystem/autodrive_roboracer_sim:2026-iros-practice
 ```
 
-**3. Start this container**
+**2. Start our image:**
 
 ```bash
 docker run --name autodrive_roboracer_api --rm -it \
   --network=host --ipc=host \
-  <user>/roboracer:qualification-1
+  <dockerhub-user>/roboracer:qualification-1
 ```
 
-No entrypoint override, no extra commands. `/home/autodrive_devkit.sh` sets the
-environment, sources the workspace, and starts the AutoDRIVE bridge together
-with our localization and control nodes. The bridge listens on port 4567 and
-waits, so the order of steps 2 and 3 does not matter.
+**3. Press Connect** in the simulator. The car starts driving on its own.
 
-**4. Hit Connect** on the simulator's Menu Panel. The car starts driving
-immediately.
+The order of steps 1 and 2 does not matter: our bridge waits on port 4567 until
+the simulator connects. If the container is started with `--entrypoint
+/bin/bash`, nothing runs automatically; start the stack with
+`/home/autodrive_devkit.sh`.
 
-**Inspecting a run.** Extra bash sessions start nothing — the codebase is
-launched only from the entrypoint, never from `~/.bashrc`:
+**Looking inside a run:**
 
 ```bash
 docker exec -it autodrive_roboracer_api bash
@@ -205,10 +47,115 @@ ros2 topic list
 tail -f /home/autodrive_devkit/log/racer_*.log
 ```
 
-If `ros2 topic list` comes back empty, a `ros2` daemon from the host is
-answering (the container is on the host network); run `ros2 daemon stop` once
-and repeat. `ros2 bag record -a` and `rqt_graph` do not use the daemon.
+New shells start nothing: the stack is launched only by the entrypoint, never
+from `~/.bashrc`. If `ros2 topic list` is empty, a `ros2` daemon on the host is
+answering instead of the container; run `ros2 daemon stop` once and retry.
 
-**Contents.** `autodrive_roboracer` is the provided devkit package, unmodified.
-`roboracer_stack` is our separate package: dead reckoning, nav2 AMCL against the
-baked-in map, and the pure pursuit follower.
+## What is in the image
+
+| part | what it is |
+|---|---|
+| `autodrive_roboracer` | the provided devkit package, unmodified |
+| `roboracer_stack` | our package: dead reckoning, the AMCL bootstrap, pure pursuit, the AMCL config, the map, the racing line. See [roboracer_stack/README.md](roboracer_stack/README.md). |
+| `/home/autodrive_devkit.sh` | the entrypoint: sets the environment and launches everything |
+
+Repository layout: `Dockerfile` builds the image from the official devkit
+image and adds `roboracer_stack`; `scripts/build.sh` and `scripts/run.sh` are
+for us and are not part of the image.
+
+## Competition legality
+
+Restricted topics: `/ips`, `/odom`, `/tf`, and all lap and collision telemetry.
+
+The image reads none of them. The initial pose comes from the measured spawn
+position of the car (`roboracer_stack/roboracer_stack/common/frames.py`) plus
+the IMU heading; the bootstrap node confirms AMCL adopted it before the
+follower is allowed to drive. Lap telemetry is off. The launch prints a banner
+saying so at startup, and `rqt_graph` shows no subscriber on any restricted
+topic.
+
+`RACER_BOOTSTRAP_MODE=truth` (not used by default) instead reads `/ips` once
+before the car moves and then destroys the subscription. The organizers
+confirmed restricted topics may be read during the warm-up lap, so this is
+legal too; it exists for a track whose spawn has not been measured.
+
+## Build and develop
+
+```bash
+./scripts/build.sh                 # builds autodrive_racer:qualification-1
+./scripts/run.sh sim --headless    # simulator without a window (or: sim)
+./scripts/run.sh racer             # our image, same as the organizers run it
+```
+
+Settings for development, all optional, read by the entrypoint from
+`docker run -e ...`:
+
+| variable | default | effect |
+|---|---|---|
+| `RACER_BOOTSTRAP_MODE` | `spawn` | `truth` reads `/ips` once in the warm-up lap; `global` starts AMCL with no prior |
+| `RACER_CONTROL_HZ` | `40` | follower loop rate |
+| `RACER_MODE` | `race` | `dev` turns lap telemetry back on (restricted, development only) |
+| `RACER_AUTOSTART` | `1` | `0` starts the container with nothing running |
+| `RACER_EXTRA_ARGS` | | extra `race.launch.py` arguments, e.g. `"v_max:=7.5"` |
+
+The development tools, the loop-rate measurements and the other racing lines
+live on the `qualification_1_pure_pursuit` branch, which this branch was cut
+from. The racing line itself was planned on `main`.
+
+## Submit
+
+```bash
+docker tag autodrive_racer:qualification-1 <user>/roboracer:qualification-1
+docker login
+docker push <user>/roboracer:qualification-1
+```
+
+Submit the Docker Hub link. The guide asks for run instructions in the
+repository overview on Docker Hub; the section below is written to be pasted
+there as-is.
+
+---
+
+## Docker Hub overview (paste as-is)
+
+### RoboRacer Sim Racing League 2026 — Qualification 1
+
+AMCL localization and pure pursuit along a pre-optimized racing line on the
+Porto track. Built on `autodriveecosystem/autodrive_roboracer_api:2026-iros-practice`.
+The map and the racing line ship inside the image; nothing to mount, nothing to
+configure.
+
+**1. Pull:** `docker pull <user>/roboracer:qualification-1`
+
+**2. Start the simulator** (organizers' image, in its own terminal):
+
+```bash
+docker run --name autodrive_roboracer_sim --rm -it \
+  --network=host --ipc=host \
+  -v /tmp/.X11-unix:/tmp/.X11-unix:rw --env DISPLAY --privileged --gpus all \
+  autodriveecosystem/autodrive_roboracer_sim:2026-iros-practice
+```
+
+**3. Start this container:**
+
+```bash
+docker run --name autodrive_roboracer_api --rm -it \
+  --network=host --ipc=host \
+  <user>/roboracer:qualification-1
+```
+
+**4. Press Connect** on the simulator's menu panel. The car drives immediately.
+Steps 2 and 3 can be done in either order.
+
+**Inspecting a run.** Extra shells start nothing (no `~/.bashrc` automation):
+
+```bash
+docker exec -it autodrive_roboracer_api bash
+source /home/autodrive_devkit/install/setup.bash
+ros2 topic list        # if empty: ros2 daemon stop, then retry
+tail -f /home/autodrive_devkit/log/racer_*.log
+```
+
+**Contents.** `autodrive_roboracer` is the provided devkit, unmodified.
+`roboracer_stack` is our package: dead reckoning, nav2 AMCL against the built-in
+map, and the pure pursuit follower. No restricted topic is read.

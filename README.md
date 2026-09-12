@@ -97,6 +97,12 @@ error.
 
 ## Running the sim and the racer on two machines
 
+> **Superseded on 2026-09-12.** The one-machine rate was a TCP deadlock on
+> loopback, not CPU: with `tools/libnodelay.so` preloaded into the bridge the
+> loop runs at 77-85 Hz on one machine and can be pinned to any rate. See
+> [HZ_FIX.md](HZ_FIX.md), and [HZ_ANALYSIS.md](HZ_ANALYSIS.md) for how the
+> stack behaved from 20 to 80 Hz. The section below is kept for reference.
+
 The bridge is a WebSocket server on 4567 and the simulator is its *client*, so
 the two never had to share a host — and on a machine that cannot feed the bridge
 fast enough, they should not. Everything the bridge publishes comes out of a
@@ -141,6 +147,9 @@ that triggers it.
 Use a wire. Wi-Fi jitter arrives as tick jitter, one for one.
 
 ## Watching the sensor rate
+
+From the host, `python3 tools/topic_rates.py 15 /autodrive/roboracer_1/` prints
+every topic's rate in one table (see `HZ_FIX.md`). Inside the container:
 
 `tools/rate_monitor.py` reports the simulator tick and the control-loop rate once
 a second, live, while the car drives. It needs no rebuild — it is copied into the

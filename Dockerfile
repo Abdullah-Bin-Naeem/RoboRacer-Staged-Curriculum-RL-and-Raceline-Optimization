@@ -47,6 +47,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # The track is baked in: setup.py installs maps/ and raceline/ into the package
 # share and roboracer_stack.common.frames resolves both through the ament index,
 # so nothing depends on where the repo was cloned.
+# log_localization (the log_csv:= run logger, a mode:=dev instrument that
+# race mode omits) builds a distance field with scipy.ndimage, and the base
+# image has no scipy: without this the node dies at startup with
+# ModuleNotFoundError and no CSV is ever written. Its own layer, after the
+# big apt block, so adding it does not rebuild that.
+RUN apt-get update && apt-get install -y --no-install-recommends python3-scipy \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY roboracer_stack /home/autodrive_devkit/src/roboracer_stack
 RUN bash -c 'source /opt/ros/humble/setup.bash \
     && cd /home/autodrive_devkit \

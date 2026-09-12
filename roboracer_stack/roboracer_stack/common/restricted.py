@@ -31,12 +31,11 @@ So there are two access patterns, and they get two functions:
     warn(node, topic, why)   A CONTINUOUS subscription. Not legal for a timed
                              run, whatever the topic; logged in red.
 
-The distinction is load-bearing. Seeding from /ips once is the difference
-between slam_toolbox starting on the true pose and starting on a hardcoded
-guess -- and slam_toolbox has no global relocalization to recover a wrong guess,
-so without the seed a wrong constant is frozen for the whole run. Treating that
-single read as equivalent to streaming ground truth into the control path is
-what made the seed look illegal and pushed race runs onto the guess instead.
+The distinction is load-bearing. Seeding from /ips once is what puts a
+localizer onto the right pose before the car moves; treating that single read
+as equivalent to streaming ground truth into the control path is what made the
+seed look illegal and pushed race runs onto a guess instead. The default
+container needs neither: it seeds from the measured spawn constant.
 
 A node that seeds MUST then call released(), so the terminal shows ground truth
 actually being let go rather than merely promised.

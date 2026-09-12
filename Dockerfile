@@ -11,32 +11,25 @@
 # its behaviour needs changing we do it with a launch-level remap
 # (roboracer_stack/launch/bridge.launch.py).
 #
-# autodrive_devkit/ is committed on this branch for reference -- the bridge
-# source is what documents the topic names and QoS every node here matches --
-# but it is deliberately NOT copied into the image. The base image already ships
-# it, built; overwriting it would be exactly the modification the rules
-# prohibit. See .dockerignore.
+# The provided autodrive_roboracer package is not in this repository at all:
+# the base image ships it built, and the rules forbid modifying it.
 
 ARG BASE_TAG=2026-iros-practice
 FROM autodriveecosystem/autodrive_roboracer_api:${BASE_TAG}
 
-# The base image has Python 3.10, numpy, opencv, laser_geometry and rviz2 -- and
-# no nav2 and no slam_toolbox. Everything below is a localizer dependency:
+# The base image has Python 3.10, numpy and opencv, and no nav2. Everything
+# below is a localizer dependency:
 #
 #   nav2-amcl              the localizer this branch is qualified on
 #   nav2-map-server        serves maps/track_clean.pgm to it
 #   nav2-lifecycle-manager amcl and map_server are lifecycle nodes; without the
 #                          manager they come up UNCONFIGURED and silently do
 #                          nothing
-#   slam-toolbox           the `localizer:=slam` fallback, kept because it is a
-#                          working second option (6.7 s) if AMCL misbehaves on
-#                          the evaluation machine
 #   rmw-cyclonedds-cpp     every lap time on this branch was measured on cyclone
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-humble-nav2-amcl \
         ros-humble-nav2-map-server \
         ros-humble-nav2-lifecycle-manager \
-        ros-humble-slam-toolbox \
         ros-humble-rmw-cyclonedds-cpp \
     && rm -rf /var/lib/apt/lists/*
 
@@ -47,14 +40,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # The track is baked in: setup.py installs maps/ and raceline/ into the package
 # share and roboracer_stack.common.frames resolves both through the ament index,
 # so nothing depends on where the repo was cloned.
-# log_localization (the log_csv:= run logger, a mode:=dev instrument that
-# race mode omits) builds a distance field with scipy.ndimage, and the base
-# image has no scipy: without this the node dies at startup with
-# ModuleNotFoundError and no CSV is ever written. Its own layer, after the
-# big apt block, so adding it does not rebuild that.
-RUN apt-get update && apt-get install -y --no-install-recommends python3-scipy \
-    && rm -rf /var/lib/apt/lists/*
-
 COPY roboracer_stack /home/autodrive_devkit/src/roboracer_stack
 RUN bash -c 'source /opt/ros/humble/setup.bash \
     && cd /home/autodrive_devkit \

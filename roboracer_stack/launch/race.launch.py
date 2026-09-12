@@ -1,68 +1,32 @@
 """Everything except the simulator, in one command.
 
-    ros2 launch roboracer_stack race.launch.py                    # AMCL
-    ros2 launch roboracer_stack race.launch.py localizer:=slam    # slam_toolbox
-    ros2 launch roboracer_stack race.launch.py mode:=race         # nothing restricted
+    ros2 launch roboracer_stack race.launch.py mode:=race    # the submission
+    ros2 launch roboracer_stack race.launch.py               # dev mode
 
-This is the ONLY package that composes others. Everything it starts is a
+This is the ONLY file that composes others. Everything it starts is a
 subsystem that owns itself and nothing else:
 
-    launch/bridge.launch.py            devkit bridge, ground-truth TF remapped
-    launch/chassis.launch.py      odom -> roboracer_1 -> lidar
-    launch/{amcl,slam}.launch.py  map -> odom          <- interchangeable
-    launch/instruments.launch.py  everything restricted
-    launch/follower.launch.py          pure pursuit
-
-Each localizer opens its own RViz with the config that matches it; `rviz:=` is
-passed through, so composing never produces two windows.
-
-THE localizer ARGUMENT
-----------------------
-Before this file existed in this form, `race.launch.py` included the AMCL launch
-file by name, so the A/B the whole design is built around could not be run from
-the top-level entry point at all -- you had to hand-compose three terminals. Doing
-that by hand is how several runs ended up driving on ground truth without anyone
-noticing. `localizer:=slam` is the entire fix.
-
-    amcl    nav2 AMCL against track_clean.pgm; publishes /amcl_pose
-    slam    slam_toolbox against the track_sm pose graph; publishes /pose.
-            Seeded by the same localization_bootstrap as AMCL. It has NO global
-            relocalization, so the one-shot truth seed is not a convenience
-            here -- it is the only thing that gets it onto the right pose.
-    none    no map -> odom at all. Only useful with mode:=dev, where the
-            follower can still drive on ground truth.
+    launch/bridge.launch.py     devkit bridge, ground-truth TF remapped off /tf
+    launch/chassis.launch.py    odom -> roboracer_1 -> lidar (dead reckoning)
+    launch/amcl.launch.py       map -> odom (nav2 AMCL + localization_bootstrap)
+    launch/follower.launch.py   pure pursuit
 
 THE mode ARGUMENT
 -----------------
-`mode:=race` is a single switch that makes the run legal, rather than nine
-defaults that each have to be right:
+`mode:=race` (what the entrypoint runs) makes the run legal with one switch:
 
-    - instruments.launch.py is not included at all
     - dev_lap_telemetry off      (lap topics are restricted)
     - bootstrap_seconds:=0       (no ground-truth driving phase)
     - use_tf_pose:=true          (steer on the estimate, not on /odom)
 
-`mode:=dev` (the default) leaves the development conveniences on and every node
-reading a restricted topic says so at startup.
+`mode:=dev` keeps those development conveniences; any node that reads a
+restricted topic says so at startup (common/restricted.py).
 
-WHAT mode:=race DOES *NOT* FORCE, AND WHY
------------------------------------------
-bootstrap_mode. It used to be pinned to 'global', on the belief that any read of
-/ips was illegal. It is not: the first lap is a warmup and the timer starts
-after it, so seeding the initial pose from one /ips sample before the car moves
-is inside the permitted window -- and localization_bootstrap destroys that
-subscription as soon as the seed resolves, so nothing reads ground truth during
-the timed laps. See common/restricted.py, THE WARMUP WINDOW.
-
-Pinning it was actively harmful. slam_toolbox has no global search at all, so
-`mode:=race localizer:=slam` fell through to the hardcoded map_start_pose, and
-slam seeds with a +-0.5 m correlative search -- an error larger than that could
-never be recovered and stayed frozen for the whole run. The default is now
-bootstrap_mode:=spawn in both modes: the measured spawn constant
-(common/frames.SPAWN_*) plus the IMU heading, which reads no restricted topic
-at all. bootstrap_mode:=truth is the organizer-confirmed alternative (one /ips
-read in the warm-up lap); pass bootstrap_mode:=global explicitly to start with
-no prior at all (AMCL only).
+bootstrap_mode is not forced by mode. The default, `spawn`, seeds AMCL from the
+measured spawn constant (common/frames.SPAWN_*) plus the IMU heading and reads
+no restricted topic at all. `truth` reads /ips once inside the warm-up lap
+(organizer-confirmed) and destroys the subscription; `global` starts AMCL with
+no prior and pays a convergence phase.
 """
 
 import os
@@ -74,10 +38,8 @@ from launch.actions import (DeclareLaunchArgument, IncludeLaunchDescription,
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node
 from roboracer_stack.common.frames import (
-    DEFAULT_MAP_YAML, DEFAULT_POSE_GRAPH, DEFAULT_RACELINE, SPAWN_X, SPAWN_Y,
-    SPAWN_YAW)
+    DEFAULT_MAP_YAML, DEFAULT_RACELINE, SPAWN_X, SPAWN_Y, SPAWN_YAW)
 
 # Passed straight through to pure_pursuit when given.
 # curvature_preview_m matters more than it looks: with no v_mps column in the
@@ -105,8 +67,8 @@ TUNABLES = ('lookahead_min', 'lookahead_max', 'lookahead_k', 'lookahead_curv_gai
             # legacy launch ramp (throttle_mode:=legacy only)
             'a_long_launch', 'a_long_launch_v')
 
-# Everything that differs between the two localizers, in one table. Adding a
-# third localizer means adding a row here and one launch file -- not editing
+# Everything that is specific to the localizer, in one table. Adding another
+# localizer means adding a row here and one launch file -- not editing
 # conditionals scattered through this function.
 LOCALIZERS = {
     'amcl': dict(
@@ -119,19 +81,6 @@ LOCALIZERS = {
         # Particles can be scattered across the map with no prior, which is the
         # race-legal way to start.
         has_global=True,
-    ),
-    'slam': dict(
-        launch='slam.launch.py',
-        # slam_toolbox publishes the same message type on /pose, VOLATILE.
-        pose_topic='/pose',
-        # localization_bootstrap now serves this localizer too, so the topic
-        # does get latched. It used to be AMCL-only, which left slam living on
-        # the hardcoded map_start_pose -- and slam_toolbox seeds with a +-0.5 m
-        # correlative search, so a wrong constant was frozen for the whole run.
-        has_ready=True,
-        # But it has NO global search to fall back on, so mode:=race starts it
-        # on roboracer_stack.common.frames.SPAWN_* and nothing else.
-        has_global=False,
     ),
 }
 
@@ -149,7 +98,6 @@ def _launch(context, *args, **kwargs):
     race_mode = cfg('mode').lower() == 'race'
     # In race mode the legal value wins over whatever was passed, so that a
     # stale flag on the command line cannot quietly make the run illegal.
-    measure_error = 'false' if race_mode else cfg('measure_error')
     dev_lap = 'false' if race_mode else cfg('dev_lap_telemetry')
     bootstrap_seconds = '0.0' if race_mode else cfg('bootstrap_seconds')
     use_tf_pose = 'true' if race_mode else cfg('use_tf_pose')
@@ -159,11 +107,8 @@ def _launch(context, *args, **kwargs):
     # destroys the subscription the moment the seed resolves. See
     # common/restricted.py, THE WARMUP WINDOW.
     #
-    # Forcing 'global' here was the bug. slam_toolbox has NO global search, so
-    # `mode:=race localizer:=slam` silently fell back to the hardcoded
-    # map_start_pose -- and slam seeds with a +-0.5 m correlative search, so a
-    # wrong constant was frozen for the entire timed run. The seed is both legal
-    # and the only thing that makes that combination work.
+    # Forcing 'global' would only cost a convergence phase; the seed is legal,
+    # so it is not forced.
     bootstrap_mode = cfg('bootstrap_mode').lower()
     if bootstrap_mode not in ('spawn', 'truth', 'global'):
         raise RuntimeError(
@@ -176,7 +121,6 @@ def _launch(context, *args, **kwargs):
         os.path.join(share, 'launch', name))
 
     banner = (f'mode={cfg("mode")}  localizer={localizer}  '
-              f'instruments={"off" if measure_error == "false" else "ON"}  '
               f'bootstrap={bootstrap_mode}')
     if race_mode:
         seeding = cfg('bootstrap').lower() == 'true'
@@ -215,24 +159,8 @@ def _launch(context, *args, **kwargs):
                     'bootstrap': cfg('bootstrap'),
                     'bootstrap_mode': bootstrap_mode,
                     'require_convergence': cfg('require_convergence')}
-        loc_args['map_yaml' if localizer == 'amcl' else 'map_graph'] = (
-            cfg('map_yaml') if localizer == 'amcl' else cfg('map_graph'))
+        loc_args['map_yaml'] = cfg('map_yaml')
 
-        # Warn only when nothing will seed this localizer: no global search AND
-        # no one-shot truth seed leaves it on the hardcoded constant, which
-        # slam_toolbox's +-0.5 m search cannot correct.
-        seeded = (cfg('bootstrap').lower() == 'true' and bootstrap_mode in ('truth', 'spawn'))
-        if not spec['has_global'] and not seeded:
-            actions.append(LogInfo(msg=(
-                f'[race] WARNING: {localizer} has no global relocalization and '
-                'no truth seed, so it starts on roboracer_stack.common.frames.SPAWN_* '
-                f'({cfg("initial_x")}, {cfg("initial_y")}, {cfg("initial_yaw")}) '
-                'and cannot recover an error larger than ~0.5 m. '
-                'bootstrap_mode:=spawn (or truth) fixes this.')))
-        # The localizer owns its own RViz (so that launching it standalone is
-        # not blind); we just pass our value through rather than opening a
-        # second window.
-        loc_args['rviz'] = cfg('rviz')
         actions.append(IncludeLaunchDescription(
             src(loc_share, spec['launch']),
             launch_arguments=loc_args.items(),
@@ -241,43 +169,12 @@ def _launch(context, *args, **kwargs):
 
     # /localization_ready is latched by the bootstrap node, so it appears only
     # when a localizer that HAS one is running AND the bootstrap is enabled.
-    # Anything that waits on it must agree, or it waits forever: with
-    # bootstrap:=false, localization_error used to hold every sample silently.
+    # Anything that waits on it must agree, or it waits forever.
     ready_latched = ('true' if (spec and spec['has_ready']
                                 and cfg('bootstrap').lower() == 'true')
                      else 'false')
 
-    # 4. instruments -- every restricted reader, together, omitted in race mode
-    #    log_csv lives here because the CSV logger reads ground truth
-    #    continuously, which is the pattern mode:=race must exclude wholesale.
-    if cfg('log_csv') and measure_error == 'false':
-        actions.append(LogInfo(msg=(
-            f'[race] NOTE: log_csv:={cfg("log_csv")} is ignored -- the CSV '
-            'logger reads ground truth continuously, so it lives in '
-            'instruments.launch.py, which this mode omits. Use mode:=dev.')))
-
-    actions.append(IncludeLaunchDescription(
-        src(loc_share, 'instruments.launch.py'),
-        launch_arguments={
-            'use_tf': use_tf_pose,
-            'require_ready': ready_latched,
-            'wall_margin': cfg('wall_margin'),
-            'log_csv': cfg('log_csv'),
-            'log_rate': cfg('log_rate'),
-        }.items(),
-        condition=IfCondition(measure_error),
-    ))
-
-    # 5. RViz -- only when no localizer is running, since each localizer opens
-    #    its own with the config that matches it.
-    if spec is None:
-        actions.append(Node(
-            package='rviz2', executable='rviz2', name='rviz2', output='log',
-            condition=IfCondition(LaunchConfiguration('rviz')),
-            arguments=['-d', os.path.join(own_share, 'rviz', 'follow.rviz')],
-        ))
-
-    # 6. follower, on a delay so the localizer is publishing before it asks
+    # 4. follower, on a delay so the localizer is publishing before it asks
     follower_args = {
         'path_csv': cfg('path_csv'),
         'pose_topic': spec['pose_topic'] if spec else cfg('pose_topic'),
@@ -303,7 +200,7 @@ def generate_launch_description():
     args = [
         DeclareLaunchArgument(
             'localizer', default_value='amcl',
-            description="which map->odom source: 'amcl', 'slam', or 'none'"),
+            description="which map->odom source: 'amcl' or 'none'"),
         DeclareLaunchArgument(
             'mode', default_value='dev',
             description="'race' refuses every restricted topic and forces the "
@@ -311,9 +208,6 @@ def generate_launch_description():
         DeclareLaunchArgument('path_csv', default_value=DEFAULT_RACELINE),
         DeclareLaunchArgument('map_yaml', default_value=DEFAULT_MAP_YAML,
                               description='occupancy grid, AMCL only'),
-        DeclareLaunchArgument('map_graph', default_value=DEFAULT_POSE_GRAPH,
-                              description='serialized pose graph, slam only'),
-        DeclareLaunchArgument('rviz', default_value='true'),
 
         # Turn pieces off when running them yourself.
         DeclareLaunchArgument('bridge', default_value='true'),
@@ -322,9 +216,6 @@ def generate_launch_description():
         DeclareLaunchArgument('follower', default_value='true'),
 
         # --- development-only; all forced off by mode:=race ---
-        DeclareLaunchArgument(
-            'measure_error', default_value='true',
-            description='compare the estimate against ground truth (RESTRICTED)'),
         DeclareLaunchArgument('dev_lap_telemetry', default_value='true'),
         DeclareLaunchArgument('bootstrap', default_value='true'),
         DeclareLaunchArgument(
@@ -343,7 +234,7 @@ def generate_launch_description():
             'use_tf_pose', default_value='true',
             description='follower reads TF map->roboracer_1 rather than the '
                         "localizer's pose topic. Measured better for AMCL "
-                        '(0.177 m vs 0.192 m mean) and REQUIRED for slam.'),
+                        '(0.177 m vs 0.192 m mean).'),
         DeclareLaunchArgument(
             'pose_topic', default_value='/amcl_pose',
             description='only consulted when localizer:=none; otherwise the '
@@ -352,16 +243,6 @@ def generate_launch_description():
             'require_convergence', default_value='true',
             description='park the follower rather than drive on a pose that was '
                         'never confirmed'),
-        # Body-to-wall clearance at the tightest point of the line being driven,
-        # with the 0.27 m car width subtracted:
-        #   centerline_full.csv 0.367     raceline_a4.5.csv  0.15 (optimize_raceline.py --safety)
-        DeclareLaunchArgument(
-            'log_csv', default_value='',
-            description='write ground truth vs estimate to this CSV, one row '
-                        'per sample; empty disables it. dev mode only'),
-        DeclareLaunchArgument('log_rate', default_value='20.0',
-                              description='CSV samples per second'),
-        DeclareLaunchArgument('wall_margin', default_value='0.15'),
         DeclareLaunchArgument(
             'follower_delay', default_value='2.0',
             description='fallback delay; with an AMCL bootstrap the follower '

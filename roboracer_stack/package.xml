@@ -5,9 +5,9 @@
   <name>roboracer_stack</name>
   <version>0.1.0</version>
   <description>Autonomous racing stack for the AutoDRIVE RoboRacer: encoder+IMU
-  dead reckoning, map-relative localization (nav2 AMCL, or slam_toolbox as a
-  fallback), and pure pursuit along a pre-optimized minimum-curvature raceline.
-  The Porto map and the racing lines ship inside this package.
+  dead reckoning, map-relative localization (nav2 AMCL), and pure pursuit
+  along a pre-optimized minimum-curvature raceline. The Porto map and the
+  racing line ship inside this package.
 
   A separate package from autodrive_roboracer, which is used unmodified, as the
   competition rules require.</description>
@@ -29,16 +29,14 @@
   <!-- Needed by localization/bootstrap.py, which polls AMCL's lifecycle state. -->
   <exec_depend>lifecycle_msgs</exec_depend>
 
-  <!-- Launched by launch/amcl.launch.py and launch/slam.launch.py. None of
+  <!-- Launched by launch/amcl.launch.py. None of
        these are in the base image; the Dockerfile apt-installs them. -->
   <exec_depend>nav2_amcl</exec_depend>
   <exec_depend>nav2_map_server</exec_depend>
   <exec_depend>nav2_lifecycle_manager</exec_depend>
-  <exec_depend>slam_toolbox</exec_depend>
 
   <!-- The devkit bridge, composed by launch/bridge.launch.py and never modified. -->
   <exec_depend>autodrive_roboracer</exec_depend>
-  <exec_depend>rviz2</exec_depend>
 
   <!-- test/ is the flake8 gate only. ament_copyright and ament_pep257 are the
        other two the devkit template ships; this codebase carries no copyright

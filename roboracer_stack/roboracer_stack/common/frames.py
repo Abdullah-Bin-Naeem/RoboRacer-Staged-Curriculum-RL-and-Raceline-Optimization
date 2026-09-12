@@ -88,25 +88,16 @@ MAPS_DIR = _data_dir('RACER_MAPS_DIR', 'maps')
 RACELINE_DIR = _data_dir('RACER_RACELINE_DIR', 'raceline')
 
 DEFAULT_MAP_YAML = os.path.join(MAPS_DIR, 'track_clean.yaml')
-# BASE PATH, NO EXTENSION -- slam_toolbox appends .posegraph and .data itself.
-DEFAULT_POSE_GRAPH = os.path.join(MAPS_DIR, 'track_sm')
 # Built by raceline/optimize_raceline.py on the main branch: min-curvature
 # geometry with extra left margin on the straight after R1 and on the S-exit
 # approach (--margin-zones 2.5:6:L:0.10,17:21.5:L:0.15), 0.15 m body-to-wall
 # margin elsewhere; velocity profile at a_lat 7.0, a_long 5.0 m/s^2.
 #
-# THE QUALIFICATION DEFAULT. Measured on the car, AMCL + pure pursuit, run 38:
-# 6.50 s best / 6.58 s mean over 7 clean laps, wall clearance 0.07 m left and
-# 0.10 m right. Two other rungs ship beside it, same geometry:
-#
-#   raceline_a6.5.csv      run 40, 6.65 / 6.71 over 32 consecutive clean laps.
-#                          The safe rung -- most margin. Use it if the
-#                          evaluation machine runs the loop slow.
-#   raceline_a7.0_rec.csv  run 41, 6.45 / 6.53 -- beats the 6.46 track record,
-#                          but the S-exit clearance falls to 0.03 m. Deliberately
-#                          NOT the default; see VEHICLE_MODEL.md section 7.
-#
-# Override without rebuilding:  race.launch.py path_csv:=<abs path>
+# THE QUALIFICATION LINE, the only one shipped. Measured on the car, AMCL +
+# pure pursuit: 6.45 s best over 500+ clean laps at 40-85 Hz on 2026-09-12; the
+# line passes 0.25 m from the wall at its tightest point (the C2 apex, s 14.7).
+# The other rungs (a6.5, the safe one; a7.0_rec, faster but 0.03 m of S-exit
+# clearance) stay on the qualification_1_pure_pursuit branch.
 DEFAULT_RACELINE = os.path.join(RACELINE_DIR, 'raceline_a7.0.csv')
 
 # ---- Vehicle ---------------------------------------------------------------

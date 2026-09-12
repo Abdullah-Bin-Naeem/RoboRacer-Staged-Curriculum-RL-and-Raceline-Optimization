@@ -78,12 +78,9 @@ fi
 unset _dds
 
 # ---- What is being raced ---------------------------------------------------
-# Every value is overridable from `docker run -e NAME=...`, so a teammate can
-# change the line or fall back to slam without rebuilding the image.
+# Every value is overridable from `docker run -e NAME=...` for development;
+# the organizers run the image with none set.
 #
-#   localizer:=amcl   nav2 AMCL against maps/track_clean.pgm. `slam` is built
-#                     into the image too and works (6.7 s), but AMCL is what
-#                     this branch is qualified on.
 #   mode:=race        instruments off, no lap telemetry, steer on the estimate.
 #                     race.launch.py refuses every restricted reader in this
 #                     mode; see roboracer_stack/common/restricted.py.
@@ -104,20 +101,16 @@ unset _dds
 #                     limiter. Harmless when the sim is slower -- pure_pursuit
 #                     measures its own round trip and derates the speed targets,
 #                     it does not key off this.
-#   rviz:=false       there is no display in the evaluation container.
 #
-# path_csv is left unset on purpose: common/frames.py picks the default
-# (raceline_a7.0.csv, run 38, 6.50 s) and prints it, so the choice lives in one
-# documented place instead of two.
+# The localizer is nav2 AMCL against maps/track_clean.pgm and the line is
+# raceline_a7.0.csv, the only ones shipped; both are the launch defaults
+# (common/frames.py), so neither is passed here.
 ARGS=(
-  "localizer:=${RACER_LOCALIZER:-amcl}"
   "mode:=${RACER_MODE:-race}"
   "bootstrap:=true"
   "bootstrap_mode:=${RACER_BOOTSTRAP_MODE:-spawn}"
   "control_hz:=${RACER_CONTROL_HZ:-40}"
-  "rviz:=${RACER_RVIZ:-false}"
 )
-[ -n "${RACER_PATH_CSV:-}" ] && ARGS+=("path_csv:=${RACER_PATH_CSV}")
 # Anything else, word-split on purpose: RACER_EXTRA_ARGS="v_max:=7.5 lookahead_k:=0.6"
 # shellcheck disable=SC2206
 [ -n "${RACER_EXTRA_ARGS:-}" ] && ARGS+=(${RACER_EXTRA_ARGS})

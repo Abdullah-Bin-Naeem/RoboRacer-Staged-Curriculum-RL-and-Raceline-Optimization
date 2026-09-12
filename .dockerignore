@@ -1,9 +1,7 @@
-# The devkit is committed on this branch for reference (the bridge source is
-# what documents the topic names and QoS our nodes match), but the base image
-# already ships it built at /home/autodrive_devkit and the rules forbid
-# modifying it. Keeping it out of the build context makes that structural
-# rather than a promise -- no COPY can pick it up by accident.
-autodrive_devkit/
+# Development leftovers that may exist on a checkout but are not part of the
+# image (the Dockerfile copies only roboracer_stack/ and the entrypoint).
+logs/
+tools/
 
 # colcon artefacts, if the repo was ever built in place
 build/

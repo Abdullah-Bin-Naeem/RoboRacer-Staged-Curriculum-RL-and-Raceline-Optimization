@@ -5,9 +5,8 @@
     odom -> roboracer_1 -> lidar
 
 Encoder + IMU dead reckoning, and the lidar extrinsic the devkit normally
-broadcasts. Both AMCL and slam_toolbox build on top of this and neither owns it,
-so it lives here rather than being copy-pasted into both -- which is exactly
-what it was before this package existed.
+broadcasts. AMCL builds on top of this and does not own it, so it lives here
+rather than in the localizer's launch file.
 
 Race-legal: encoders, IMU and a constant transform. No ground truth.
 """

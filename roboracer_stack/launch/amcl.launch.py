@@ -2,12 +2,11 @@
 
     ros2 launch roboracer_stack amcl.launch.py
 
-Publishes map -> odom. That is ALL this file does -- it is one of two
-interchangeable localizers and owns nothing else:
+Publishes map -> odom. That is ALL this file does -- it is the localizer and
+owns nothing else:
 
   odom -> roboracer_1 -> lidar    launch/chassis.launch.py
-  restricted instruments          launch/instruments.launch.py
-  RViz, bridge, follower          launch/race.launch.py
+  bridge, follower                launch/race.launch.py
 
 Normally reached as `race.launch.py localizer:=amcl`; launchable alone for
 debugging, provided chassis.launch.py is already up.
@@ -86,17 +85,6 @@ def _nodes(context, *args, **kwargs):
             condition=IfCondition(LaunchConfiguration('bootstrap')),
         ),
 
-        # RViz belongs with the localizer, not only with the composition root.
-        # It used to live in race.launch.py, which made `ros2 launch
-        # roboracer_stack amcl.launch.py` -- the obvious command for debugging
-        # one localizer -- come up blind. Defaults ON so the standalone command just works;
-        # race.launch.py passes its own rviz:= through, so composing does not
-        # produce two windows.
-        Node(
-            package='rviz2', executable='rviz2', name='rviz2', output='log',
-            condition=IfCondition(LaunchConfiguration('rviz')),
-            arguments=['-d', os.path.join(pkg_share, 'rviz', 'amcl.rviz')],
-        ),
     ]
 
 
@@ -126,9 +114,5 @@ def generate_launch_description():
         DeclareLaunchArgument('initial_x', default_value=SPAWN_X),
         DeclareLaunchArgument('initial_y', default_value=SPAWN_Y),
         DeclareLaunchArgument('initial_yaw', default_value=SPAWN_YAW),
-        DeclareLaunchArgument(
-            'rviz', default_value='true',
-            description='open RViz with this localizer''s config; '
-                        'race.launch.py passes its own value through'),
         OpaqueFunction(function=_nodes),
     ])

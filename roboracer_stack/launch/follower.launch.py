@@ -2,10 +2,7 @@
 
     ros2 launch roboracer_stack follower.launch.py
 
-RViz and /map used to be started here. They are not the follower's to own --
-race.launch.py composes the window, the localizer launches serve the grid -- and
-having the follower start them is how two /map publishers on different frames
-ended up racing each other. Normally reached as race.launch.py; launchable alone against
+Normally reached as race.launch.py; launchable alone against
 an already-running localizer.
 
 Tuning knobs are exposed as launch arguments so they can be overridden without

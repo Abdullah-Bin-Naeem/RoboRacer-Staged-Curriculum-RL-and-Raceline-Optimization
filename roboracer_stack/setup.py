@@ -9,7 +9,7 @@ setup(
     name=package_name,
     version='0.1.0',
     # find_packages, not [package_name]: the code is split into subsystem
-    # submodules (common, perception, localization, planning, control, mapping)
+    # submodules (common, localization, planning, control)
     # and a bare list would install only the top-level __init__.py.
     packages=find_packages(exclude=['test', 'tools']),
     data_files=[
@@ -19,7 +19,6 @@ setup(
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
         (os.path.join('share', package_name, 'config'),
             glob('config/*.yaml') + glob('config/*.xml')),
-        (os.path.join('share', package_name, 'rviz'), glob('rviz/*.rviz')),
         # The track, baked in. common/frames.py finds both of these through the
         # ament index, so nothing depends on where the repo was cloned.
         (os.path.join('share', package_name, 'maps'), glob('maps/*')),
@@ -38,11 +37,7 @@ setup(
         'console_scripts': [
             'dead_reckoning = roboracer_stack.localization.dead_reckoning:main',
             'localization_bootstrap = roboracer_stack.localization.bootstrap:main',
-            'localization_error = roboracer_stack.localization.localization_error:main',
-            'log_localization = roboracer_stack.localization.log_localization:main',
             'pure_pursuit = roboracer_stack.control.pure_pursuit:main',
-            'calibrate_steering = roboracer_stack.control.calibrate_steering:main',
-            'map_publisher = roboracer_stack.mapping.map_publisher:main',
         ],
     },
 )

@@ -78,9 +78,6 @@ LOCALIZERS = {
         pose_topic='/amcl_pose',
         # AMCL's bootstrap latches /localization_ready; the follower waits on it.
         has_ready=True,
-        # Particles can be scattered across the map with no prior, which is the
-        # race-legal way to start.
-        has_global=True,
     ),
 }
 

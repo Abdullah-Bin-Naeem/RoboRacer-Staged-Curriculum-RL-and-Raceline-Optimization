@@ -11,7 +11,7 @@ setup(
     # find_packages, not [package_name]: the code is split into subsystem
     # submodules (common, localization, planning, control)
     # and a bare list would install only the top-level __init__.py.
-    packages=find_packages(exclude=['test', 'tools']),
+    packages=find_packages(),
     data_files=[
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),

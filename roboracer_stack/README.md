@@ -13,8 +13,7 @@ roboracer_stack/
 ├── launch/            race.launch.py starts everything; the others start one part each
 ├── config/            amcl.yaml, pure_pursuit.yaml, cyclonedds.xml
 ├── maps/              the Porto track
-├── raceline/          the racing line (raceline_a7.0.csv)
-└── test/              flake8
+└── raceline/          the racing line (raceline_a7.0.csv)
 ```
 
 ## Running it

@@ -41,8 +41,6 @@
   <!-- test/ is the flake8 gate only. ament_copyright and ament_pep257 are the
        other two the devkit template ships; this codebase carries no copyright
        headers and its docstring style is its own, so they are not gates here. -->
-  <test_depend>ament_flake8</test_depend>
-  <test_depend>python3-pytest</test_depend>
 
   <export>
     <build_type>ament_python</build_type>

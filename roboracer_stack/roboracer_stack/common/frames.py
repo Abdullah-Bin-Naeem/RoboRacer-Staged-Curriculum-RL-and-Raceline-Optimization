@@ -25,14 +25,24 @@ WORLD = 'world'
 LIDAR_XYZ = ('0.2733', '0.0', '0.096')
 
 # ---- Spawn -----------------------------------------------------------------
-# Fallback initial pose. NOT (0, 0, 0): that cell is a WALL in track_clean.pgm
-# and sits 0.71 m off the racing line, so a filter seeded there starts
-# confidently inside a barrier. This is the nearest centreline point.
-# Replace with the measured spawn if the car starts elsewhere:
+# The MEASURED spawn on the 2026-iros-practice Porto track: the rear-axle pose
+# the simulator reports while the car is still parked. Measured live on
+# 2026-09-10 (seven consecutive resets: x 0.8002-0.8023, y 3.1583, yaw
+# -1.57074) and identically in 30 logged launches between 2026-08-29 and
+# 2026-09-06. The 2 mm spread in x is the suspension settling.
+#
+# This is what bootstrap_mode:=spawn seeds the localizer with (no /ips read at
+# all), and the fallback for every other mode. It used to be (0.71, 0.02), a
+# centreline point 3.14 m further down the same straight; the bootstrap warned
+# about that in 17 logs and the truth seed hid it.
+#
+# Re-measure with the simulator connected and the car parked:
 #     ros2 topic echo /autodrive/roboracer_1/ips --once
-SPAWN_X = '0.71'
-SPAWN_Y = '0.02'
-SPAWN_YAW = '-1.599'
+#     ros2 topic echo /autodrive/roboracer_1/imu --once --field orientation
+# The competition track (phase 2) WILL have a different spawn.
+SPAWN_X = '0.800'
+SPAWN_Y = '3.158'
+SPAWN_YAW = '-1.5707'
 
 # ---- Paths -----------------------------------------------------------------
 PACKAGE = 'roboracer_stack'

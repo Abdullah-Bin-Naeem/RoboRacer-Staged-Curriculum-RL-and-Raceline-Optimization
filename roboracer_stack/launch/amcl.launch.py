@@ -12,9 +12,10 @@ interchangeable localizers and owns nothing else:
 Normally reached as `race.launch.py localizer:=amcl`; launchable alone for
 debugging, provided chassis.launch.py is already up.
 
-Race-legal: lidar against a pre-built map. The one development-only input is
-bootstrap_mode:=truth, which seeds the initial pose from /ips; bootstrap_mode:=global
-searches with no prior and is legal.
+Race-legal: lidar against a pre-built map. bootstrap_mode:=spawn (the default)
+seeds the initial pose from the measured spawn constant and reads no restricted
+topic; bootstrap_mode:=truth seeds it from /ips once, inside the warm-up lap;
+bootstrap_mode:=global searches with no prior.
 """
 
 import os
@@ -75,6 +76,11 @@ def _nodes(context, *args, **kwargs):
                 'ready_check': 'lifecycle',
                 'localizer_node': 'amcl',
                 'estimate_topic': '/amcl_pose',
+                # spawn mode seeds from these (one source: frames.SPAWN_* via
+                # the initial_* args); the other modes keep them as fallback.
+                'spawn_x': float(cfg('initial_x')),
+                'spawn_y': float(cfg('initial_y')),
+                'spawn_yaw': float(cfg('initial_yaw')),
                 'require_convergence': cfg('require_convergence').lower() == 'true',
             }],
             condition=IfCondition(LaunchConfiguration('bootstrap')),
@@ -107,9 +113,11 @@ def generate_launch_description():
             description='drive forward until AMCL converges instead of being '
                         'given an initial pose'),
         DeclareLaunchArgument(
-            'bootstrap_mode', default_value='truth',
-            description="'truth' seeds the pose from /ips once (DEVELOPMENT); "
-                        "'global' searches with no initial pose (race-legal)"),
+            'bootstrap_mode', default_value='spawn',
+            description="'spawn' seeds from the measured spawn constant + IMU "
+                        "heading, no restricted topic (RACE DEFAULT); 'truth' "
+                        "seeds from /ips once in the warm-up lap (organizer-"
+                        "confirmed); 'global' searches with no initial pose"),
         DeclareLaunchArgument(
             'require_convergence', default_value='true',
             description='refuse to latch /localization_ready unless the pose was '

@@ -68,5 +68,5 @@ The CSV logger needs scipy in the image; the Dockerfile has the layer, so
 - The organizers say their machine runs 40-50 Hz. `NODELAY_CAP_HZ=45` is how
   to tune at that rate on a faster laptop.
 - The results of running this at 20/40/45/50/60/70/80 Hz are in
-  `HZ_ANALYSIS.md`; the full measurement story is `LOOP_RATE.md` on the
-  `abdullah_qualification_analysis` and `multi-track` branches.
+  `HZ_ANALYSIS.md`; the full measurement story, experiment by experiment, is
+  `LOOP_RATE.md`.

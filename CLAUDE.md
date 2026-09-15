@@ -117,8 +117,11 @@ Invariants:
 - **Checkpoint numbering is cumulative** across stages
   (`reset_num_timesteps=False`).
 - **Resume with the replay buffer.** `final_replay_buffer.pkl` is saved next to
-  `final.zip`; a resume that finds no buffer collects `--warmup` steps first.
-  Training against an empty buffer is what collapsed the earlier lineage.
+  `final.zip` (also on Ctrl-C), and `latest_replay_buffer.pkl` is overwritten
+  every `--buffer-every` steps (100k) as the crash-safe copy; ~450 MB each at
+  the 1M buffer. Policy checkpoints every 50k steps carry no buffer. A resume
+  that finds no buffer collects `--warmup` steps first; training against an
+  empty buffer is what collapsed the earlier lineage.
 
 ## Competition legality
 

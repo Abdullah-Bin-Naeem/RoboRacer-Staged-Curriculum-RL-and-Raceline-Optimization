@@ -22,6 +22,31 @@ from rl_racer.config import Cfg
 from rl_racer.env import AutoDriveRacerEnv
 
 
+class BufferSaver(BaseCallback):
+    """Saves the replay buffer to ONE file, overwritten, every `every` steps.
+
+    SB3's CheckpointCallback writes a new <N>_steps.pkl each time: at 300 MB
+    per file and 10k steps per save, a two-day run would fill >100 GB. The
+    write goes to a temp name and is renamed into place, so a kill mid-write
+    leaves the previous good buffer, never a truncated one.
+    """
+
+    def __init__(self, run_dir, every=100_000):
+        super().__init__()
+        self.path = os.path.join(run_dir, "latest_replay_buffer")
+        self.every, self._last = every, 0
+
+    def save(self):
+        self.model.save_replay_buffer(self.path + "_tmp")
+        os.replace(self.path + "_tmp.pkl", self.path + ".pkl")
+
+    def _on_step(self) -> bool:
+        if self.num_timesteps - self._last >= self.every:
+            self.save()
+            self._last = self.num_timesteps
+        return True
+
+
 class RewardBreakdown(BaseCallback):
     """Logs each reward component separately.
 
@@ -131,6 +156,9 @@ def main():
                    help="discount. Default: derived from the MEASURED control rate "
                         "so the planning horizon stays fixed in seconds.")
     p.add_argument("--device", default="auto")
+    p.add_argument("--buffer-every", type=int, default=100_000,
+                   help="steps between replay-buffer saves (one overwritten file, "
+                        "runs/<name>/latest_replay_buffer.pkl)")
     args = p.parse_args()
 
     stage = stage_registry.load(args.stage) if args.stage else None
@@ -226,7 +254,11 @@ def main():
         if _m:
             _cands += _glob.glob(os.path.join(_d, f"*replay_buffer_{_m.group(1)}_steps.pkl"))
         _cands += _glob.glob(args.resume.replace(".zip", "_replay_buffer.pkl"))
-        _cands += _glob.glob(args.resume.replace(".zip", "_replay_buffer.pkl").replace("final", "final"))
+        # BufferSaver's single overwritten file, in the run dir (the resume
+        # target may be in its checkpoints/ subdirectory).
+        _cands += [f for f in (os.path.join(_d, "latest_replay_buffer.pkl"),
+                               os.path.join(_d, "..", "latest_replay_buffer.pkl"))
+                   if os.path.exists(f)]
         buf = _cands[0] if _cands else ""
         if buf and os.path.exists(buf):
             model.load_replay_buffer(buf)
@@ -254,7 +286,8 @@ def main():
             "MlpPolicy",
             env,
             learning_rate=_lr,
-            buffer_size=300_000,
+            # 1M = ~12 h of driving at 22.5 Hz; ~1 GB in RAM and on disk.
+            buffer_size=1_000_000,
             learning_starts=5_000,     # ~5 min of random driving to seed the buffer
             batch_size=256,
             tau=0.005,
@@ -274,18 +307,17 @@ def main():
         )
 
     ckpt = CheckpointCallback(
-        save_freq=10_000,
+        save_freq=50_000,               # 4 MB each; policies only
         save_path=os.path.join(run_dir, "checkpoints"),
         name_prefix="sac",
-        save_replay_buffer=True,    # ~250 MB each, but without it a resume
-                                    # starts from an empty buffer and collapses
+        save_replay_buffer=False,       # BufferSaver keeps ONE buffer file
     )
+    bufsave = BufferSaver(run_dir, every=args.buffer_every)
 
     def _bail(signum, frame):
-        print("\n[rl_racer] interrupted -- saving and stopping the car")
-        model.save(os.path.join(run_dir, "interrupted"))
+        print("\n[rl_racer] interrupted -- stopping the car, saving final.zip + buffer")
         env.close()
-        sys.exit(0)
+        sys.exit(0)            # SystemExit runs the finally below: final.zip + buffer
 
     signal.signal(signal.SIGINT, _bail)
 
@@ -301,7 +333,7 @@ def main():
         print("[rl_racer] WARNING: running on CPU -- expect ~7 fps instead of ~18")
     _rb = RewardBreakdown()
     _rb.design_period_ms = 1000.0 * raw_env.control_period
-    cbs = [ckpt, _rb]
+    cbs = [ckpt, bufsave, _rb]
     try:
         model.learn(total_timesteps=args.timesteps, callback=cbs,
                     reset_num_timesteps=args.resume is None,

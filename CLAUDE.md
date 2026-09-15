@@ -146,9 +146,12 @@ devkit's flake8/pep257/copyright linters.
 
 Invariants that break checkpoints if violated:
 
-- **Every stage emits the same 95-dim observation** (90 min-pooled beams +
-  speed, yaw_rate, prev_steer, prev_throttle, throttle_cap). Change `n_beams`
-  or `fov_half_deg` and every existing checkpoint becomes unloadable.
+- **Within a lineage every stage emits the same observation.** v3 lineage
+  (stages 1–4): 95-dim, 90 beams at ±90°. Fresh lineage (stages 5–6, branch
+  `rl-fresh-fov110`): 118-dim, 110 beams at ±110° plus `v_est`, slip `S`,
+  yaw-rate residual from `rl_racer/sensors.py`. Change `n_beams`,
+  `fov_half_deg` or `slip_slots` and every checkpoint of that lineage becomes
+  unloadable. `enjoy.py --stage N` applies the right layout.
 - **The throttle cap is in the observation.** Raising it changes what
   `action[1] = +1` physically means; feeding the cap in is what lets the critic
   distinguish old replay-buffer transitions from new ones.
@@ -158,8 +161,10 @@ Invariants that break checkpoints if violated:
   purpose.
 - **Checkpoint numbering is cumulative** across stages (`reset_num_timesteps=False`):
   stage 2 resuming at 370k produces `sac_380000_steps.zip`, not `sac_10000`.
-- `max_episode_steps` is per stage and is a *step* count, so it means different
-  driving time at different control rates.
+- `max_episode_steps` is a *step* count; stages 5–6 set `episode_seconds`
+  instead and the env derives the steps from the measured tick. Stages 5–6 also
+  refuse a sim tick outside 15–32 ms: they are designed for the shimmed bridge
+  capped at the 45 Hz evaluation rate (`tcp_nodelay:=true loop_hz_cap:=45`).
 
 ### Classical side (`devkit_ws/src/`)
 

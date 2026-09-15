@@ -88,20 +88,32 @@ def beam_features(beams: np.ndarray, range_max: float, safe_dist: float):
 
 
 def build_obs(beams, range_max, speed, v_max, yaw_rate, yaw_rate_max,
-              prev_steer, prev_throttle, throttle_cap=1.0) -> np.ndarray:
+              prev_steer, prev_throttle, throttle_cap=1.0,
+              slip=None, slip_max=0.5, yaw_res_max=8.0) -> np.ndarray:
     """Assemble the policy input. Every component is clipped into [-1, 1].
 
-    throttle_cap is included because the curriculum changes it mid-training:
-    action[1]=+1 means a different physical throttle before and after a raise,
-    so without this the replay buffer would hold contradictory transitions.
+    Layout: beams | speed | yaw_rate | prev_steer | prev_throttle | throttle_cap
+            | (v_est | S | yaw_residual)   -- the last three only when `slip`
+            is given, as (v_est, S, yaw_residual). All three are race-legal
+            (encoders + IMU + own command + the sim's published vehicle model).
+
+    throttle_cap is included because a curriculum changes it mid-training:
+    action[1]=+1 means a different physical throttle before and after a raise.
+    In the fixed-scale lineage it is a constant, which is harmless.
     """
-    obs = np.empty(len(beams) + 5, dtype=np.float32)
-    obs[:len(beams)] = beams / range_max
-    obs[len(beams) + 0] = np.clip(speed / v_max, -1.0, 1.0)
-    obs[len(beams) + 1] = np.clip(yaw_rate / yaw_rate_max, -1.0, 1.0)
-    obs[len(beams) + 2] = np.clip(prev_steer, -1.0, 1.0)
-    obs[len(beams) + 3] = np.clip(prev_throttle, -1.0, 1.0)
-    obs[len(beams) + 4] = np.clip(throttle_cap, 0.0, 1.0)
+    n = len(beams)
+    obs = np.empty(n + 5 + (3 if slip is not None else 0), dtype=np.float32)
+    obs[:n] = beams / range_max
+    obs[n + 0] = np.clip(speed / v_max, -1.0, 1.0)
+    obs[n + 1] = np.clip(yaw_rate / yaw_rate_max, -1.0, 1.0)
+    obs[n + 2] = np.clip(prev_steer, -1.0, 1.0)
+    obs[n + 3] = np.clip(prev_throttle, -1.0, 1.0)
+    obs[n + 4] = np.clip(throttle_cap, 0.0, 1.0)
+    if slip is not None:
+        v_est, s, yres = slip
+        obs[n + 5] = np.clip(v_est / v_max, -1.0, 1.0)
+        obs[n + 6] = np.clip(s / slip_max, -1.0, 1.0)
+        obs[n + 7] = np.clip(yres / yaw_res_max, -1.0, 1.0)
     return np.clip(obs, -1.0, 1.0, out=obs)
 
 

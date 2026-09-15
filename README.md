@@ -104,6 +104,8 @@ earlier checkpoint becomes unloadable.
 | 2 `stage2_sensors` | 2 observation slots → permitted topics | ✓ | stage 1 |
 | 3 `stage3_speed` | throttle-cap curriculum, reward reweighted toward speed | ✓ | stage 2 |
 | 4 `stage4_reserved` | robustness (rate randomisation, sensor noise) — not yet defined | — | stage 3 |
+| 5 `stage5_fresh` | **new 118-dim lineage**: ±110°, race-legal slip slots, throttle scale 0.5 fixed (no curriculum), from scratch on the competition track | ✓ | — |
+| 6 `stage6_push` | stage 5 + speed pressure (`w_speed` 0.6, lap bonus, grip term) | ✓ | stage 5 |
 
 Stage 3's curriculum raises the throttle ceiling only when the agent proves it
 can use the current one: crash rate ≤ 0.25, mean episode length ≥ 400, **and**

@@ -4,6 +4,13 @@ The simulator is a free-running real-time process, so step() is made
 synchronous by blocking on the LiDAR topic: the scan is the master clock. Every
 sim tick the bridge publishes all topics together inside its 'Bridge' socket.io
 handler, so counting scans counts sim ticks.
+
+COMPETITION LEGALITY -- what feeds the OBSERVATION vs the REWARD:
+  observation: /lidar, /left_encoder + /right_encoder, /imu, our own commands,
+               and the simulator's published vehicle model  <- all permitted
+  reward / episode management only: /odom (progress, speed), /collision_count,
+               /lap_count, /last_lap_time, /reset_command  <- restricted at
+               race time, but training-only; none of it exists at inference.
 """
 import math
 import threading
@@ -24,6 +31,7 @@ from nav_msgs.msg import Odometry
 
 from .config import Cfg
 from .obs import LidarFOV, beam_features, build_obs, yaw_from_quat
+from .sensors import WheelSpeed, TireObserver, slip, tire_mu, yaw_residual
 
 NS = "/autodrive/roboracer_1"
 
@@ -38,24 +46,20 @@ QOS = QoSProfile(
 
 
 class _RacerNode(Node):
-    def __init__(self, fov: LidarFOV, wheel_radius: float = 0.0590):
+    def __init__(self, fov: LidarFOV, wheels: WheelSpeed):
         super().__init__("rl_racer_env")
         self._fov = fov
         self.cv = threading.Condition()
         self.tick = 0
         self.beams = None
-        self.odom = None          # (pos xyz, quat xyzw, lin xyz, ang xyz)
+        self.odom = None          # (pos xyz, quat xyzw, lin xyz, ang xyz) -- REWARD ONLY
         self.imu = None           # (quat xyzw, yaw_rate)   -- permitted topic
-        self._enc = {}            # wheel -> (angle_rad, stamp_s)
-        self.enc_speed = 0.0      # m/s from wheel encoders -- permitted topic
-        self._enc_rate = {}
-        self._wheel_r = wheel_radius
+        self.wheels = wheels      # encoder -> wheel speed  -- permitted topic
         self.collisions = 0
         self.laps = 0
         self.last_lap_time = 0.0
 
         self.create_subscription(LaserScan, f"{NS}/lidar", self._cb_lidar, QOS)
-        # /odom: TRAINING ONLY (progress reward). Never feeds the observation.
         self.create_subscription(Odometry, f"{NS}/odom", self._cb_odom, QOS)
         self.create_subscription(Imu, f"{NS}/imu", self._cb_imu, QOS)
         self.create_subscription(JointState, f"{NS}/left_encoder",
@@ -91,25 +95,11 @@ class _RacerNode(Node):
         self.imu = ((q.x, q.y, q.z, q.w), w.z)
 
     def _cb_enc(self, side, msg):
-        """Wheel speed from encoder deltas. position is wheel angle in RADIANS
-        (measured; the Technical Guide's 'ticks' figure is wrong). The delta is
-        naturally signed, so this also gives forward/reverse for free."""
         if not msg.position:
             return
-        ang = float(msg.position[0])
         t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
-        prev = self._enc.get(side)
-        self._enc[side] = (ang, t)
-        if prev is None:
-            return
-        dt = t - prev[1]
-        if dt <= 1e-4 or dt > 0.5:
-            return
-        rate = (ang - prev[0]) / dt                 # rad/s
-        other = self._enc_rate.get("r" if side == "l" else "l")
-        self._enc_rate[side] = rate
-        rates = [v for v in self._enc_rate.values() if v is not None]
-        self.enc_speed = float(np.mean(rates)) * self._wheel_r
+        with self.cv:
+            self.wheels.update(side, float(msg.position[0]), t)
 
     def _cb_col(self, msg):
         self.collisions = int(msg.data)
@@ -119,6 +109,15 @@ class _RacerNode(Node):
 
     def _cb_lap_time(self, msg):
         self.last_lap_time = float(msg.data)
+
+    @property
+    def enc_speed(self) -> float:
+        with self.cv:
+            return self.wheels.speed
+
+    def reset_sensors(self):
+        with self.cv:
+            self.wheels.reset()
 
     def send(self, throttle: float, steering: float):
         t, s = Float32(), Float32()
@@ -143,16 +142,19 @@ class AutoDriveRacerEnv(gym.Env):
     def __init__(self, cfg: Cfg | None = None):
         super().__init__()
         self.cfg = cfg or Cfg()
-        o, a = self.cfg.obs, self.cfg.act
+        o = self.cfg.obs
 
         self.observation_space = spaces.Box(-1.0, 1.0, (o.dim,), dtype=np.float32)
         # [steering, throttle], both in [-1, 1]; scaled to sim units on publish.
         self.action_space = spaces.Box(-1.0, 1.0, (2,), dtype=np.float32)
 
         self._fov = LidarFOV(o.fov_half_deg, o.n_beams, o.range_max)
+        self._wheels = WheelSpeed(o.wheel_radius, window=o.enc_window, step_max=o.enc_step_max)
+        self._observer = TireObserver(self.cfg.veh)
+        self._obs_t = None
         if not rclpy.ok():
             rclpy.init()
-        self.node = _RacerNode(self._fov, self.cfg.obs.wheel_radius)
+        self.node = _RacerNode(self._fov, self._wheels)
         self._exec = SingleThreadedExecutor()
         self._exec.add_node(self.node)
         self._thread = threading.Thread(target=self._exec.spin, daemon=True)
@@ -162,19 +164,35 @@ class AutoDriveRacerEnv(gym.Env):
             raise RuntimeError(
                 "No LiDAR received on %s/lidar within %.0fs.\n"
                 "Start the simulator and the bridge first:\n"
-                "  ./AutoDRIVE\\ Simulator.x86_64 -batchmode -nographics -ip 127.0.0.1 -port 4567\n"
-                "  ros2 launch autodrive_roboracer bringup_headless.launch.py"
+                "  ./AutoDRIVE\\ Simulator.x86_64 -ip 127.0.0.1 -port 4567\n"
+                "  ros2 launch racer_bringup bridge.launch.py tcp_nodelay:=true loop_hz_cap:=45"
                 % (NS, self.cfg.env.startup_timeout)
             )
 
-        # Measure the real control period so gamma can be derived from it.
-        import time as _t
-        _n0, _t0 = self.node.tick, _t.time()
+        # Measure the real control period. gamma, the episode length and the
+        # curriculum cooldown are all derived from it so they stay fixed in
+        # SECONDS whatever rate this machine (or the evaluation box) delivers.
+        _n0, _t0 = self.node.tick, time.time()
         self.node.wait_ticks(20, self.cfg.env.tick_timeout * 4)
-        _dt = (_t.time() - _t0) / max(self.node.tick - _n0, 1)
+        _dt = (time.time() - _t0) / max(self.node.tick - _n0, 1)
         self.control_period = float(_dt * self.cfg.env.decimation)
         print(f"[rl_racer] measured control period {self.control_period*1000:.1f} ms "
-              f"({1.0/max(self.control_period,1e-6):.1f} Hz)")
+              f"({1.0/max(self.control_period,1e-6):.1f} Hz) = sim tick "
+              f"{_dt*1000:.1f} ms x decimation {self.cfg.env.decimation}")
+        _tick_ms = _dt * 1000.0
+        lo, hi = self.cfg.env.tick_ms_min, self.cfg.env.tick_ms_max
+        if (lo > 0 and _tick_ms < lo) or (hi > 0 and _tick_ms > hi):
+            self.close()
+            raise RuntimeError(
+                f"sim tick {_tick_ms:.1f} ms is outside the {lo:g}-{hi:g} ms window this "
+                f"stage was designed for. Bring the bridge up pinned to the evaluation rate:\n"
+                f"  ros2 launch racer_bringup bridge.launch.py tcp_nodelay:=true loop_hz_cap:=45\n"
+                f"(too slow = stock bridge without the shim; too fast = shim without the cap)")
+        if self.cfg.env.episode_seconds > 0:
+            self.cfg.env.max_episode_steps = int(round(
+                self.cfg.env.episode_seconds / self.control_period))
+            print(f"[rl_racer] max_episode_steps = {self.cfg.env.max_episode_steps} "
+                  f"({self.cfg.env.episode_seconds:g} s at this rate)")
 
         self._prev_action = np.zeros(2, dtype=np.float32)
         self._prev_pos = None
@@ -184,9 +202,14 @@ class AutoDriveRacerEnv(gym.Env):
         self._stalled = 0
         self._too_close = 0
         self._prev_laps = 0
-        self._ep = {}
-        self._acc_thr = self._acc_steer = self._acc_sat = 0.0
+        # Full key sets from the start, so a step() before reset() cannot KeyError.
+        self._ep = {k: 0.0 for k in self._EP_KEYS}
+        self._acc = {k: 0.0 for k in self._ACC_KEYS}
         self._ep_max_speed = 0.0
+        self._ep_max_vest = 0.0
+
+    _EP_KEYS = ("progress", "speed", "center", "smooth", "prox", "dist", "lap", "grip")
+    _ACC_KEYS = ("thr", "steer", "sat", "vest", "slip_abs", "peak", "accel", "yres_sq", "yaw_sq")
 
     # ---------------------------------------------------------------- helpers
     def _scale(self, action):
@@ -199,16 +222,12 @@ class AutoDriveRacerEnv(gym.Env):
     def _state(self):
         """Returns (beams, position, forward_vec, speed, yaw_rate).
 
-        COMPETITION LEGALITY -- what feeds the OBSERVATION vs the REWARD:
-          observation: beams (/lidar), speed (/left+right_encoder),
-                       yaw_rate (/imu)          <- all permitted topics
-          reward only: position (/odom)         <- restricted at race time,
-                       but training-only and never a policy input.
+        position is /odom and is used by the REWARD only. speed is the wheel
+        surface speed u from the encoders (the throttle echo, see sensors.py).
         """
         with self.node.cv:
             beams = self.node.beams
 
-        # Orientation + yaw rate from the IMU (permitted).
         imu = self.node.imu
         if imu is not None:
             quat, yaw_rate = imu
@@ -217,12 +236,11 @@ class AutoDriveRacerEnv(gym.Env):
         yaw = yaw_from_quat(*quat)
         fwd = (math.cos(yaw), math.sin(yaw))
 
-        # Position: REWARD ONLY.
         odom = self.node.odom
         pos = np.array(odom[0][:2]) if odom is not None else np.zeros(2)
 
         if self.cfg.obs.use_encoder_speed:
-            speed = self.node.enc_speed          # signed, from wheel encoders
+            speed = self.node.enc_speed
         else:
             # Legacy path: speed from /odom twist (RESTRICTED at race time).
             lin = odom[2] if odom is not None else (0.0, 0.0, 0.0)
@@ -234,6 +252,24 @@ class AutoDriveRacerEnv(gym.Env):
                 speed = -speed
 
         return beams, pos, fwd, speed, yaw_rate
+
+    def _slip_features(self, u: float, yaw_rate: float, steer_cmd: float):
+        """Advance the race-legal speed observer and derive the slip triple."""
+        now = time.perf_counter()
+        if self._obs_t is not None:
+            self._observer.update(u, now - self._obs_t)
+        self._obs_t = now
+        v_est = self._observer.v
+        s = slip(u, v_est, self.cfg.veh)
+        yres = yaw_residual(yaw_rate, v_est, steer_cmd, self.cfg.veh)
+        return v_est, s, yres
+
+    def _build(self, beams, speed, yaw_rate, a0, a1, slip_triple):
+        o = self.cfg.obs
+        return build_obs(beams, o.range_max, speed, o.v_max, yaw_rate, o.yaw_rate_max,
+                         a0, a1, self.cfg.act.throttle_max,
+                         slip=slip_triple if o.slip_slots else None,
+                         slip_max=o.slip_max, yaw_res_max=o.yaw_res_max)
 
     # ------------------------------------------------------------------ gym
     def reset(self, *, seed=None, options=None):
@@ -250,7 +286,17 @@ class AutoDriveRacerEnv(gym.Env):
         time.sleep(env.reset_settle_s)
         self.node.wait_ticks(1, env.tick_timeout)
 
+        # The simulator's ResetManager restores the encoder counters to their
+        # spawn values, so the pre-reset samples describe a different counter.
+        # Clear the sensor state AFTER the settle so the first episode step
+        # starts from post-reset samples only; the car is stationary, so a speed
+        # of 0 for the first tick or two is correct. The observer restarts at 0.
+        self.node.reset_sensors()
+        self._observer.reset(0.0)
+        self._obs_t = None
+
         beams, pos, _, speed, yaw_rate = self._state()
+        v_est, s, yres = self._slip_features(speed, yaw_rate, 0.0)
         # Re-baseline counters: works whether or not the sim zeroes them itself.
         self._col_base = self.node.collisions
         self._lap_base = self.node.laps
@@ -259,21 +305,16 @@ class AutoDriveRacerEnv(gym.Env):
         self._steps = 0
         self._stalled = 0
         self._too_close = 0
-        self._ep = {k: 0.0 for k in
-                    ("progress", "speed", "center", "smooth", "prox", "dist", "lap")}
+        self._ep = {k: 0.0 for k in self._EP_KEYS}
+        self._acc = {k: 0.0 for k in self._ACC_KEYS}
         self._prev_laps = self.node.laps
-        self._acc_thr = 0.0
-        self._acc_steer = 0.0
-        self._acc_sat = 0.0
         self._ep_max_speed = 0.0
+        self._ep_max_vest = 0.0
 
-        obs = build_obs(beams, self.cfg.obs.range_max, speed, self.cfg.obs.v_max,
-                        yaw_rate, self.cfg.obs.yaw_rate_max, 0.0, 0.0,
-                        self.cfg.act.throttle_max)
-        return obs, {}
+        return self._build(beams, speed, yaw_rate, 0.0, 0.0, (v_est, s, yres)), {}
 
     def step(self, action):
-        cfg, rw = self.cfg, self.cfg.rew
+        cfg, rw, veh = self.cfg, self.cfg.rew, self.cfg.veh
         a, throttle, steering = self._scale(action)
 
         self.node.send(throttle, steering)
@@ -281,6 +322,7 @@ class AutoDriveRacerEnv(gym.Env):
 
         beams, pos, fwd, speed, yaw_rate = self._state()
         feats = beam_features(beams, cfg.obs.range_max, rw.safe_dist)
+        v_est, s, yres = self._slip_features(speed, yaw_rate, float(a[0]) * cfg.act.max_steer)
 
         # Forward progress = displacement projected on heading. Clamped because
         # a reset teleport would otherwise inject a huge spurious reward.
@@ -289,20 +331,19 @@ class AutoDriveRacerEnv(gym.Env):
         self._prev_pos = pos
 
         r_progress = rw.w_progress * ds
-        # Speed REWARD uses /odom, not the encoder value in `speed`.
-        # /odom is restricted only at RACE TIME; the reward is training-only and
-        # never an input at inference, so it may use the accurate source. The
-        # encoders overread up to ~3x under hard acceleration (wheel slip), so
-        # paying reward on them would literally pay the agent to spin its wheels.
+        # Speed reward from /odom (training-only, accurate) -- NOT the encoder,
+        # which overreads under wheelspin and would pay the agent to spin.
         _od = self.node.odom
         _rew_speed = math.hypot(_od[2][0], _od[2][1]) if _od is not None else abs(speed)
         r_speed = rw.w_speed * float(np.clip(_rew_speed / cfg.obs.v_max, 0.0, 1.0))
+        # Grip utilisation: mu(|S|)/mu_peak, 1.0 at the tire's peak, 0.64 at the
+        # asymptote (wheelspin / lock), ~0 when coasting.
+        r_grip = rw.w_grip * (tire_mu(s, veh) / veh.tire_mu_peak) if rw.w_grip > 0.0 else 0.0
         p_center = rw.w_center * feats["center_err"]
         p_smooth = rw.w_smooth * abs(float(a[0]) - float(self._prev_action[0]))
         p_prox = rw.w_prox * feats["prox"]
 
-        # Lap bonus: the only term that targets lap TIME directly rather than
-        # distance. Paid once per completed lap, larger for a faster lap.
+        # Lap bonus from the simulator's own timer, once per completed lap.
         r_lap = 0.0
         laps_now = self.node.laps
         if rw.w_lap > 0.0 and laps_now > self._prev_laps:
@@ -312,24 +353,28 @@ class AutoDriveRacerEnv(gym.Env):
                 r_lap = n_new * rw.w_lap / max(lt, rw.min_lap_time)
             else:
                 r_lap = n_new * rw.lap_bonus_flat
+        if laps_now > self._prev_laps:
             self._prev_laps = laps_now
 
-        reward = (r_progress + r_speed + r_lap
+        reward = (r_progress + r_speed + r_lap + r_grip
                   - p_center - p_smooth - p_prox - rw.step_penalty)
 
-        self._ep["progress"] += r_progress
-        self._ep["speed"] += r_speed
-        self._ep["center"] += p_center
-        self._ep["smooth"] += p_smooth
-        self._ep["prox"] += p_prox
-        self._ep["dist"] += ds
-        self._ep["lap"] += r_lap
-        # Action statistics: these tell us empirically whether the throttle cap
-        # is binding, i.e. whether the agent WANTS to go faster than we allow.
-        self._acc_thr += throttle
-        self._acc_steer += abs(float(a[0]))
-        self._acc_sat += 1.0 if float(a[1]) > 0.9 else 0.0
+        ep, acc = self._ep, self._acc
+        ep["progress"] += r_progress; ep["speed"] += r_speed; ep["center"] += p_center
+        ep["smooth"] += p_smooth;     ep["prox"] += p_prox;    ep["dist"] += ds
+        ep["lap"] += r_lap;           ep["grip"] += r_grip
+        acc["thr"] += throttle
+        acc["steer"] += abs(float(a[0]))
+        acc["sat"] += 1.0 if float(a[1]) > 0.9 else 0.0
+        acc["vest"] += v_est
+        acc["slip_abs"] += abs(s)
+        # "peak grip" = |S| in the [0.10, 0.20] band around the extremum
+        acc["peak"] += 1.0 if 0.10 <= abs(s) <= 0.20 else 0.0
+        acc["accel"] += 1.0 if s > 0.02 else 0.0
+        acc["yres_sq"] += yres * yres
+        acc["yaw_sq"] += yaw_rate * yaw_rate
         self._ep_max_speed = max(self._ep_max_speed, speed)
+        self._ep_max_vest = max(self._ep_max_vest, v_est)
 
         terminated = False
         reason = ""
@@ -358,21 +403,29 @@ class AutoDriveRacerEnv(gym.Env):
         truncated = self._steps >= cfg.env.max_episode_steps
         self._prev_action[:] = a
 
-        obs = build_obs(beams, cfg.obs.range_max, speed, cfg.obs.v_max,
-                        yaw_rate, cfg.obs.yaw_rate_max, a[0], a[1],
-                        cfg.act.throttle_max)
+        obs = self._build(beams, speed, yaw_rate, a[0], a[1], (v_est, s, yres))
 
-        info = {"speed": speed, "min_range": feats["min_range"],
+        info = {"speed": speed, "v_est": v_est, "slip": s,
+                "min_range": feats["min_range"],
                 "laps": self.node.laps - self._lap_base,
                 "throttle_cap": cfg.act.throttle_max}
         if terminated or truncated:
             info["reason"] = reason or "timeout"
-            stats = dict(self._ep)
+            stats = dict(ep)
             n = max(1, self._steps)
-            stats["act_throttle_mean"] = self._acc_thr / n
-            stats["act_steer_abs_mean"] = self._acc_steer / n
-            stats["act_throttle_sat"] = self._acc_sat / n
-            stats["max_speed"] = self._ep_max_speed
+            stats["act_throttle_mean"] = acc["thr"] / n
+            stats["act_steer_abs_mean"] = acc["steer"] / n
+            stats["act_throttle_sat"] = acc["sat"] / n
+            stats["max_speed"] = self._ep_max_speed          # encoder u
+            stats["slip_v_est_max"] = self._ep_max_vest      # observer car speed
+            stats["slip_v_est_mean"] = acc["vest"] / n
+            stats["slip_abs_mean"] = acc["slip_abs"] / n
+            stats["slip_frac_peak"] = acc["peak"] / n
+            stats["slip_frac_accel"] = acc["accel"] / n
+            stats["slip_yaw_res_rms"] = math.sqrt(acc["yres_sq"] / n)
+            stats["slip_yaw_rate_rms"] = math.sqrt(acc["yaw_sq"] / n)
+            stats["enc_discontinuities"] = float(self._wheels.discontinuities)
+            self._wheels.discontinuities = 0
             info["episode_stats"] = stats
             self.node.send(0.0, 0.0)   # never leave the throttle open
         return obs, float(reward), terminated, truncated, info

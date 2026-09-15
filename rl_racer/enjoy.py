@@ -10,6 +10,10 @@ from rl_racer.env import AutoDriveRacerEnv
 p = argparse.ArgumentParser()
 p.add_argument("model")
 p.add_argument("--episodes", type=int, default=5)
+p.add_argument("--stage", choices=["1", "2", "3", "4", "5", "6"], default=None,
+               help="apply that stage's config (observation layout, throttle scale, "
+                    "decimation) so its checkpoints load. Required for the fresh "
+                    "lineage (5/6, 118-dim). Runtime only -- config.py is untouched.")
 p.add_argument("--legacy-obs", action="store_true",
                help="restore v3's exact 95-dim observation (90 beams, +/-90 deg, "
                     "odom speed with the old sign bug). Needed to load a v1-v3 "
@@ -30,6 +34,15 @@ p.add_argument("--hz", type=float, default=0.0,
 a = p.parse_args()
 
 cfg = Cfg()
+if a.stage:
+    import stages as _stages
+    _st = _stages.load(a.stage)
+    _st.apply(cfg)
+    if cfg.obs.dim != _st.EXPECTED_OBS_DIM:
+        raise SystemExit(f"obs_dim {cfg.obs.dim} != stage expectation {_st.EXPECTED_OBS_DIM}")
+    print(f"[stage {a.stage}] {_st.NAME}: obs_dim={cfg.obs.dim} fov=+/-{cfg.obs.fov_half_deg:g} "
+          f"beams={cfg.obs.n_beams} slip_slots={cfg.obs.slip_slots} "
+          f"throttle_scale={cfg.act.throttle_max} decimation={cfg.env.decimation}")
 if a.steps > 0:
     cfg.env.max_episode_steps = a.steps
     print(f"[steps] episode capped at {a.steps} steps")
@@ -76,7 +89,11 @@ try:
         derived = wall / laps if laps else float("nan")
         print(f"ep {ep}: reward={total:8.1f} steps={steps:5d} "
               f"laps={laps} end={info.get('reason','?')}")
+        st = info.get("episode_stats", {})
         print(f"        lap time: sim={sim_last:.2f}s  "
               f"wall-clock avg={derived:.2f}s  (episode {wall:.1f}s)")
+        if "slip_v_est_max" in st:
+            print(f"        v_est max={st['slip_v_est_max']:.2f} m/s  mean={st['slip_v_est_mean']:.2f}  "
+                  f"|S| mean={st['slip_abs_mean']:.3f}  at-peak-grip={st['slip_frac_peak']:.0%} of steps")
 finally:
     env.close()

@@ -11,6 +11,8 @@ unloadable.
 | 2 | `stage2_sensors` | **2 obs slots → legal topics** | ✅ | stage 1 | 4400 |
 | 3 | `stage3_speed` | curriculum on, `w_speed` 0.2→0.6, `w_center` 0.3→**0**, cap ceiling 0.5 | ✅ | stage 2 | **1200** |
 | 4 | `stage4_reserved` | *not defined yet* | — | stage 3 | — |
+| **5** | `stage5_fresh` | **new lineage, 118-dim**: ±110°, 110 beams, slip slots, throttle scale 0.5 fixed | ✅ | scratch | 245 s |
+| **6** | `stage6_push` | stage 5 + speed pressure (`w_speed` 0.6, lap 200, grip 0.05) | ✅ | stage 5 | 245 s |
 
 Stages 1→3 differ in **only two config fields**:
 
@@ -21,6 +23,40 @@ env.legacy_speed_sign   True  -> False   (moot on the encoder path)
 
 Slot 92 (yaw rate) moves `/odom` → `/imu` but the **number is identical** —
 the bridge feeds both topics from the same variable.
+
+## Fresh lineage (stages 5–6)
+
+Nothing from stages 1–4 loads into it (118-dim vs 95). Design, in one table:
+
+| | v3 lineage | fresh |
+|---|---|---|
+| FOV | ±90° (hairpin exit ON the boundary) | **±110°**, still 2°/beam |
+| extra slots | — | `v_est` (tire observer), slip `S`, yaw-rate residual — all race-legal |
+| throttle | cap 0.20 raised by a curriculum | **scale 0.5, fixed** — RL finds its own speed |
+| encoders | 1-tick rate, spikes on every reset | 3-tick window + discontinuity guard |
+| episode / cooldown | steps | **seconds**, derived from the measured tick |
+| bridge | stock, ~18 Hz | **shimmed, capped at the 45 Hz eval rate**, decimation 2 |
+
+Why no cap: throttle commands *wheel speed* (25.25 m/s per unit). Peak-grip
+acceleration at 8 m/s needs 0.36; above ~0.40 the tire is past its asymptote
+and more throttle is wheelspin. 0.5 covers the track. Stage 5 refuses a sim
+tick outside 15–32 ms so it cannot silently train at the wrong rate.
+
+```bash
+# bridge, from the multi-track branch, pinned to the evaluation loop rate
+ros2 launch racer_bringup bridge.launch.py tcp_nodelay:=true loop_hz_cap:=45
+
+./run_train.sh --stage 5                                        # ~6-8 h
+python enjoy.py runs/stage5_fresh/final.zip --stage 5 --episodes 3
+./run_train.sh --stage 6 --resume runs/stage5_fresh/final.zip   # loads its buffer
+```
+
+Banner to confirm: `measured control period ~44 ms (22.5 Hz) = sim tick ~22 ms x
+decimation 2`, `max_episode_steps ≈ 5500 (245 s)`, `obs_dim=118`,
+`gradient_steps=3`. Expect `time/fps` ≈ 18–22 once episodes lengthen.
+
+Watch `slip/frac_peak` (share of steps with |S| in 0.10–0.20 — is it using the
+tire) and `slip/v_est_max` (real top speed, not the encoder echo).
 
 ## Prerequisites (every stage)
 

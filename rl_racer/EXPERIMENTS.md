@@ -3,7 +3,7 @@
 Running record of every training run, the measured constants, and the bugs
 found. Kept because several of these were discovered the expensive way.
 
-Last updated: 2026-08-26
+Last updated: 2026-09-15
 
 ---
 
@@ -215,3 +215,52 @@ itself (stage 1, training MTTC 555, deterministically flawless).
 I also declared "cap never raised" at step 672k; the raise came at 740k. Judging
 a curriculum before its cooldown has had room to fire is meaningless.
 
+
+
+---
+
+## 2026-09-15 — fresh lineage (stages 5–6), branch `rl-fresh-fov110`
+
+Context: qualified; the competition track is in the simulator, unmapped.
+`stage3_v3` drives it zero-shot but fails at sudden turns — the case where a
+≥180° exit corridor sits exactly on the ±90° FOV boundary. Classical stack is
+~1 s/lap faster on Porto; RL is a side quest for the final.
+
+Decisions (each argued in the stage docstrings):
+- **±110°, 110 beams** (2°/beam kept; 20° of margin past the old boundary).
+- **From scratch, 118-dim.** Widening breaks every checkpoint; a transplant was
+  designed but a fixed throttle scale needs no prior calibrated policy, and at
+  the new loop rate a fresh run is ~6-8 h, not the CPU-era 38 h.
+- **Throttle scale 0.5, fixed, no curriculum.** The cap was never a speed limit,
+  it was the action's unit; every raise re-labelled every learned action, and
+  the curriculum's crash gate measured exploration noise (training 0.80 vs
+  deterministic 0.00). Peak-grip throttle is speed-dependent and never exceeds
+  ~0.36 here (wheel speed = 25.25·θ, peak at slip 0.15); 0.5 covers the track.
+- **Three race-legal slip slots** from `sensors.py`: tire-observer car speed
+  `v_est` (the classical stack's `speed_source: tire`), slip `S`, yaw-rate
+  residual. The encoder is the throttle echo, so without `v_est` the policy had
+  no real speedometer.
+- **Seconds, not steps** for episode length and curriculum cooldown (gamma was
+  already derived). Tick guard 15–32 ms so the fresh stages cannot run on a
+  stock 55 ms or uncapped 13 ms loop by mistake.
+- Speed pressure staged: 5 = learn to drive (`w_speed` 0.2), 6 = push
+  (`w_speed` 0.6, lap bonus 200, grip 0.05), resuming WITH the buffer.
+
+Bugs found and fixed on the way (#17–19):
+17. **Encoder spike on every reset.** The simulator's `ResetManager` restores
+    `TotalRevolutions` to the spawn value on `reset_command`; the env never
+    cleared its encoder state, so the first step of every episode computed a
+    rate from a pre-reset angle (slot 91 = −1.0 at the launch decision).
+    Fixed: sensor state cleared after the reset settles + a 300 rad
+    discontinuity guard (as `dead_reckoning.py`).
+18. **Single-tick encoder rate carried the loop's stamp jitter** (~15% at 18
+    Hz; 12.8 median / 25 ms max at the shimmed loop). 3-tick window: error
+    0.87 → 0.21 m/s in the unit test.
+19. **All lap times before this date were derived (`steps × dt / laps`) with a
+    dt that excluded policy inference** — ~5% optimistic. `enjoy.py` now prints
+    the simulator's own lap timer. The README's 7.44 s is the derived figure.
+
+Sim-loop facts that matter for RL (from the user's `LOOP_RATE.md`): the loop
+is a socket round trip, 18 Hz was a Nagle/delayed-ACK deadlock, the nodelay
+shim gives 77–85 Hz here, and `loop_hz_cap:=45` pins the organisers' 40–50 Hz
+evaluation rate. Stages 5–6 train at that rate with decimation 2.

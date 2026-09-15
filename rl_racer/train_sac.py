@@ -2,8 +2,9 @@
 """SAC training against the live AutoDRIVE RoboRacer simulator (single instance).
 
 Usage:
-    python3 train_sac.py --timesteps 400000 --run-name v1
-    python3 train_sac.py --resume runs/v1/checkpoints/rl_model_50000_steps.zip
+    ./run_train.sh --stage 5                                   # fresh lineage, from scratch
+    ./run_train.sh --stage 6 --resume runs/stage5_fresh/final.zip
+    python3 train_sac.py --resume runs/v1/checkpoints/sac_50000_steps.zip
 """
 import argparse
 import os
@@ -33,6 +34,7 @@ class RewardBreakdown(BaseCallback):
     def __init__(self):
         super().__init__()
         self._acc, self._reasons = [], {}
+        self._warned_yaw = False
 
     def _on_step(self) -> bool:
         for info in self.locals.get("infos", []):
@@ -48,15 +50,32 @@ class RewardBreakdown(BaseCallback):
             for k in keys:
                 mean = float(np.mean([d[k] for d in self._acc]))
                 if k.startswith("act_"):
-                    # action/throttle_sat is the key diagnostic: if it pins near
-                    # 1.0 the throttle cap is binding and should be raised.
                     self.logger.record(f"action/{k[4:]}", mean)
+                elif k.startswith("slip_"):
+                    # slip/frac_peak: share of steps with |S| in [0.10, 0.20] --
+                    # "is it using the tire". slip/v_est_max: real top speed.
+                    self.logger.record(f"slip/{k[5:]}", mean)
+                elif k == "enc_discontinuities":
+                    self.logger.record("diag/enc_discontinuities", mean)
                 elif k == "max_speed":
                     self.logger.record("race/max_speed", mean)
                 elif k == "dist":
                     self.logger.record("race/dist_per_episode_m", mean)
                 else:
                     self.logger.record(f"reward/{k}", mean)
+            # Yaw-residual sign sanity: if the residual is LARGER than the yaw
+            # rate itself, the kinematic term is being added instead of
+            # subtracted (steering sign convention wrong) and slot 118 is junk.
+            st = self._acc[0]
+            if ("slip_yaw_res_rms" in st and not self._warned_yaw
+                    and float(np.mean([d["slip_yaw_rate_rms"] for d in self._acc])) > 0.5
+                    and float(np.mean([d["slip_yaw_res_rms"] for d in self._acc]))
+                        > 1.3 * float(np.mean([d["slip_yaw_rate_rms"] for d in self._acc]))):
+                print("[rl_racer] WARNING: yaw residual rms exceeds yaw-rate rms -- "
+                      "steering sign convention in sensors.yaw_residual is likely "
+                      "inverted for this build; the residual slot is not informative.",
+                      flush=True)
+                self._warned_yaw = True
             total = sum(self._reasons.values())
             for r, c in self._reasons.items():
                 self.logger.record(f"ends/{r}", c / total)
@@ -133,10 +152,11 @@ class ThrottleCurriculum(BaseCallback):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--stage", choices=["1", "2", "3", "4"], default=None,
-                   help="staged pipeline: 1=base(v3 repro) 2=sensor adaptation "
-                        "3=speed curriculum 4=reserved. Sets config, run name, "
-                        "and sensible defaults for that stage.")
+    p.add_argument("--stage", choices=["1", "2", "3", "4", "5", "6"], default=None,
+                   help="staged pipeline. v3 lineage (95-dim): 1=base 2=sensors "
+                        "3=speed curriculum 4=reserved. Fresh lineage (118-dim, "
+                        "+/-110 deg, slip slots, fixed throttle scale): 5=fresh "
+                        "6=push. Sets config, run name and defaults for the stage.")
     p.add_argument("--timesteps", type=int, default=None)
     p.add_argument("--run-name", default=None)
     p.add_argument("--logdir", default="runs")
@@ -179,14 +199,21 @@ def main():
         if args.warmup == 10_000:      args.warmup = d["warmup"]
         if args.throttle_ceiling is None:
             args.throttle_ceiling = d.get("throttle_ceiling", 1.0)
+        if args.gradient_steps is None and "gradient_steps" in d:
+            args.gradient_steps = d["gradient_steps"]
         _lr = d["learning_rate"]
         print(f"\n=== STAGE {args.stage}: {stage.NAME} ===")
         print(f"    {stage.__doc__.strip().splitlines()[0]}")
         print(f"    obs_dim={cfg.obs.dim} (expected {stage.EXPECTED_OBS_DIM})  "
               f"competition_legal={stage.COMPETITION_LEGAL}")
-        print(f"    speed slot 91 <- "
-              f"{'wheel encoders (legal)' if cfg.obs.use_encoder_speed else '/odom (RESTRICTED)'}")
-        print(f"    lr={_lr}  curriculum={d['curriculum']}  timesteps={args.timesteps}")
+        print(f"    speed <- {'wheel encoders (legal)' if cfg.obs.use_encoder_speed else '/odom (RESTRICTED)'}"
+              f"   slip slots={'ON (v_est, S, yaw_residual)' if cfg.obs.slip_slots else 'off'}")
+        print(f"    fov=+/-{cfg.obs.fov_half_deg:g} beams={cfg.obs.n_beams}  "
+              f"throttle scale={cfg.act.throttle_max}  decimation={cfg.env.decimation}")
+        print(f"    reward: progress={cfg.rew.w_progress} speed={cfg.rew.w_speed} "
+              f"center={cfg.rew.w_center} lap={cfg.rew.w_lap} grip={cfg.rew.w_grip}")
+        print(f"    lr={_lr}  curriculum={d['curriculum']}  timesteps={args.timesteps}  "
+              f"gradient_steps={args.gradient_steps}")
         if stage.RESUME_FROM and not args.resume:
             print(f"    NOTE: this stage expects --resume from {stage.RESUME_FROM}")
         if cfg.obs.dim != stage.EXPECTED_OBS_DIM:
@@ -340,10 +367,13 @@ def main():
     cbs = [ckpt, RewardBreakdown()]
     if not args.no_curriculum:
         _crm = (stage.DEFAULTS.get("crash_rate_max", 0.25) if stage else 0.25)
+        # Cooldown in SECONDS of driving, converted with the measured period.
+        _cd_s = (stage.DEFAULTS.get("cooldown_seconds", 1400.0) if stage else 1400.0)
+        _cd = int(round(_cd_s / raw_env.control_period))
         cbs.append(ThrottleCurriculum(raw_env, ceiling=args.throttle_ceiling,
-                                      crash_rate_max=_crm))
+                                      crash_rate_max=_crm, cooldown=_cd))
         print(f"[rl_racer] curriculum: ceiling={args.throttle_ceiling} "
-              f"crash_rate_max={_crm} step=+0.02 cooldown=25k")
+              f"crash_rate_max={_crm} step=+0.02 cooldown={_cd_s:g}s={_cd:,} steps")
     try:
         model.learn(total_timesteps=args.timesteps, callback=cbs,
                     reset_num_timesteps=args.resume is None,

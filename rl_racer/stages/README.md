@@ -55,8 +55,20 @@ Banner to confirm: `measured control period ~44 ms (22.5 Hz) = sim tick ~22 ms x
 decimation 2`, `max_episode_steps ≈ 5500 (245 s)`, `obs_dim=118`,
 `gradient_steps=3`. Expect `time/fps` ≈ 18–22 once episodes lengthen.
 
+In TensorBoard, `diag/step_ms` must sit at ~44 and `diag/ticks_per_step` at
+~2.0. `step()` waits for 2 ticks past the *last observation*, not past the
+send, so policy + gradient time (`diag/overhead_ms`, ~30 ms) is absorbed into
+the window. If overhead ever exceeds ~44 ms the period grows by a whole tick
+and the trainer prints a WARNING: lower `--gradient-steps`. The command is
+sent after the first of the two ticks whatever the overhead, so a policy sees
+the same one-step action delay in training and at deployment.
+
 Watch `slip/frac_peak` (share of steps with |S| in 0.10–0.20 — is it using the
 tire) and `slip/v_est_max` (real top speed, not the encoder echo).
+
+Deployment (never for validation): `python enjoy.py <ckpt> --stage 5 --race`
+sends no reset pulse, does not stop on a collision or stall, has no step cap,
+and ends on Ctrl-C.
 
 ## Prerequisites (every stage)
 

@@ -35,6 +35,8 @@ class RewardBreakdown(BaseCallback):
         super().__init__()
         self._acc, self._reasons = [], {}
         self._warned_yaw = False
+        self._warned_period = False
+        self.design_period_ms = None     # set by main() from the env
 
     def _on_step(self) -> bool:
         for info in self.locals.get("infos", []):
@@ -57,6 +59,8 @@ class RewardBreakdown(BaseCallback):
                     self.logger.record(f"slip/{k[5:]}", mean)
                 elif k == "enc_discontinuities":
                     self.logger.record("diag/enc_discontinuities", mean)
+                elif k.startswith("diag_"):
+                    self.logger.record(f"diag/{k[5:]}", mean)
                 elif k == "max_speed":
                     self.logger.record("race/max_speed", mean)
                 elif k == "dist":
@@ -76,6 +80,19 @@ class RewardBreakdown(BaseCallback):
                       "inverted for this build; the residual slot is not informative.",
                       flush=True)
                 self._warned_yaw = True
+            # Control-period sanity: gamma and the episode length were derived
+            # from the startup-measured period. If the loop as DRIVEN is slower,
+            # the caller's overhead is outlasting the decimation window and
+            # every step is a tick longer than designed.
+            if ("diag_step_ms" in st and self.design_period_ms and not self._warned_period):
+                _p = float(np.mean([d["diag_step_ms"] for d in self._acc]))
+                _o = float(np.mean([d["diag_overhead_ms"] for d in self._acc]))
+                if _p > 1.15 * self.design_period_ms:
+                    print(f"[rl_racer] WARNING: control period as driven is {_p:.1f} ms vs "
+                          f"{self.design_period_ms:.1f} ms designed (overhead {_o:.1f} ms/step). "
+                          f"Gradient steps are outlasting the decimation window: lower "
+                          f"--gradient-steps or the tick budget is wrong for gamma.", flush=True)
+                    self._warned_period = True
             total = sum(self._reasons.values())
             for r, c in self._reasons.items():
                 self.logger.record(f"ends/{r}", c / total)
@@ -364,7 +381,9 @@ def main():
           f"gradient_steps={model.gradient_steps}")
     if _dev == "cpu":
         print("[rl_racer] WARNING: running on CPU -- expect ~7 fps instead of ~18")
-    cbs = [ckpt, RewardBreakdown()]
+    _rb = RewardBreakdown()
+    _rb.design_period_ms = 1000.0 * raw_env.control_period
+    cbs = [ckpt, _rb]
     if not args.no_curriculum:
         _crm = (stage.DEFAULTS.get("crash_rate_max", 0.25) if stage else 0.25)
         # Cooldown in SECONDS of driving, converted with the measured period.

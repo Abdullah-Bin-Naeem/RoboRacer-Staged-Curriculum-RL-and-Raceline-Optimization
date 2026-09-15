@@ -134,6 +134,12 @@ class EnvCfg:
     episode_seconds: float = 0.0
     max_episode_steps: int = 4400
     tick_timeout: float = 5.0
+    # Deployment switch (enjoy.py --race). True = reset() sends NO reset pulse
+    # (which would teleport the car to spawn), a collision or stall does NOT
+    # end the episode (the sim keeps driving; the race is +10 s, not over),
+    # and there is no step cap. Only a dead sim still ends it. Never for
+    # training.
+    race_mode: bool = False
     reset_pulse_ticks: int = 3
     reset_settle_s: float = 0.6
     startup_timeout: float = 60.0

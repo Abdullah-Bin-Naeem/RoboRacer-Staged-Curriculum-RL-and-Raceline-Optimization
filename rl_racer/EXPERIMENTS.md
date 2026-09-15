@@ -259,6 +259,27 @@ Bugs found and fixed on the way (#17–19):
 19. **All lap times before this date were derived (`steps × dt / laps`) with a
     dt that excluded policy inference** — ~5% optimistic. `enjoy.py` now prints
     the simulator's own lap timer. The README's 7.44 s is the derived figure.
+20. **`step()` counted the decimation window from the send, so the caller's
+    overhead extended it in whole ticks.** Period = tick × (decimation +
+    ⌊overhead / tick⌋): at 55 ms ticks with decimation 1 that was invisible,
+    at 22 ms ticks 3 gradient steps (~30 ms) make it 3 ticks = 66 ms, not the
+    44 ms gamma and the episode length were derived from. Now phase-locked to
+    the last observation: measured 44.0 ms / 2.00 ticks per step with 30 ms of
+    injected overhead (mock bridge). `diag/step_ms` shows it live.
+21. **`env.close()` could not stop its spin thread** (`Executor.spin()`
+    busy-loops after `shutdown()`), so Ctrl-C printed a traceback and once
+    segfaulted at exit. Own spin loop with a stop flag, joined in `close()`.
+    `enjoy.py --race` added for deployment: no reset pulse (would teleport the
+    car mid-race), no termination on collision or stall, no step cap.
+22. **Command latency depended on the caller's overhead.** The bridge forwards
+    a command in its reply to the next telemetry: sent 2 ms after the
+    observation (deployment) it rides tick 1 and shows in the same step's
+    observation; sent 30 ms after it (training, 3 gradient steps) it rides
+    tick 2 and shows in the next step's. Found because the yaw-residual
+    warning fired in a resume smoke run but not in the random-action one.
+    Now the send waits for the tick after the observation (decimation ≥ 2),
+    so it is "next step" in both, and the residual is taken against the
+    previous command, the one that produced the measured yaw rate.
 
 Sim-loop facts that matter for RL (from the user's `LOOP_RATE.md`): the loop
 is a socket round trip, 18 Hz was a Nagle/delayed-ACK deadlock, the nodelay

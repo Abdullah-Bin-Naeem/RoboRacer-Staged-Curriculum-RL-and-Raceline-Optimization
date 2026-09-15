@@ -82,6 +82,7 @@ ros2 launch racer_mapping mapping.launch.py     # save via the RViz SlamToolbox 
 # RL: bridge in a system-python terminal, policy in the venv
 ros2 launch autodrive_roboracer bringup_headless.launch.py    # wait for "Connected!"
 cd rl_racer && python enjoy.py runs/stage3_v3/checkpoints/sac_990000_steps.zip --episodes 1
+python enjoy.py runs/stage5_fresh/final.zip --stage 5 --race   # deployment: no reset pulse, Ctrl-C ends it
 ```
 
 `race.launch.py` (in `racer_bringup`, the only package that composes others)
@@ -125,8 +126,11 @@ Pass = zero crashes (`end=timeout`) and lap time no worse than the previous
 stage. Lap time is `steps × control_period / laps`; never compare lap *counts*
 across different control rates.
 
-There is no test suite. The only `colcon test` targets are the third-party
-devkit's flake8/pep257/copyright linters.
+The one test: `python rl_racer/tests/test_env_mock.py` (ROS + venv, no sim)
+drives the env against `tests/mock_bridge.py` and checks the tick guard, the
+phase-locked period under 30 ms of overhead, the slip observer, the encoder
+reset, race mode and `enjoy.py`. Run it after any change to `env.py`. The only
+`colcon test` targets are the third-party devkit's linters.
 
 ## Architecture
 
@@ -159,6 +163,13 @@ Invariants that break checkpoints if violated:
   (`1 - dt/horizon_seconds`), not hard-coded, so the planning horizon stays
   fixed in seconds across machines. The printed value differs per machine on
   purpose.
+- **`step()` is phase-locked to the last observation**: it waits for
+  `decimation` ticks past that tick, not past the send, so training overhead
+  is absorbed into the window instead of adding whole ticks to the period.
+  `diag/step_ms` in TensorBoard must match the startup-measured period. With
+  decimation ≥ 2 it also sends no earlier than the tick after the observation,
+  so the command always rides the second tick's reply and the action-to-effect
+  latency is the same in training (30 ms of gradient work) and at deployment.
 - **Checkpoint numbering is cumulative** across stages (`reset_num_timesteps=False`):
   stage 2 resuming at 370k produces `sac_380000_steps.zip`, not `sac_10000`.
 - `max_episode_steps` is a *step* count; stages 5–6 set `episode_seconds`

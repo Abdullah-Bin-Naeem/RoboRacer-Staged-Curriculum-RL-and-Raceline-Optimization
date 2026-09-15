@@ -135,6 +135,10 @@ class _RacerNode(Node):
             target = self.tick + n
             return self.cv.wait_for(lambda: self.tick >= target, timeout=timeout)
 
+    def wait_until(self, target: int, timeout: float) -> bool:
+        with self.cv:
+            return self.cv.wait_for(lambda: self.tick >= target, timeout=timeout)
+
 
 class AutoDriveRacerEnv(gym.Env):
     metadata = {"render_modes": []}
@@ -157,7 +161,12 @@ class AutoDriveRacerEnv(gym.Env):
         self.node = _RacerNode(self._fov, self._wheels)
         self._exec = SingleThreadedExecutor()
         self._exec.add_node(self.node)
-        self._thread = threading.Thread(target=self._exec.spin, daemon=True)
+        # Own spin loop with a stop flag: Executor.spin() cannot be stopped
+        # from close() (after shutdown() it busy-loops until the context dies),
+        # and a spin thread still alive at interpreter exit races rclpy's
+        # teardown -- a traceback on Ctrl-C and, at times, a segfault.
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._spin, daemon=True)
         self._thread.start()
 
         if not self.node.wait_ticks(1, self.cfg.env.startup_timeout):
@@ -207,9 +216,34 @@ class AutoDriveRacerEnv(gym.Env):
         self._acc = {k: 0.0 for k in self._ACC_KEYS}
         self._ep_max_speed = 0.0
         self._ep_max_vest = 0.0
+        # Phase lock: the tick the last observation was taken at. step() waits
+        # for `decimation` ticks past THAT tick, not past the send, so the
+        # caller's overhead (policy + gradient steps) is absorbed into the
+        # window instead of extending it. Counting from the send made the
+        # period tick x (decimation + floor(overhead / tick)): 3 ticks, not 2,
+        # as soon as 3 gradient steps (~30 ms) outlasted one 22 ms tick.
+        #
+        # Latency lock (decimation >= 2): the command is sent no earlier than
+        # the tick AFTER the observation. The bridge forwards a command in its
+        # reply to the next telemetry, so a command sent 2 ms after the
+        # observation (deployment) rides tick 1's reply and shows in this
+        # step's observation, while one sent 30 ms after it (training, three
+        # gradient steps) rides tick 2's and shows in the NEXT step's. Holding
+        # the send past tick 1 makes it "next step" in both. Costs one tick
+        # of latency at deployment; buys train == deploy dynamics.
+        self._obs_tick = 0
+        self._obs_wall = None       # perf_counter at the last observation
+
+    def _spin(self):
+        while not self._stop.is_set() and rclpy.ok():
+            try:
+                self._exec.spin_once(timeout_sec=0.05)
+            except Exception:       # ExternalShutdownException at exit
+                break
 
     _EP_KEYS = ("progress", "speed", "center", "smooth", "prox", "dist", "lap", "grip")
-    _ACC_KEYS = ("thr", "steer", "sat", "vest", "slip_abs", "peak", "accel", "yres_sq", "yaw_sq")
+    _ACC_KEYS = ("thr", "steer", "sat", "vest", "slip_abs", "peak", "accel", "yres_sq", "yaw_sq",
+                 "period", "overhead", "ticks")
 
     # ---------------------------------------------------------------- helpers
     def _scale(self, action):
@@ -277,21 +311,28 @@ class AutoDriveRacerEnv(gym.Env):
         env = self.cfg.env
 
         self.node.send(0.0, 0.0)
-        # reset_command is level-triggered: the bridge re-emits it as 'V1 Reset'
-        # every tick, so it must be pulsed or the sim resets forever.
-        self.node.send_reset(True)
-        self.node.wait_ticks(env.reset_pulse_ticks, env.tick_timeout)
-        self.node.send_reset(False)
-
-        time.sleep(env.reset_settle_s)
+        if not env.race_mode:
+            # reset_command is level-triggered: the bridge re-emits it as
+            # 'V1 Reset' every tick, so it must be pulsed or the sim resets
+            # forever.
+            self.node.send_reset(True)
+            self.node.wait_ticks(env.reset_pulse_ticks, env.tick_timeout)
+            self.node.send_reset(False)
+            time.sleep(env.reset_settle_s)
         self.node.wait_ticks(1, env.tick_timeout)
+        with self.node.cv:
+            self._obs_tick = self.node.tick
+        self._obs_wall = time.perf_counter()
 
         # The simulator's ResetManager restores the encoder counters to their
         # spawn values, so the pre-reset samples describe a different counter.
         # Clear the sensor state AFTER the settle so the first episode step
         # starts from post-reset samples only; the car is stationary, so a speed
         # of 0 for the first tick or two is correct. The observer restarts at 0.
+        # The counter jump itself is expected, so it is not a "discontinuity"
+        # worth reporting: the stat counts only mid-episode ones.
         self.node.reset_sensors()
+        self._wheels.discontinuities = 0
         self._observer.reset(0.0)
         self._obs_t = None
 
@@ -317,12 +358,34 @@ class AutoDriveRacerEnv(gym.Env):
         cfg, rw, veh = self.cfg, self.cfg.rew, self.cfg.veh
         a, throttle, steering = self._scale(action)
 
+        _t_send = time.perf_counter()          # caller overhead ends here
+        fresh = True
+        if cfg.env.decimation >= 2:
+            fresh = self.node.wait_until(self._obs_tick + 1, cfg.env.tick_timeout)
+        with self.node.cv:
+            _sent_tick = self.node.tick
         self.node.send(throttle, steering)
-        fresh = self.node.wait_ticks(cfg.env.decimation, cfg.env.tick_timeout)
+        # Phase-locked: `decimation` ticks past the LAST observation, and at
+        # least one past the send so the observation postdates the command.
+        target = max(self._obs_tick + cfg.env.decimation, _sent_tick + 1)
+        fresh = fresh and self.node.wait_until(target, cfg.env.tick_timeout)
+        with self.node.cv:
+            _now_tick = self.node.tick
+        _t_obs = time.perf_counter()
+        if self._obs_wall is not None:
+            self._acc["period"] += _t_obs - self._obs_wall
+            self._acc["overhead"] += _t_send - self._obs_wall
+            self._acc["ticks"] += _now_tick - self._obs_tick
+        self._obs_tick, self._obs_wall = _now_tick, _t_obs
 
         beams, pos, fwd, speed, yaw_rate = self._state()
         feats = beam_features(beams, cfg.obs.range_max, rw.safe_dist)
-        v_est, s, yres = self._slip_features(speed, yaw_rate, float(a[0]) * cfg.act.max_steer)
+        # The yaw rate in this observation was produced by the PREVIOUS
+        # command (see the latency lock), so the residual is taken against
+        # that one. Using the command just sent made the residual ~ the yaw
+        # rate itself under random exploration.
+        v_est, s, yres = self._slip_features(
+            speed, yaw_rate, float(self._prev_action[0]) * cfg.act.max_steer)
 
         # Forward progress = displacement projected on heading. Clamped because
         # a reset teleport would otherwise inject a huge spurious reward.
@@ -381,6 +444,7 @@ class AutoDriveRacerEnv(gym.Env):
         if self.node.collisions > self._col_base:
             reward -= rw.crash_penalty
             terminated, reason = True, "crash"
+            self._col_base = self.node.collisions   # in race mode: charge once, keep driving
 
         # Backup detector for sims that do not count wall scrapes.
         self._too_close = (self._too_close + 1
@@ -394,13 +458,19 @@ class AutoDriveRacerEnv(gym.Env):
             reward -= rw.stall_penalty
             terminated, reason = True, "stall"
 
+        if cfg.env.race_mode and terminated:
+            # A collision costs 10 s at the race, it does not end it. Only a
+            # dead sim (below) may end a race-mode episode.
+            self._ep["crashes"] = self._ep.get("crashes", 0.0) + 1.0
+            terminated, reason = False, ""
+
         if not fresh:
             # Sim stopped ticking (paused, crashed, or disconnected). End the
             # episode rather than training on stale observations.
             terminated, reason = True, "sim_timeout"
 
         self._steps += 1
-        truncated = self._steps >= cfg.env.max_episode_steps
+        truncated = (self._steps >= cfg.env.max_episode_steps) and not cfg.env.race_mode
         self._prev_action[:] = a
 
         obs = self._build(beams, speed, yaw_rate, a[0], a[1], (v_est, s, yres))
@@ -426,14 +496,27 @@ class AutoDriveRacerEnv(gym.Env):
             stats["slip_yaw_rate_rms"] = math.sqrt(acc["yaw_sq"] / n)
             stats["enc_discontinuities"] = float(self._wheels.discontinuities)
             self._wheels.discontinuities = 0
+            # Effective control period as driven, vs the one gamma and the
+            # episode length were derived from at startup. `overhead` is what
+            # the caller spent between observation and next command (policy
+            # + gradient steps); it must stay under the window or the period
+            # grows in whole ticks.
+            stats["diag_step_ms"] = 1000.0 * acc["period"] / n
+            stats["diag_overhead_ms"] = 1000.0 * acc["overhead"] / n
+            stats["diag_ticks_per_step"] = acc["ticks"] / n
             info["episode_stats"] = stats
             self.node.send(0.0, 0.0)   # never leave the throttle open
         return obs, float(reward), terminated, truncated, info
 
     def close(self):
         try:
-            self.node.send(0.0, 0.0)
-            self._exec.shutdown()
+            self.node.send(0.0, 0.0)    # never leave the throttle open
+        except Exception:
+            pass
+        self._stop.set()
+        self._thread.join(timeout=1.0)
+        try:
+            self._exec.shutdown(timeout_sec=0.5)
             self.node.destroy_node()
         except Exception:
             pass

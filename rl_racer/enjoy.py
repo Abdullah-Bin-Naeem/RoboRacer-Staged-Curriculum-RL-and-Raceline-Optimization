@@ -31,6 +31,10 @@ p.add_argument("--steps", type=int, default=0,
 p.add_argument("--hz", type=float, default=0.0,
                help="pace the control loop to this rate (v3 trained at ~7.7 Hz; "
                     "0 = run as fast as the sim allows, ~18 Hz)")
+p.add_argument("--race", action="store_true",
+               help="DEPLOYMENT: never send a reset pulse, never stop on a collision "
+                    "or stall, no step cap -- drive until Ctrl-C. The sim-tick window "
+                    "check becomes a warning instead of a refusal.")
 a = p.parse_args()
 
 cfg = Cfg()
@@ -45,7 +49,16 @@ if a.stage:
           f"throttle_scale={cfg.act.throttle_max} decimation={cfg.env.decimation}")
 if a.steps > 0:
     cfg.env.max_episode_steps = a.steps
+    cfg.env.episode_seconds = 0.0       # else the env re-derives the cap at startup
     print(f"[steps] episode capped at {a.steps} steps")
+_tick_window = (cfg.env.tick_ms_min, cfg.env.tick_ms_max)
+if a.race:
+    cfg.env.race_mode = True
+    cfg.env.episode_seconds = 0.0
+    cfg.env.max_episode_steps = 1 << 62
+    cfg.env.tick_ms_min = cfg.env.tick_ms_max = 0.0     # warn below, never refuse
+    a.episodes = 1
+    print("[race] no reset pulse, no termination on collision/stall, no step cap; Ctrl-C to stop")
 
 if a.legacy_obs:
     cfg.obs.fov_half_deg = 90.0     # v3 field of view
@@ -64,6 +77,12 @@ elif a.speed == "encoder":
 print(f"[speed] slot 91 <- {'/odom (RESTRICTED at race time)' if not cfg.obs.use_encoder_speed else 'wheel encoders (race-legal)'}")
 
 env = AutoDriveRacerEnv(cfg)
+if a.race and any(_tick_window):
+    _tick_ms = 1000.0 * env.control_period / cfg.env.decimation
+    lo, hi = _tick_window
+    if (lo > 0 and _tick_ms < lo) or (hi > 0 and _tick_ms > hi):
+        print(f"[race] WARNING: sim tick {_tick_ms:.1f} ms is outside the {lo:g}-{hi:g} ms "
+              f"window this policy trained in; driving anyway.")
 model = SAC.load(a.model, device="cpu")
 try:
     for ep in range(a.episodes):
@@ -95,5 +114,7 @@ try:
         if "slip_v_est_max" in st:
             print(f"        v_est max={st['slip_v_est_max']:.2f} m/s  mean={st['slip_v_est_mean']:.2f}  "
                   f"|S| mean={st['slip_abs_mean']:.3f}  at-peak-grip={st['slip_frac_peak']:.0%} of steps")
+except KeyboardInterrupt:
+    print("\n[enjoy] stopped by Ctrl-C -- throttle released")
 finally:
     env.close()

@@ -80,24 +80,25 @@ def main():
     print("[1/5] waiting for first LiDAR scan (30 s) ...")
     if not n.wait(1, 30.0):
         print("  FAIL: no scan. Is the simulator running AND the bridge launched?")
-        print("        ros2 launch autodrive_roboracer bringup_headless.launch.py")
+        print("        ros2 launch racer_bringup bridge.launch.py tcp_nodelay:=true loop_hz_cap:=45")
         return 1
     s = n.scan
     print(f"  OK  beams={len(s.ranges)} angle=[{math.degrees(s.angle_min):.1f},"
           f"{math.degrees(s.angle_max):.1f}]deg inc={s.angle_increment:.6f} "
           f"range_max={s.range_max}")
-    half = math.radians(90.0)
+    half = math.radians(110.0)
     i0 = int(round((-half - s.angle_min) / s.angle_increment))
     i1 = int(round((half - s.angle_min) / s.angle_increment))
-    print(f"  +/-90deg FOV -> indices [{i0}:{i1}] = {i1-i0} raw beams")
+    print(f"  +/-110deg FOV -> indices [{i0}:{i1}] = {i1-i0} raw beams (110 pooled at 8:1)")
 
     print("[2/5] measuring sim tick rate over 5 s ...")
     t0, k0 = time.time(), n.tick
     time.sleep(5.0)
     hz = (n.tick - k0) / (time.time() - t0)
-    print(f"  OK  {hz:.1f} Hz  -> decimation=2 gives {hz/2:.1f} Hz control")
-    if hz < 5:
-        print("  WARN: very low tick rate; training will be painfully slow.")
+    print(f"  OK  {hz:.1f} Hz ({1000/hz:.1f} ms tick) -> decimation=2 gives {hz/2:.1f} Hz control")
+    if not 31 <= hz <= 67:
+        print("  WARN: tick outside the 15-32 ms window; stage 5 will REFUSE to start.")
+        print("        bring the bridge up with: tcp_nodelay:=true loop_hz_cap:=45")
 
     print("[3/5] checking topic liveness ...")
     for name, v in (("odom", n.odom), ("collision_count", n.col), ("lap_count", n.lap)):

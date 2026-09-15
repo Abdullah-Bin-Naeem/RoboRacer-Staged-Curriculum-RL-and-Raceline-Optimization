@@ -2,9 +2,8 @@
 """SAC training against the live AutoDRIVE RoboRacer simulator (single instance).
 
 Usage:
-    ./run_train.sh --stage 5                                   # fresh lineage, from scratch
+    ./run_train.sh --stage 5                                   # from scratch
     ./run_train.sh --stage 6 --resume runs/stage5_fresh/final.zip
-    python3 train_sac.py --resume runs/v1/checkpoints/sac_50000_steps.zip
 """
 import argparse
 import os
@@ -101,79 +100,12 @@ class RewardBreakdown(BaseCallback):
         return True
 
 
-class ThrottleCurriculum(BaseCallback):
-    """Raises the throttle cap once the agent proves it can drive at the current one.
-
-    The cap starts low because uncapped random exploration crashes within a few
-    steps and fills the replay buffer with nothing but crashes. It is raised
-    only after the agent sustains long, crash-free episodes, so the ceiling
-    never becomes what limits lap time.
-
-    The current cap is part of the observation, so transitions recorded under an
-    old cap stay valid: action[1]=+1 means different things at different caps,
-    and the critic can see which regime a transition came from.
-    """
-
-    def __init__(self, env, ceiling=1.0, step=0.02, window=20,
-                 crash_rate_max=0.25, min_len=400, cooldown=25_000,
-                 demand_min=0.55):
-        super().__init__()
-        self.env = env
-        # step=0.02 is ~+10% top speed per raise. The original 0.10 was ~+50%,
-        # which invalidated every corner speed the policy had learned at once
-        # (run v3: 28 laps -> 0, episodes 1060 -> 24 steps).
-        self.ceiling, self.step = ceiling, step
-        self.window, self.crash_rate_max = window, crash_rate_max
-        self.min_len, self.cooldown = min_len, cooldown
-        # DEMAND gate: mean throttle as a fraction of the cap. Competence alone
-        # ("it drives well") is not evidence the agent WANTS more speed, and
-        # raising a cap it is not pressing against only destabilises it.
-        self.demand_min = demand_min
-        self._ends, self._lens, self._thr = [], [], []
-        self._last_raise = 0
-
-    def _on_step(self) -> bool:
-        for info in self.locals.get("infos", []):
-            if "episode" in info:                     # added by Monitor
-                self._lens.append(info["episode"]["l"])
-                self._ends.append(info.get("reason", "?"))
-                st = info.get("episode_stats", {})
-                self._thr.append(st.get("act_throttle_mean", 0.0))
-                self._ends = self._ends[-self.window:]
-                self._lens = self._lens[-self.window:]
-                self._thr = self._thr[-self.window:]
-
-        cap = self.env.cfg.act.throttle_max
-        self.logger.record("action/throttle_cap", cap)
-
-        if (len(self._lens) >= self.window
-                and cap < self.ceiling - 1e-6
-                and self.num_timesteps - self._last_raise >= self.cooldown):
-            crash_rate = sum(e in ("crash", "scrape") for e in self._ends) / len(self._ends)
-            mean_len = float(np.mean(self._lens))
-            demand = float(np.mean(self._thr)) / max(cap, 1e-6)
-            self.logger.record("action/throttle_demand", demand)
-            if (crash_rate <= self.crash_rate_max
-                    and mean_len >= self.min_len
-                    and demand >= self.demand_min):
-                new_cap = min(self.ceiling, cap + self.step)
-                self.env.cfg.act.throttle_max = new_cap
-                self._last_raise = self.num_timesteps
-                self._ends.clear(); self._lens.clear(); self._thr.clear()
-                print(f"[curriculum] step {self.num_timesteps}: "
-                      f"crash={crash_rate:.2f} len={mean_len:.0f} demand={demand:.0%} "
-                      f"-> cap {cap:.2f} -> {new_cap:.2f} "
-                      f"(~{24*new_cap:.1f} m/s ceiling)", flush=True)
-        return True
-
-
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--stage", choices=["1", "2", "3", "4", "5", "6"], default=None,
-                   help="staged pipeline. v3 lineage (95-dim): 1=base 2=sensors "
-                        "3=speed curriculum 4=reserved. Fresh lineage (118-dim, "
-                        "+/-110 deg, slip slots, fixed throttle scale): 5=fresh "
-                        "6=push. Sets config, run name and defaults for the stage.")
+    p.add_argument("--stage", choices=["5", "6"], default="5",
+                   help="5 = learn to drive (from scratch), 6 = speed pressure "
+                        "(resumes stage 5 with its buffer). Sets config, run name "
+                        "and defaults for the stage.")
     p.add_argument("--timesteps", type=int, default=None)
     p.add_argument("--run-name", default=None)
     p.add_argument("--logdir", default="runs")
@@ -184,12 +116,12 @@ def main():
                         "with the loaded policy before training starts")
     p.add_argument("--no-sde", action="store_true",
                    help="disable gSDE (state-dependent exploration)")
-    # MEASURED: on CPU, 4 gradient steps cost ~75 ms and drop the control
-    # loop from 18 Hz to 7.7 Hz. 2 fits inside the 55 ms sim tick, so it
-    # keeps full control rate AND does more updates/second than 4 did.
+    # MEASURED: ~10 ms per gradient step on the RTX 4070. The env absorbs up to
+    # one 44 ms control window of caller time (phase lock); 3 steps (~30 ms)
+    # fit, and diag/overhead_ms in TensorBoard shows the real figure.
     p.add_argument("--gradient-steps", type=int, default=None,
-                   help="updates per env step. Default: keep the checkpoint's value "
-                        "on --resume, else 2. Never changed silently.")
+                   help="updates per env step. Default: the stage's value, or the "
+                        "checkpoint's on --resume. Never changed silently.")
     p.add_argument("--ent-coef", type=float, default=None,
                    help="FREEZE the entropy coefficient at this value instead of "
                         "letting SAC re-tune it. On a fine-tune resume auto-tuning "
@@ -199,10 +131,6 @@ def main():
                    help="discount. Default: derived from the MEASURED control rate "
                         "so the planning horizon stays fixed in seconds.")
     p.add_argument("--device", default="auto")
-    p.add_argument("--no-curriculum", action="store_true",
-                   help="fix the throttle cap instead of raising it as the agent improves")
-    p.add_argument("--throttle-ceiling", type=float, default=None,
-                   help="maximum throttle the curriculum may reach")
     args = p.parse_args()
 
     stage = stage_registry.load(args.stage) if args.stage else None
@@ -212,10 +140,7 @@ def main():
         d = stage.DEFAULTS
         if args.timesteps is None:     args.timesteps = d["timesteps"]
         if args.run_name is None:      args.run_name = stage.NAME
-        if not args.no_curriculum:     args.no_curriculum = not d["curriculum"]
         if args.warmup == 10_000:      args.warmup = d["warmup"]
-        if args.throttle_ceiling is None:
-            args.throttle_ceiling = d.get("throttle_ceiling", 1.0)
         if args.gradient_steps is None and "gradient_steps" in d:
             args.gradient_steps = d["gradient_steps"]
         _lr = d["learning_rate"]
@@ -223,14 +148,11 @@ def main():
         print(f"    {stage.__doc__.strip().splitlines()[0]}")
         print(f"    obs_dim={cfg.obs.dim} (expected {stage.EXPECTED_OBS_DIM})  "
               f"competition_legal={stage.COMPETITION_LEGAL}")
-        print(f"    speed <- {'wheel encoders (legal)' if cfg.obs.use_encoder_speed else '/odom (RESTRICTED)'}"
-              f"   slip slots={'ON (v_est, S, yaw_residual)' if cfg.obs.slip_slots else 'off'}")
         print(f"    fov=+/-{cfg.obs.fov_half_deg:g} beams={cfg.obs.n_beams}  "
               f"throttle scale={cfg.act.throttle_max}  decimation={cfg.env.decimation}")
         print(f"    reward: progress={cfg.rew.w_progress} speed={cfg.rew.w_speed} "
               f"center={cfg.rew.w_center} lap={cfg.rew.w_lap} grip={cfg.rew.w_grip}")
-        print(f"    lr={_lr}  curriculum={d['curriculum']}  timesteps={args.timesteps}  "
-              f"gradient_steps={args.gradient_steps}")
+        print(f"    lr={_lr}  timesteps={args.timesteps}  gradient_steps={args.gradient_steps}")
         if stage.RESUME_FROM and not args.resume:
             print(f"    NOTE: this stage expects --resume from {stage.RESUME_FROM}")
         if cfg.obs.dim != stage.EXPECTED_OBS_DIM:
@@ -238,7 +160,6 @@ def main():
                              f"{stage.EXPECTED_OBS_DIM}; checkpoints will not load")
     else:
         _lr = 3e-4
-    if args.throttle_ceiling is None: args.throttle_ceiling = 1.0
     if args.timesteps is None: args.timesteps = 400_000
     if args.run_name is None:  args.run_name = "v1"
 
@@ -339,10 +260,7 @@ def main():
             tau=0.005,
             gamma=(args.gamma if args.gamma is not None else _gamma),
             train_freq=1,
-            # The sim is real-time locked at 20 Hz control, so the GPU is idle
-            # ~95% of the time. Spending it on extra gradient steps buys sample
-            # efficiency for zero wall-clock cost.
-            gradient_steps=(args.gradient_steps if args.gradient_steps is not None else 2),
+            gradient_steps=(args.gradient_steps if args.gradient_steps is not None else 3),
             ent_coef="auto",
             # gSDE gives temporally correlated exploration instead of per-step
             # white noise -- much smoother steering, which is what we want here.
@@ -384,15 +302,6 @@ def main():
     _rb = RewardBreakdown()
     _rb.design_period_ms = 1000.0 * raw_env.control_period
     cbs = [ckpt, _rb]
-    if not args.no_curriculum:
-        _crm = (stage.DEFAULTS.get("crash_rate_max", 0.25) if stage else 0.25)
-        # Cooldown in SECONDS of driving, converted with the measured period.
-        _cd_s = (stage.DEFAULTS.get("cooldown_seconds", 1400.0) if stage else 1400.0)
-        _cd = int(round(_cd_s / raw_env.control_period))
-        cbs.append(ThrottleCurriculum(raw_env, ceiling=args.throttle_ceiling,
-                                      crash_rate_max=_crm, cooldown=_cd))
-        print(f"[rl_racer] curriculum: ceiling={args.throttle_ceiling} "
-              f"crash_rate_max={_crm} step=+0.02 cooldown={_cd_s:g}s={_cd:,} steps")
     try:
         model.learn(total_timesteps=args.timesteps, callback=cbs,
                     reset_num_timesteps=args.resume is None,

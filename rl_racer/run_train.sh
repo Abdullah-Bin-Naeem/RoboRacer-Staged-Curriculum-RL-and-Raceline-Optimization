@@ -18,9 +18,9 @@ if ! pgrep -f "AutoDRIVE Simulator.x86_64" >/dev/null; then
   exit 1
 fi
 if ! ss -ltn 2>/dev/null | grep -q 4567; then
-  echo "ERROR: bridge not listening on 4567. Start it with:"
-  echo "  source ../devkit_ws/install/setup.bash"
-  echo "  ros2 launch autodrive_roboracer bringup_headless.launch.py"
+  echo "ERROR: bridge not listening on 4567. Start it (system python, ROS sourced) with:"
+  echo "  source ../ros_env.sh"
+  echo "  ros2 launch racer_bringup bridge.launch.py tcp_nodelay:=true loop_hz_cap:=45"
   exit 1
 fi
 echo "sim + bridge OK"

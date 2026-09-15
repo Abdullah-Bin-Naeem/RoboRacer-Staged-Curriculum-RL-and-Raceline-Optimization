@@ -34,22 +34,8 @@ rl_racer/runs/*/*
 !rl_racer/runs/*/monitor.csv
 !rl_racer/runs/*/checkpoints/
 rl_racer/runs/*/checkpoints/*
-# The two policies actually referenced in the docs and used for testing.
-!rl_racer/runs/stage2_sensors/checkpoints/sac_520000_steps.zip
-!rl_racer/runs/stage3_v3/checkpoints/sac_990000_steps.zip
 
 # Tensorboard event files
 events.out.tfevents.*
 
-# ---- SLAM serialized pose graph (30 MB) ------------------------------------
-# Regenerable, and only needed to CONTINUE a mapping session. The .pgm + .yaml
-# are the actual deliverable and are committed.
-
-# Serializing from the RViz SlamToolbox panel with an empty name writes
-# `.posegraph` and `.data` into the node's working directory -- byte-identical
-# junk copies of whatever map was open. Root-anchored so the real maps under
-# racer_mapping/maps/ stay tracked; track_sm.posegraph + track_sm.data ARE a
-# deliverable, since slam_localization.launch.py loads them.
-/.posegraph
-/.data
 tools/libnodelay.so

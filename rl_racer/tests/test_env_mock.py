@@ -83,18 +83,18 @@ def main():
     check("control period ~44 ms", 40 <= cp <= 48, f"{cp:.1f} ms")
     check("max_episode_steps ~ 245 s / period", abs(cfg.env.max_episode_steps - 245 / env.control_period) < 2,
           f"{cfg.env.max_episode_steps}")
-    check("obs dim 118", env.observation_space.shape == (118,), str(env.observation_space.shape))
+    check("obs dim 117", env.observation_space.shape == (117,), str(env.observation_space.shape))
 
     rc0 = side.reset_count or 0
     obs, _ = env.reset()
     time.sleep(0.1)
     check("reset pulse reached the mock", (side.reset_count or 0) == rc0 + 1, f"{rc0} -> {side.reset_count}")
-    check("reset obs: slip slots ~0", np.all(np.abs(obs[115:118]) < 1e-6), f"{obs[115:118]}")
+    check("reset obs: slip slots ~0", np.all(np.abs(obs[114:117]) < 1e-6), f"{obs[114:117]}")
     check("reset obs: speed slot 0 (not -1)", abs(obs[110]) < 1e-6, f"{obs[110]:.3f}")
-    check("reset obs: throttle_cap slot 0.5", abs(obs[114] - 0.5) < 1e-6, f"{obs[114]:.3f}")
     check("obs in [-1,1]", np.all(obs >= -1) and np.all(obs <= 1))
 
-    act = (0.2, 0.44)                       # throttle = 0.72/2*0.5 = 0.36 -> u = 9.09 m/s
+    THR = 0.36                              # u = 25.25 x 0.36 = 9.09 m/s
+    act = (0.2, 2 * THR / cfg.act.throttle_max - 1)
     cfg.env.max_episode_steps = 10 ** 9     # no truncation during the timing runs
     # 2a: zero caller overhead
     snap = dict(env._acc); k0 = env._steps
@@ -112,14 +112,14 @@ def main():
     check("period still ~44 ms with 30 ms overhead (phase lock)", 40 <= per <= 48,
           f"{per:.1f} ms, {tps:.2f} ticks/step, overhead {ovh:.1f} ms")
     # 2c: physics agreement
-    u = 25.25 * 0.36
+    u = 25.25 * THR
     check("encoder u ~ 25.25 x throttle", abs(info["speed"] - u) < 0.3, f"u={info['speed']:.2f} vs {u:.2f}")
     v_true = env.node.odom[2][0]
     check("observer v_est tracks the car", abs(info["v_est"] - v_true) < 0.3,
           f"v_est={info['v_est']:.2f} v_true={v_true:.2f}")
-    check("obs speed slot = u/20", abs(obs[110] - info["speed"] / 20) < 1e-5, f"{obs[110]:.4f}")
-    check("obs v_est slot = v_est/20", abs(obs[115] - np.clip(info["v_est"] / 20, -1, 1)) < 1e-5)
-    check("obs slip slot = S/0.5", abs(obs[116] - np.clip(info["slip"] / 0.5, -1, 1)) < 1e-5)
+    check("obs speed slot = u/v_max", abs(obs[110] - info["speed"] / cfg.obs.v_max) < 1e-5, f"{obs[110]:.4f}")
+    check("obs v_est slot = v_est/v_max", abs(obs[114] - np.clip(info["v_est"] / cfg.obs.v_max, -1, 1)) < 1e-5)
+    check("obs slip slot = S/0.5", abs(obs[115] - np.clip(info["slip"] / 0.5, -1, 1)) < 1e-5)
     yres_rms = math.sqrt(env._acc["yres_sq"] / env._steps); yaw_rms = math.sqrt(env._acc["yaw_sq"] / env._steps)
     check("yaw residual << yaw rate (sign convention)", yres_rms < 0.3 * yaw_rms,
           f"res rms {yres_rms:.3f} vs yaw rms {yaw_rms:.3f}")
@@ -143,10 +143,10 @@ def main():
     def latency(overhead):
         for _ in range(6):
             if overhead: time.sleep(overhead)
-            env.step(np.array([0.0, 0.44], dtype=np.float32))     # straight, settle
+            env.step(np.array([0.0, act[1]], dtype=np.float32))   # straight, settle
         for k in range(4):
             if overhead: time.sleep(overhead)
-            env.step(np.array([1.0, 0.44], dtype=np.float32))     # full left from step 0
+            env.step(np.array([1.0, act[1]], dtype=np.float32))   # full left from step 0
             if abs(env.node.imu[1]) > 0.5: return k
         return 99
     l0, l1 = latency(0.0), latency(0.030)
@@ -203,7 +203,7 @@ def main():
     env.close()
     out = subprocess.run([sys.executable, os.path.join(RL, "enjoy.py"), mpath, "--stage", "5", "--episodes", "1", "--steps", "40"],
                          cwd=RL, capture_output=True, text=True, timeout=120).stdout
-    check("enjoy: stage banner obs_dim=118", "obs_dim=118" in out)
+    check("enjoy: stage banner obs_dim=117", "obs_dim=117" in out)
     check("enjoy: ran exactly 40 steps (--steps beats episode_seconds)", "steps=   40" in out, [l for l in out.splitlines() if l.startswith("ep 0")][:1])
     check("enjoy: printed v_est line", "v_est max=" in out)
     # --race: must run past 40 steps, never reset; stop it with SIGINT

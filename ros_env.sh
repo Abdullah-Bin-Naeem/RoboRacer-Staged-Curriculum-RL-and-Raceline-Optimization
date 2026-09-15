@@ -14,10 +14,9 @@
 #                       or nothing discovers anything -- a node without it
 #                       listens on a different interface and every topic reads
 #                       as dead while the rest of the stack runs perfectly.
-#   CYCLONEDDS_URI      raises MaxAutoParticipantIndex above its default of 9.
-#                       race.launch.py is about ten nodes, so without this the
-#                       tenth fails with "Failed to find a free participant
-#                       index for domain 0".
+#   CYCLONEDDS_URI      raises MaxAutoParticipantIndex above its default of 9,
+#                       so a tenth node on this host does not fail with "Failed
+#                       to find a free participant index for domain 0".
 
 _ROBORACER="$HOME/Documents/roboracer"
 

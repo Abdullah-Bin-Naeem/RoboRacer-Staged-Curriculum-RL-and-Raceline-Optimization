@@ -7,28 +7,6 @@ Last updated: 2026-09-15
 
 ---
 
-## Compute spent
-
-| run | episodes | steps | wall-clock | fps |
-|---|---|---|---|---|
-| `v3` (= stage 1) | 1,119 | 403,112 | **14.72 h** | 7.6 |
-| `v_obs_1005_6` (abandoned) | 1,303 | 74,218 | 1.48 h | 13.9 |
-| `stage2_sensors` | 38 | 149,126 | **2.32 h** | 17.9 |
-| `stage3_speed` run 1 | 438 | 298,426 | **4.73 h** | 17.5 |
-| `stage3_speed_v2` | 476 | 191,704 | **3.42 h** | 15.6 |
-| `stage3_v3` | 702 | 597,930 | **11.99 h** | 13.8 |
-| | | | **38.66 h total** | |
-
-fps went 7.6 -> 17.5 when torch moved to CUDA: 4 gradient steps cost ~76 ms on
-CPU (overrunning the 55 ms sim tick) vs ~40 ms on the RTX 4070 (fits inside it).
-Later runs sit at 13-16 fps because a high crash rate means more resets, and
-each reset costs ~0.9 s.
-
-**stage3_v3 produced the best policy so far (7.44 s/lap). Runs 1 and v2 (8.15 h)
-were lost to the replay-buffer bug (#12).**
-
----
-
 ## Measured constants for this simulator
 
 Verified empirically, not assumed. Several contradict the documentation.
@@ -45,38 +23,6 @@ Verified empirically, not assumed. Several contradict the documentation.
 | `twist.linear` frame | **BODY**, not world | velocity sits 2.9° off body x-axis, 93.9° off world yaw |
 | IMU yaw axis | `angular_velocity.z`, rad/s | corr 0.83 with truth, slope 0.974 |
 | `/imu` vs `/odom` angular | **identical** | bridge feeds both from one variable |
-
----
-
-## Policy performance (deterministic, `enjoy.py`)
-
-Compare **lap time**, never lap count — episode caps are step counts, so they
-mean different amounts of driving time at different control rates.
-
-| policy | speed source | rate | lap time |
-|---|---|---|---|
-| v3 @370k | `/odom` | 7.7 Hz | **7.79 s** |
-| v3 @370k | encoders | 7.7 Hz | 8.50 s |
-| v3 @370k | encoders | 18.8 Hz | 8.00 s |
-| stage2 final | encoders | 17.8 Hz | 8.23 s (1 crash in 2 eps) |
-| **stage3_v3 final** | encoders | 18.5 Hz | **7.44 s — 32 laps x 3 eps, ZERO crashes** |
-
-Cap-independent reliability (MTTC = mean steps between crashes) is the fair way
-to compare runs, since every run used a different episode cap:
-
-| run | episode cap | MTTC | crash@its own cap |
-|---|---|---|---|
-| stage 1 (v3, pre-collapse) | 1800 | 555 | 0.88 |
-| **stage 2** | 4400 | **14,913** | **0.26** |
-| stage3 run 1 | 4400 | 697 | 0.98 |
-| stage3 v2 | 1200 | 494 | 0.88 |
-
-Stage 2 was one step from triggering the ladder (0.26 vs a 0.25 gate) and is
-still the best policy available. Everything after it regressed 20-30x.
-
-**Stage 2 did not deliver the predicted improvement** (8.23 s vs the 7.79 s
-target). **Stage 3 did**: 7.44 s/lap, 9.6% faster than stage 2 and better than
-any earlier policy, with zero crashes across 3 full episodes.
 
 ---
 
@@ -148,74 +94,15 @@ these are **restricted at race time**: `ips`, `odom`, `reset_command`,
 
 | observation slot | source | legal |
 |---|---|---|
-| 1–90 LiDAR beams | `/lidar` | ✅ |
-| 91 speed | `/left_encoder` + `/right_encoder` | ✅ |
-| 92 yaw rate | `/imu` | ✅ |
-| 93–94 prev actions | own commands | ✅ |
-| 95 throttle cap | internal | ✅ |
+| 1–110 LiDAR beams | `/lidar` | ✅ |
+| 111 wheel speed `u` | `/left_encoder` + `/right_encoder` | ✅ |
+| 112 yaw rate | `/imu` | ✅ |
+| 113–114 previous action | own commands | ✅ |
+| 115 `v_est`, 116 slip `S`, 117 yaw residual | encoders + IMU + own command + the sim's published tire model | ✅ |
 
 `/odom` is used **only** for the reward (progress + speed) and `reset_command` /
 `collision_count` only for episode management — all training-time only, none of
 which exist at inference. RL is explicitly permitted by the rules.
-
----
-
-## Run history
-
-### v1, v2 — scaffolding, discarded
-
-### v3 (= stage 1) — the good policy
-370k steps, 14.7 h, CPU, 7.7 Hz. **1800 steps / 30 laps / zero crashes**,
-7.79 s/lap. Destroyed at step 379,318 by the curriculum bug (#5); the 370k
-checkpoint predates the raise and is the one to keep.
-
-### v_obs_1005_6 — abandoned at 73k
-Changed too much at once (±100° FOV, `w_speed` 1.0, `v_max` 25, encoder speed,
-GPU/18 Hz). Plateaued at 62-step episodes and stayed flat 53k steps. Leading
-suspect: gamma (#7), never isolated.
-
-### stage2_sensors — 370k → 520k, 2.3 h
-Sensor swap only. Completed, no improvement (8.23 s/lap vs 8.00 unadapted).
-
-### stage3 — three attempts; the third SUCCEEDED
-
-| run | steps | cap | `w_center` | buffer | alpha | outcome |
-|---|---|---|---|---|---|---|
-| run 1 | 520k→820k | 4400 | 0.0 | empty ❌ | spiked 0.037→**0.52** | cap never raised |
-| v2 | 810k→1,000k | 1200 | 0.0 | empty ❌ | spiked 0.093→**0.26** | cap never raised |
-| **v3** | **520k→1,120k** | 2250 | 0.15 | **loaded ✅** | **stable 0.032→0.085 ✅** | **cap 0.20→0.22, 7.44 s/lap** |
-
-Runs 1 and v2 failed because of the replay-buffer bug (#12): every resume
-started with an empty buffer, so the critic trained on a few hundred samples and
-the policy collapsed. Fixing the filename lookup fixed both the collapse and the
-alpha spike (a stable critic keeps the policy near-optimal, so SAC has no reason
-to inject noise).
-
-**v3 raised the cap at step 740,873** (0.20 → 0.22, ~4.8 → ~5.3 m/s) and its
-final policy is the fastest yet: **7.44 s/lap, 32 laps per episode, zero
-crashes** across 3 deterministic episodes.
-
-#### The methodological mistake that nearly killed a working run
-
-Throughout v3 I judged it by `ends/crash`, which sat at 0.8–1.0, and concluded
-it was failing. I recommended stopping it and reverting the reward. That was
-wrong:
-
-| measure | value |
-|---|---|
-| training crash rate (with gSDE exploration) | **0.80** |
-| deterministic crash rate (`enjoy.py`) | **0.00** |
-
-**Training crash rate is not policy quality.** It is dominated by the
-exploration noise SAC deliberately injects. The same gap was visible in stage 2
-(training 0.2–0.4, deterministic a clean 4400-step / 30-lap episode) and in v3
-itself (stage 1, training MTTC 555, deterministically flawless).
-
-**Always validate with `enjoy.py` before concluding a run has failed.**
-I also declared "cap never raised" at step 672k; the raise came at 740k. Judging
-a curriculum before its cooldown has had room to fire is meaningless.
-
-
 
 ---
 
@@ -228,25 +115,27 @@ Context: qualified; the competition track is in the simulator, unmapped.
 
 Decisions (each argued in the stage docstrings):
 - **±110°, 110 beams** (2°/beam kept; 20° of margin past the old boundary).
-- **From scratch, 118-dim.** Widening breaks every checkpoint; a transplant was
+- **From scratch, 117-dim.** Widening breaks every checkpoint; a transplant was
   designed but a fixed throttle scale needs no prior calibrated policy, and at
-  the new loop rate a fresh run is ~6-8 h, not the CPU-era 38 h.
-- **Throttle scale 0.5, fixed, no curriculum.** The cap was never a speed limit,
+  the new loop rate a fresh run is ~4 h, not the CPU-era 38 h. The legacy
+  lineage (stages 1–4, 95-dim, its runs) was removed from this branch.
+- **Throttle scale 1.0, fixed, no curriculum.** The cap was never a speed limit,
   it was the action's unit; every raise re-labelled every learned action, and
   the curriculum's crash gate measured exploration noise (training 0.80 vs
-  deterministic 0.00). Peak-grip throttle is speed-dependent and never exceeds
-  ~0.36 here (wheel speed = 25.25·θ, peak at slip 0.15); 0.5 covers the track.
+  deterministic 0.00). Peak-grip throttle is speed-dependent, ~1.15·v/25.25
+  (0.36 at 8 m/s, 0.9 at 20); the competition track has a straight long enough
+  to use the top of the range, and the slip slot shows where wheelspin starts.
+  The constant throttle-cap slot of the old observation is gone with the cap.
 - **Three race-legal slip slots** from `sensors.py`: tire-observer car speed
   `v_est` (the classical stack's `speed_source: tire`), slip `S`, yaw-rate
   residual. The encoder is the throttle echo, so without `v_est` the policy had
   no real speedometer.
-- **Seconds, not steps** for episode length and curriculum cooldown (gamma was
-  already derived). Tick guard 15–32 ms so the fresh stages cannot run on a
+- **Seconds, not steps** for the episode length (gamma was already derived). Tick guard 15–32 ms so the fresh stages cannot run on a
   stock 55 ms or uncapped 13 ms loop by mistake.
 - Speed pressure staged: 5 = learn to drive (`w_speed` 0.2), 6 = push
   (`w_speed` 0.6, lap bonus 200, grip 0.05), resuming WITH the buffer.
 
-Bugs found and fixed on the way (#17–19):
+Bugs found and fixed on the way (#17–22):
 17. **Encoder spike on every reset.** The simulator's `ResetManager` restores
     `TotalRevolutions` to the spawn value on `reset_command`; the env never
     cleared its encoder state, so the first step of every episode computed a

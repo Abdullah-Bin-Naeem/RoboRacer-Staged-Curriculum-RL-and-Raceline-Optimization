@@ -272,19 +272,7 @@ class AutoDriveRacerEnv(gym.Env):
 
         odom = self.node.odom
         pos = np.array(odom[0][:2]) if odom is not None else np.zeros(2)
-
-        if self.cfg.obs.use_encoder_speed:
-            speed = self.node.enc_speed
-        else:
-            # Legacy path: speed from /odom twist (RESTRICTED at race time).
-            lin = odom[2] if odom is not None else (0.0, 0.0, 0.0)
-            speed = math.hypot(lin[0], lin[1])
-            if self.cfg.env.legacy_speed_sign:
-                if lin[0] * fwd[0] + lin[1] * fwd[1] < 0.0:   # original (buggy)
-                    speed = -speed
-            elif lin[0] < 0.0:                                # corrected
-                speed = -speed
-
+        speed = self.node.enc_speed                 # wheel speed u, race-legal
         return beams, pos, fwd, speed, yaw_rate
 
     def _slip_features(self, u: float, yaw_rate: float, steer_cmd: float):
@@ -301,9 +289,7 @@ class AutoDriveRacerEnv(gym.Env):
     def _build(self, beams, speed, yaw_rate, a0, a1, slip_triple):
         o = self.cfg.obs
         return build_obs(beams, o.range_max, speed, o.v_max, yaw_rate, o.yaw_rate_max,
-                         a0, a1, self.cfg.act.throttle_max,
-                         slip=slip_triple if o.slip_slots else None,
-                         slip_max=o.slip_max, yaw_res_max=o.yaw_res_max)
+                         a0, a1, slip_triple, o.slip_max, o.yaw_res_max)
 
     # ------------------------------------------------------------------ gym
     def reset(self, *, seed=None, options=None):
@@ -477,8 +463,7 @@ class AutoDriveRacerEnv(gym.Env):
 
         info = {"speed": speed, "v_est": v_est, "slip": s,
                 "min_range": feats["min_range"],
-                "laps": self.node.laps - self._lap_base,
-                "throttle_cap": cfg.act.throttle_max}
+                "laps": self.node.laps - self._lap_base}
         if terminated or truncated:
             info["reason"] = reason or "timeout"
             stats = dict(ep)

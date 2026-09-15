@@ -17,11 +17,10 @@ error; clearing the buffer instead is the empty-buffer collapse (v4, stage 3
 runs 1-2). Load it.
 """
 NAME = "stage6_push"
-EXPECTED_OBS_DIM = 118
+EXPECTED_OBS_DIM = 117
 RESUME_FROM = "runs/stage5_fresh/final.zip"
 COMPETITION_LEGAL = True
-DEFAULTS = dict(timesteps=300_000, learning_rate=2e-4, curriculum=False, warmup=10_000,
-                gradient_steps=3, throttle_ceiling=0.5)
+DEFAULTS = dict(timesteps=300_000, learning_rate=2e-4, warmup=10_000, gradient_steps=3)
 
 
 def apply(cfg):

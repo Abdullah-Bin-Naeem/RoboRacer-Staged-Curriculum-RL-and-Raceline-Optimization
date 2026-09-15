@@ -5,17 +5,38 @@ LiDAR: no map, no localization, race-legal sensors only. Branch
 `rl-fresh-fov110` holds the RL stack and the devkit bridge it needs; the
 classical stack lives on `multi-track` / `main`.
 
-## Quick start
+## Setup on a new machine (Ubuntu 22.04, NVIDIA GPU)
 
 ```bash
-cd devkit_ws && PYTHONNOUSERSITE=1 colcon build && cd ..
-gcc -shared -fPIC -O2 -o tools/libnodelay.so tools/nodelay.c -ldl
-python3 -m venv .venv-rl && . .venv-rl/bin/activate && pip install stable-baselines3 torch gymnasium numpy tensorboard
+# 1. ROS 2 Humble + the bits the bridge and the build need
+sudo apt install ros-humble-ros-base ros-humble-rmw-cyclonedds-cpp ros-humble-cv-bridge \
+     ros-humble-tf-transformations ros-humble-imu-tools python3-colcon-common-extensions \
+     python3-pip python3-venv build-essential
+echo 'export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp' >> ~/.bashrc
 
-# simulator running (select the competition track), then:
+# 2. clone this branch, build the bridge shim and the workspace (system python, NO venv)
+git clone -b rl-fresh-fov110 <repo-url> roboracer && cd roboracer
+pip3 install -r devkit_ws/src/autodrive_devkit/requirements_python_3.10.txt   # bridge deps, version-sensitive
+gcc -shared -fPIC -O2 -o tools/libnodelay.so tools/nodelay.c -ldl
+(cd devkit_ws && PYTHONNOUSERSITE=1 colcon build)
+
+# 3. the RL venv (torch CUDA 12.9 build; older driver -> see rl_racer/requirements.txt)
+python3 -m venv .venv-rl && . .venv-rl/bin/activate && pip install -r rl_racer/requirements.txt && deactivate
+
+# 4. the simulator: AutoDRIVE RoboRacer Sim Racing release (Linux build), unpacked anywhere
+```
+
+Every ROS terminal starts with `source ros_env.sh` (from the repo root); RL
+terminals then also activate `.venv-rl`. Paths are relative to the clone.
+
+## Run
+
+```bash
+./AutoDRIVE\ Simulator.x86_64                     # select the track; leave it running
 source ros_env.sh && ros2 launch racer_bringup bridge.launch.py tcp_nodelay:=true loop_hz_cap:=45
 source ros_env.sh && source .venv-rl/bin/activate && cd rl_racer
-python probe.py && ./run_train.sh --stage 5
+python verify_env.py && python probe.py            # imports from the venv; ~45 Hz tick
+./run_train.sh --stage 5 --timesteps 3600000       # ~2 days at 20 fps
 ```
 
 `CLAUDE.md` is the full guide (environment, build, running, design, legality).

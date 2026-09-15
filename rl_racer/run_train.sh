@@ -7,14 +7,14 @@ cd "$(dirname "$0")"
 source /opt/ros/humble/setup.bash
 # ROS first, then the venv: ROS puts rclpy on PYTHONPATH, the venv must
 # win on PATH. Training needs the venv (torch+CUDA live only there).
-VENV="$HOME/Documents/roboracer/.venv-rl/bin/activate"
+VENV="$(cd .. && pwd)/.venv-rl/bin/activate"
 if [ -f "$VENV" ]; then source "$VENV"; else
   echo "ERROR: venv missing at $VENV"; exit 1
 fi
 
 if ! pgrep -f "AutoDRIVE Simulator.x86_64" >/dev/null; then
   echo "ERROR: simulator not running. Start it with:"
-  echo "  cd ../simulator_practice/autodrive_simulator && ./AutoDRIVE\\ Simulator.x86_64"
+  echo "  ./AutoDRIVE\\ Simulator.x86_64   (from the AutoDRIVE releases page)"
   exit 1
 fi
 if ! ss -ltn 2>/dev/null | grep -q 4567; then

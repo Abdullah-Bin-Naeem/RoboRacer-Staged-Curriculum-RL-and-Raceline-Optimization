@@ -3,12 +3,12 @@
 
 Run INSIDE the venv:
     source /opt/ros/humble/setup.bash
-    source ~/Documents/roboracer/.venv-rl/bin/activate
+    source <repo>/.venv-rl/bin/activate
     python verify_env.py
 """
 import importlib, os, sys
 
-VENV = "/home/theflash/Documents/roboracer/.venv-rl"
+VENV = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".venv-rl")
 
 def where(mod):
     p = getattr(mod, "__file__", "") or getattr(mod, "__path__", [""])[0] or ""

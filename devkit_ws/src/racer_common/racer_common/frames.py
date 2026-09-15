@@ -25,7 +25,8 @@ WORLD = 'world'
 LIDAR_XYZ = ('0.2733', '0.0', '0.096')
 
 # ---- Paths -----------------------------------------------------------------
-REPO = os.path.join(os.path.expanduser('~'), 'Documents/roboracer')
+# The repo root: ROBORACER_REPO (exported by ros_env.sh) or the historical path.
+REPO = os.environ.get('ROBORACER_REPO') or os.path.join(os.path.expanduser('~'), 'Documents/roboracer')
 MAPS_DIR = os.path.join(REPO, 'devkit_ws/src/racer_mapping/maps')
 RACELINE_DIR = os.path.join(REPO, 'raceline')
 

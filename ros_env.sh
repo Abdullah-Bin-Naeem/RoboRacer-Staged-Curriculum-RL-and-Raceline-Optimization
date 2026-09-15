@@ -1,12 +1,12 @@
 # Source this in EVERY ROS terminal for this project:
 #
-#     source ~/Documents/roboracer/ros_env.sh
+#     source <repo>/ros_env.sh
 #
 # For the RL terminals, source this FIRST and the venv SECOND -- ROS puts rclpy
 # on PYTHONPATH, and the venv has to win on PATH:
 #
-#     source ~/Documents/roboracer/ros_env.sh
-#     source ~/Documents/roboracer/.venv-rl/bin/activate
+#     source <repo>/ros_env.sh
+#     source <repo>/.venv-rl/bin/activate
 #
 # Every value here is load-bearing:
 #
@@ -18,7 +18,8 @@
 #                       so a tenth node on this host does not fail with "Failed
 #                       to find a free participant index for domain 0".
 
-_ROBORACER="$HOME/Documents/roboracer"
+_ROBORACER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"    # the repo, wherever it is cloned
+export ROBORACER_REPO="$_ROBORACER"
 
 export ROS_LOCALHOST_ONLY=1
 source /opt/ros/humble/setup.bash

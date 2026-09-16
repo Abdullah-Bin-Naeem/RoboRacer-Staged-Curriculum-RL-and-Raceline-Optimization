@@ -18,6 +18,7 @@ VEHICLE_MODEL.md §3.2): p90 4.74 m/s² while tracking, the 6.0 rung washed wide
 at 5.5, and the tire's asymptote, 4.90, is the physical ceiling.
 """
 import argparse
+import numpy as np
 import sys
 from pathlib import Path
 
@@ -35,7 +36,12 @@ def main():
     p.add_argument("--track", default=DEFAULT_TRACK,
                    help="track whose map to score against (maps/<track>/track_solid if present, else track_clean)")
     p.add_argument("--map", type=Path, default=None, help="map base path, no extension; overrides --track")
+    p.add_argument("--lat-zones", default="",
+                   help="per-segment lateral limit on top of each rung, 's0:s1:a_lat[,...]' in metres along "
+                        "the line (same as optimize_raceline); e.g. '3:9:5.0,27:33:5.0' holds both hairpins "
+                        "at 5.0 while the rest runs the rung. Files get a 'z' suffix.")
     a = p.parse_args()
+    zones = [tuple(float(v) for v in z.split(":")) for z in a.lat_zones.split(",") if z]
 
     tm = TrackMap(a.map if a.map is not None else map_base(a.track))
     x, y = load_xy(a.csv)
@@ -49,9 +55,16 @@ def main():
     print(f"\n{'a_lat':>6}{'lap':>9}{'v max':>7}   file")
     for rung in [float(v) for v in a.ladder.split(",")]:
         lim = ProfileLimits(a_lat=rung, a_long=a.a_long, v_max=a.v_max)
-        vx, ax, t = velocity_profile(base["kappa"], base["el"], lim)
-        out = export_csv(a.csv.with_name(f"{a.csv.stem}_a{rung:.1f}.csv"), dict(base, vx=vx, ax=ax, t=t), tm)
-        print(f"{rung:6.1f}{t:8.3f}s{vx.max():7.2f}   {out.name}")
+        mu = None
+        if zones:
+            s_line = np.concatenate([[0.0], np.cumsum(base["el"])[:-1]])
+            mu = np.ones(len(s_line))
+            for s0, s1, a_zone in zones:
+                mu[(s_line >= s0) & (s_line <= s1)] = a_zone / rung
+        vx, ax, t = velocity_profile(base["kappa"], base["el"], lim, mu=mu)
+        suffix = "z" if zones else ""
+        out = export_csv(a.csv.with_name(f"{a.csv.stem}_a{rung:.1f}{suffix}.csv"), dict(base, vx=vx, ax=ax, t=t), tm)
+        print(f"{rung:6.1f}{t:8.3f}s{vx.max():7.2f}   {out.name}" + (f"   lat {a.lat_zones}" if zones else ""))
 
     print("\nGeometry is identical across all of them; only the speed profile changes.")
     print("Run them in order. The first one the car cannot hold gives you the real grip limit.")

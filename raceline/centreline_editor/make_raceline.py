@@ -46,7 +46,13 @@ def main():
     ap.add_argument('--plot', action='store_true'); ap.add_argument('--ay', type=float); ap.add_argument('--margin', type=float)
     ap.add_argument('--spawn', type=float, nargs=3, metavar=('X', 'Y', 'YAW'), default=(0.802, 3.158, -1.5708),
                     help='spawn pose (m, m, rad) — the line is oriented so it runs in the spawn heading')
+    ap.add_argument('--margin-zones', default='', help='extra wall margin in lap-distance zones, "s0:s1:extra[:side],..." '
+                    '(m, s from the seam mid-straight; side L, R or B=both, default B)')
     a = ap.parse_args()
+    zones = []
+    for z in a.margin_zones.split(','):
+        if not z: continue
+        f = z.split(':'); zones.append((float(f[0]), float(f[1]), float(f[2]), (f[3].upper() if len(f) > 3 else 'B')))
     P = dict(PARAMS)
     if a.ay: P['ay_max'] = a.ay
     if a.margin is not None: P['margin'] = a.margin
@@ -134,6 +140,12 @@ def main():
         if cap:   # inside width <= 0.9/|kappa| (never below the car+margin) so the normals stay well-posed
             lim = np.maximum(0.9 / np.maximum(np.abs(kp), 1e-6), w_veh / 2 + 0.06)
             wl_ = np.where(kp > 0, np.minimum(wl_, lim), wl_); wr_ = np.where(kp < 0, np.minimum(wr_, lim), wr_)
+        if zones:  # extra margin in zones where the follower runs wide (both walls pulled in by `extra`)
+            s_ref = np.concatenate([[0], np.cumsum(np.hypot(*np.diff(Pn, axis=0).T))])
+            for s0, s1, extra, side in zones:
+                z = (s_ref >= s0) & (s_ref <= s1)
+                if side in 'LB': wl_[z] = np.maximum(wl_[z] - extra, w_veh / 2 + 0.03)
+                if side in 'RB': wr_[z] = np.maximum(wr_[z] - extra, w_veh / 2 + 0.03)
         rt = np.c_[Pn, wr_, wl_]
         return rt, nv, Mm, sl, ps, kp, dk
     w_veh = P['veh_width'] + 2 * P['margin']

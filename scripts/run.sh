@@ -31,7 +31,7 @@ set -euo pipefail
 
 IMAGE="${IMAGE:-autodrive_racer}"
 TAG="${TAG:-qualification-1}"
-SIM_TAG="${SIM_TAG:-2026-iros-practice}"
+SIM_TAG="${SIM_TAG:-2026-iros-compete}"
 
 case "${1:-}" in
   sim)

@@ -86,7 +86,7 @@ unset _dds
 #                     mode; see roboracer_stack/common/restricted.py.
 #   bootstrap_mode:=spawn
 #                     Seed AMCL from the MEASURED spawn constant
-#                     (common/frames.py SPAWN_*: 0.800, 3.158, -1.5707) plus
+#                     (common/frames.py SPAWN_*: 0.818, 3.158, -1.5707) plus
 #                     the IMU heading. No restricted topic is read at any
 #                     point, so there is nothing for a steward to question in
 #                     the ROS graph. Alternatives, via RACER_BOOTSTRAP_MODE:

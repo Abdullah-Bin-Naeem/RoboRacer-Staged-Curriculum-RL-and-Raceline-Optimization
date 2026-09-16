@@ -90,10 +90,10 @@ amcl:
     # lands. The SLAM map was built with scan matching off against ground-truth
     # odometry, so map coordinates equal the simulator's world frame and a
     # world-frame pose can be used verbatim.
-    # The MEASURED spawn (2026-09-10, and 30 logged launches). Keep in step with
-    # frames.py; it used to be (0.71, 0.02), 3.14 m down the straight.
+    # The MEASURED spawn on 2026-iros-compete (2026-09-15). Keep in step with
+    # frames.py.
     initial_pose:
-      x: 0.800
+      x: 0.818
       y: 3.158
       z: 0.0
       yaw: -1.5707

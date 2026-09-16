@@ -22,8 +22,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from optimize_raceline import (DEFAULT_MAP, PHYS, ProfileLimits, TrackMap,  # noqa: E402
-                               export_csv, load_xy, score_line, velocity_profile)
+from optimize_raceline import (DEFAULT_TRACK, PHYS, ProfileLimits, TrackMap,  # noqa: E402
+                               export_csv, load_xy, map_base, score_line, velocity_profile)
 
 
 def main():
@@ -32,10 +32,12 @@ def main():
     p.add_argument("--ladder", default="4.0,4.5,4.9", help="a_lat rungs [m/s^2]")
     p.add_argument("--a-long", type=float, default=PHYS.a_long_robust0)
     p.add_argument("--v-max", type=float, default=8.0)
-    p.add_argument("--map", type=Path, default=DEFAULT_MAP)
+    p.add_argument("--track", default=DEFAULT_TRACK,
+                   help="track whose map to score against (maps/<track>/track_solid if present, else track_clean)")
+    p.add_argument("--map", type=Path, default=None, help="map base path, no extension; overrides --track")
     a = p.parse_args()
 
-    tm = TrackMap(a.map)
+    tm = TrackMap(a.map if a.map is not None else map_base(a.track))
     x, y = load_xy(a.csv)
     base = score_line(x, y, tm, ProfileLimits(a_long=a.a_long, v_max=a.v_max), PHYS, a.csv.stem)
     print(f"{a.csv.name}: {base['n']} points, {base['length']:.2f} m, |k|max {base['kmax']:.3f}, "

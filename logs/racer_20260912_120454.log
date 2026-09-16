@@ -1,0 +1,143 @@
+ERROR: ld.so: object '/home/libnodelay.so' from LD_PRELOAD cannot be preloaded (cannot read file data): ignored.
+[INFO] [launch]: All log files can be found below /root/.ros/log/2026-09-12-12-04-54-534083-theflash-ASUS-TUF-Gaming-F15-FX507ZI4-FX507ZI-26
+[INFO] [launch]: Default logging verbosity is set to INFO
+[INFO] [launch.user]: [race] mode=dev  localizer=amcl  instruments=ON  bootstrap=truth
+[INFO] [autodrive_bridge-1]: process started with pid [27]
+[INFO] [dead_reckoning-2]: process started with pid [29]
+[INFO] [amcl-5]: process started with pid [35]
+[INFO] [localization_bootstrap-7]: process started with pid [39]
+[INFO] [localization_error-8]: process started with pid [41]
+[INFO] [log_localization-9]: process started with pid [43]
+[INFO] [static_transform_publisher-3]: process started with pid [31]
+[INFO] [map_server-4]: process started with pid [33]
+[INFO] [lifecycle_manager-6]: process started with pid [37]
+[INFO] [static_transform_publisher-10]: process started with pid [45]
+[static_transform_publisher-3] ERROR: ld.so: object '/home/libnodelay.so' from LD_PRELOAD cannot be preloaded (cannot read file data): ignored.
+[map_server-4] ERROR: ld.so: object '/home/libnodelay.so' from LD_PRELOAD cannot be preloaded (cannot read file data): ignored.
+[lifecycle_manager-6] ERROR: ld.so: object '/home/libnodelay.so' from LD_PRELOAD cannot be preloaded (cannot read file data): ignored.
+[static_transform_publisher-10] ERROR: ld.so: object '/home/libnodelay.so' from LD_PRELOAD cannot be preloaded (cannot read file data): ignored.
+[autodrive_bridge-1] ERROR: ld.so: object '/home/libnodelay.so' from LD_PRELOAD cannot be preloaded (cannot read file data): ignored.
+[dead_reckoning-2] ERROR: ld.so: object '/home/libnodelay.so' from LD_PRELOAD cannot be preloaded (cannot read file data): ignored.
+[amcl-5] ERROR: ld.so: object '/home/libnodelay.so' from LD_PRELOAD cannot be preloaded (cannot read file data): ignored.
+[localization_bootstrap-7] ERROR: ld.so: object '/home/libnodelay.so' from LD_PRELOAD cannot be preloaded (cannot read file data): ignored.
+[localization_error-8] ERROR: ld.so: object '/home/libnodelay.so' from LD_PRELOAD cannot be preloaded (cannot read file data): ignored.
+[log_localization-9] ERROR: ld.so: object '/home/libnodelay.so' from LD_PRELOAD cannot be preloaded (cannot read file data): ignored.
+[static_transform_publisher-3] 1789214694.617794 [0] static_tra: selected interface "lo" is not multicast-capable: disabling multicast
+[static_transform_publisher-10] 1789214694.621172 [0] static_tra: selected interface "lo" is not multicast-capable: disabling multicast
+[lifecycle_manager-6] 1789214694.623307 [0] lifecycle_: selected interface "lo" is not multicast-capable: disabling multicast
+[static_transform_publisher-3] [INFO] [1789214694.623722963] [lidar_tf]: Spinning until stopped - publishing transform
+[static_transform_publisher-3] translation: ('0.273300', '0.000000', '0.096000')
+[static_transform_publisher-3] rotation: ('0.000000', '0.000000', '0.000000', '1.000000')
+[static_transform_publisher-3] from 'roboracer_1' to 'lidar'
+[amcl-5] 1789214694.624120 [0]       amcl: selected interface "lo" is not multicast-capable: disabling multicast
+[static_transform_publisher-10] [INFO] [1789214694.627525635] [map_world_tf]: Spinning until stopped - publishing transform
+[static_transform_publisher-10] translation: ('0.000000', '0.000000', '0.000000')
+[static_transform_publisher-10] rotation: ('0.000000', '0.000000', '0.000000', '1.000000')
+[static_transform_publisher-10] from 'map' to 'world'
+[lifecycle_manager-6] [INFO] [1789214694.629205859] [lifecycle_manager_localization]: Creating
+[amcl-5] [0m[INFO] [1789214694.630843145] [amcl]: 
+[amcl-5] 	amcl lifecycle node launched. 
+[amcl-5] 	Waiting on external lifecycle transitions to activate
+[amcl-5] 	See https://design.ros2.org/articles/node_lifecycle.html for more information.[0m
+[lifecycle_manager-6] [INFO] [1789214694.631639471] [lifecycle_manager_localization]: [34m[1mCreating and initializing lifecycle service clients[0m[0m
+[amcl-5] [0m[INFO] [1789214694.631828042] [amcl]: Creating[0m
+[map_server-4] 1789214694.633447 [0] map_server: selected interface "lo" is not multicast-capable: disabling multicast
+[map_server-4] [INFO] [1789214694.640123473] [map_server]: 
+[map_server-4] 	map_server lifecycle node launched. 
+[map_server-4] 	Waiting on external lifecycle transitions to activate
+[map_server-4] 	See https://design.ros2.org/articles/node_lifecycle.html for more information.
+[map_server-4] [INFO] [1789214694.640263661] [map_server]: Creating
+[lifecycle_manager-6] [INFO] [1789214694.640555370] [lifecycle_manager_localization]: [34m[1mStarting managed nodes bringup...[0m[0m
+[lifecycle_manager-6] [INFO] [1789214694.640639839] [lifecycle_manager_localization]: [34m[1mConfiguring map_server[0m[0m
+[map_server-4] [INFO] [1789214694.656067132] [map_server]: Configuring
+[map_server-4] [INFO] [1789214694.656154382] [map_io]: Loading yaml file: /home/autodrive_devkit/install/roboracer_stack/share/roboracer_stack/maps/track_clean.yaml
+[map_server-4] [INFO] [1789214694.656678853] [map_io]: resolution: 0.05
+[map_server-4] [INFO] [1789214694.656699827] [map_io]: origin[0]: -3.71
+[map_server-4] [INFO] [1789214694.656708731] [map_io]: origin[1]: -8.61
+[map_server-4] [INFO] [1789214694.656715529] [map_io]: origin[2]: 0
+[map_server-4] [INFO] [1789214694.656722853] [map_io]: free_thresh: 0.25
+[map_server-4] [INFO] [1789214694.656729869] [map_io]: occupied_thresh: 0.65
+[map_server-4] [INFO] [1789214694.656737403] [map_io]: mode: trinary
+[map_server-4] [INFO] [1789214694.656747154] [map_io]: negate: 0
+[map_server-4] [INFO] [1789214694.657195209] [map_io]: Loading image_file: /home/autodrive_devkit/install/roboracer_stack/share/roboracer_stack/maps/track_clean.pgm
+[map_server-4] [INFO] [1789214694.661566047] [map_io]: Read map /home/autodrive_devkit/install/roboracer_stack/share/roboracer_stack/maps/track_clean.pgm: 108 X 316 map @ 0.05 m/cell
+[lifecycle_manager-6] [INFO] [1789214694.666791101] [lifecycle_manager_localization]: [34m[1mConfiguring amcl[0m[0m
+[amcl-5] [0m[INFO] [1789214694.666990040] [amcl]: Configuring[0m
+[amcl-5] [0m[INFO] [1789214694.667091239] [amcl]: initTransforms[0m
+[amcl-5] [0m[INFO] [1789214694.674159773] [amcl]: initPubSub[0m
+[amcl-5] [0m[INFO] [1789214694.676231173] [amcl]: Subscribed to map topic.[0m
+[lifecycle_manager-6] [INFO] [1789214694.681610355] [lifecycle_manager_localization]: [34m[1mActivating map_server[0m[0m
+[amcl-5] [0m[INFO] [1789214694.684329837] [amcl]: Received a 108 X 316 map @ 0.050 m/pix[0m
+[map_server-4] [INFO] [1789214694.682162095] [map_server]: Activating
+[map_server-4] [INFO] [1789214694.683618701] [map_server]: Creating bond (map_server) to lifecycle manager.
+[amcl-5] [0m[INFO] [1789214694.788586324] [amcl]: Activating[0m
+[amcl-5] [0m[INFO] [1789214694.788640130] [amcl]: initialPoseReceived[0m
+[lifecycle_manager-6] [INFO] [1789214694.788290511] [lifecycle_manager_localization]: Server map_server connected with bond.
+[lifecycle_manager-6] [INFO] [1789214694.788349018] [lifecycle_manager_localization]: [34m[1mActivating amcl[0m[0m
+[amcl-5] [0m[INFO] [1789214694.788757501] [amcl]: Setting pose (1789214694.788757): 0.710 0.020 -1.599[0m
+[amcl-5] [0m[INFO] [1789214694.790723209] [amcl]: Creating bond (amcl) to lifecycle manager.[0m
+[lifecycle_manager-6] [INFO] [1789214694.892816279] [lifecycle_manager_localization]: Server amcl connected with bond.
+[lifecycle_manager-6] [INFO] [1789214694.892877823] [lifecycle_manager_localization]: [34m[1mManaged nodes are active[0m[0m
+[lifecycle_manager-6] [INFO] [1789214694.892896499] [lifecycle_manager_localization]: [34m[1mCreating bond timer...[0m[0m
+[localization_error-8] 1789214694.922580 [0] localizati: selected interface "lo" is not multicast-capable: disabling multicast
+[dead_reckoning-2] 1789214694.922743 [0] dead_recko: selected interface "lo" is not multicast-capable: disabling multicast
+[localization_bootstrap-7] 1789214694.927221 [0] localizati: selected interface "lo" is not multicast-capable: disabling multicast
+[log_localization-9] 1789214694.934639 [0] log_locali: selected interface "lo" is not multicast-capable: disabling multicast
+[localization_error-8] [31m[ERROR] [1789214694.973677661] [localization_error]: RESTRICTED TOPIC: reading /autodrive/roboracer_1/odom (simulator ground-truth pose and twist) -- continuous comparison against TF map -> roboracer_1. This run is NOT race-legal; any lap time from it is a development number. See common/restricted.py.[0m
+[localization_error-8] [0m[INFO] [1789214694.974375023] [localization_error]: sampling starts 1.0 s after /localization_ready; bootstrap is excluded (require_ready:=false to include it)[0m
+[localization_bootstrap-7] [0m[INFO] [1789214694.978605437] [localization_bootstrap]: WARMUP SEED: reading /autodrive/roboracer_1/ips (simulator ground-truth position) ONCE -- initial pose seed. Legal: the first lap is warmup, this is read before the car moves, and it is released immediately after. Nothing reads ground truth afterwards.[0m
+[localization_bootstrap-7] [0m[INFO] [1789214694.979236396] [localization_bootstrap]: mode=truth: seeding the initial pose from /ips + /imu before the car moves, then releasing /ips. Tracking is lidar + map + dead reckoning from there on.[0m
+[localization_bootstrap-7] [0m[INFO] [1789214694.979504312] [localization_bootstrap]: waiting for amcl to reach the active state before sending anything[0m
+[dead_reckoning-2] [0m[INFO] [1789214694.994435314] [dead_reckoning]: dead reckoning: odom -> roboracer_1, wheel r=0.0581 m, scale=1.0, 200 Hz, tf +20 ms, extrapolate yaw=True pos=True[0m
+[localization_error-8] [0m[INFO] [1789214695.007638646] [localization_error]: waiting for TF map -> roboracer_1: Could not find a connection between 'map' and 'roboracer_1' because they are not part of the same tree.Tf has two or more unconnected trees.[0m
+[localization_bootstrap-7] [0m[INFO] [1789214695.030853573] [localization_bootstrap]: amcl is ACTIVE -- an initial pose will now be accepted[0m
+[log_localization-9] [31m[ERROR] [1789214695.056733696] [log_localization]: RESTRICTED TOPIC: reading /autodrive/roboracer_1/ips (simulator ground-truth position) -- continuous logging against the estimate. This run is NOT race-legal; any lap time from it is a development number. See common/restricted.py.[0m
+[log_localization-9] [31m[ERROR] [1789214695.057257114] [log_localization]: RESTRICTED TOPIC: reading /autodrive/roboracer_1/odom (simulator ground-truth pose and twist) -- continuous logging against the estimate. This run is NOT race-legal; any lap time from it is a development number. See common/restricted.py.[0m
+[log_localization-9] [0m[INFO] [1789214695.058497509] [log_localization]: logging to /home/autodrive_devkit/log/run_cap40.csv at 20 Hz until Ctrl-C[0m
+[autodrive_bridge-1] 1789214695.208369 [0] autodrive_: selected interface "lo" is not multicast-capable: disabling multicast
+[autodrive_bridge-1] Connected!
+[log_localization-9] [0m[INFO] [1789214695.359318092] [log_localization]: waiting for TF map -> roboracer_1 ...[0m
+[amcl-5] [0m[INFO] [1789214695.380440006] [amcl]: initialPoseReceived[0m
+[amcl-5] [0m[INFO] [1789214695.380523680] [amcl]: Setting pose (1789214695.380524): -2.915 -4.963 1.309[0m
+[localization_bootstrap-7] [0m[INFO] [1789214695.380747296] [localization_bootstrap]: seed 1/5: x=-2.915 y=-4.963 yaw=+75.1 deg -- awaiting confirmation[0m
+[localization_bootstrap-7] [33m[WARN] [1789214695.381119775] [localization_bootstrap]: MEASURED SPAWN is 6.162 m / 166.7 deg from roboracer_stack.common.frames.SPAWN_* -- OUTSIDE slam_toolbox's +-0.5 m seed search, so any run that falls back to it CANNOT recover and the offset is frozen for the whole run. This run is seeded and therefore fine; the FALLBACK is what is wrong.
+[localization_bootstrap-7]     Paste into common/frames.py so bootstrap:=false and bootstrap_mode:=global start somewhere real:
+[localization_bootstrap-7]         SPAWN_X = '-2.915'
+[localization_bootstrap-7]         SPAWN_Y = '-4.963'
+[localization_bootstrap-7]         SPAWN_YAW = '1.3099'[0m
+[amcl-5] [0m[INFO] [1789214695.395621067] [amcl]: createLaserObject[0m
+[amcl-5] [0m[INFO] [1789214695.480133476] [amcl]: Requesting no-motion update[0m
+[amcl-5] [0m[INFO] [1789214695.839710741] [amcl]: Message Filter dropping message: frame 'lidar' at time 1789214695.339 for reason 'the timestamp on the message is earlier than all the data in the transform cache'[0m
+[amcl-5] [0m[INFO] [1789214695.929930324] [amcl]: Requesting no-motion update[0m
+[amcl-5] [0m[INFO] [1789214696.330083627] [amcl]: Requesting no-motion update[0m
+[pure_pursuit] launch overrides: {'control_hz': 40.0}
+[INFO] [pure_pursuit-11]: process started with pid [238]
+[pure_pursuit-11] ERROR: ld.so: object '/home/libnodelay.so' from LD_PRELOAD cannot be preloaded (cannot read file data): ignored.
+[amcl-5] [0m[INFO] [1789214696.730443631] [amcl]: Requesting no-motion update[0m
+[pure_pursuit-11] 1789214696.808136 [0] pure_pursu: selected interface "lo" is not multicast-capable: disabling multicast
+[pure_pursuit-11] [0m[INFO] [1789214696.852574508] [pure_pursuit]: path: 400 points, 27.57 m lap, from /home/autodrive_devkit/install/roboracer_stack/share/roboracer_stack/raceline/raceline_a7.0_rec_6.36.csv[0m
+[pure_pursuit-11] [0m[INFO] [1789214696.855847395] [pure_pursuit]: pose from TF map -> roboracer_1 (continuous); /amcl_pose kept as a fallback[0m
+[pure_pursuit-11] [0m[INFO] [1789214696.857379853] [pure_pursuit]: steering on /amcl_pose[0m
+[pure_pursuit-11] [0m[INFO] [1789214696.860440006] [pure_pursuit]: speed_source=tire  throttle_mode=slip  slip band [-0.08, +0.08]  u_launch 0.4 m/s  lookahead 0.8-2.2 m (k 0.55)  latency_comp 0.05 s[0m
+[pure_pursuit-11] [33m[WARN] [1789214696.861113280] [pure_pursuit]: dev_lap_telemetry ON: subscribing to RESTRICTED lap topics[0m
+[pure_pursuit-11] [0m[INFO] [1789214696.863010533] [pure_pursuit]: holding until /localization_ready[0m
+[pure_pursuit-11] [0m[INFO] [1789214696.868483095] [pure_pursuit]: lap 167: 6.45 s[0m
+[localization_bootstrap-7] [0m[INFO] [1789214696.980340800] [localization_bootstrap]: seed 1/5 sent, awaiting a fresh /amcl_pose to confirm it[0m
+[amcl-5] [0m[INFO] [1789214697.180012114] [amcl]: Requesting no-motion update[0m
+[localization_bootstrap-7] [33m[WARN] [1789214697.430527390] [localization_bootstrap]: seed 1 not adopted -- the estimate is 0.55 m / 0.3 deg from TRUTH, tolerance 0.30 m / 15.0 deg (speed 0.0 m/s); re-seeding[0m
+[amcl-5] [0m[INFO] [1789214697.430887706] [amcl]: initialPoseReceived[0m
+[amcl-5] [0m[INFO] [1789214697.430952600] [amcl]: Setting pose (1789214697.430953): -2.580 -3.987 1.230[0m
+[localization_bootstrap-7] [0m[INFO] [1789214697.431379093] [localization_bootstrap]: seed 2/5: x=-2.580 y=-3.987 yaw=+70.5 deg -- awaiting confirmation[0m
+[amcl-5] [0m[INFO] [1789214697.630038475] [amcl]: Requesting no-motion update[0m
+[amcl-5] [0m[INFO] [1789214698.030075819] [amcl]: Requesting no-motion update[0m
+[amcl-5] [0m[INFO] [1789214698.480043449] [amcl]: Requesting no-motion update[0m
+[amcl-5] [0m[INFO] [1789214698.880123719] [amcl]: Requesting no-motion update[0m
+[localization_bootstrap-7] [0m[INFO] [1789214698.980423400] [localization_bootstrap]: seed 2/5 sent, awaiting a fresh /amcl_pose to confirm it[0m
+[amcl-5] [0m[INFO] [1789214699.329958608] [amcl]: Requesting no-motion update[0m
+[localization_bootstrap-7] [0m[INFO] [1789214699.480592199] [localization_bootstrap]: localization_bootstrap: released /autodrive/roboracer_1/ips -- no restricted topic is read from here on; the timed laps are clean.[0m
+[localization_bootstrap-7] [0m[INFO] [1789214699.481159406] [localization_bootstrap]: seed CONFIRMED on attempt 2: the estimate is 0.3 cm / 0.1 deg from truth (pos std 0.064 m). Tracking is now lidar + map + dead reckoning only.[0m
+[localization_bootstrap-7] [0m[INFO] [1789214699.481720728] [localization_bootstrap]: /localization_ready = true, follower may take over[0m
+[localization_error-8] [0m[INFO] [1789214699.481792777] [localization_error]: /localization_ready latched -- sampling opens in 1.0 s (72 bootstrap samples discarded)[0m
+[pure_pursuit-11] [0m[INFO] [1789214699.482007184] [pure_pursuit]: localization converged, taking over[0m
+[localization_error-8] [0m[INFO] [1789214699.957769118] [localization_error]: holding: waiting for /localization_ready (82 samples discarded so far). Pass require_ready:=false when localization_bootstrap is not running.[0m
+[log_localization-9] [0m[INFO] [1789214700.459117914] [log_localization]:    5.0 s     0.6 m  err 0.003 m (along +0.000 cross -0.003) yaw  -0.14 deg  m->o yaw  -0.14 deg | fit true 0.054 est 0.051 (x0.93)  enc/true nan  dr_err 0.94 m[0m

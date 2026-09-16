@@ -1,0 +1,426 @@
+<title>Centreline Editor</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Public+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<style>
+:root{
+  --bg:#EDF1F0; --surface:#FBFDFC; --surface-2:#F2F7F6;
+  --ink:#0E1B19; --ink-2:#3C514E; --muted:#6B807C;
+  --line:#D2DEDB; --line-strong:#B4C5C1;
+  --accent:#B0175C; --accent-soft:#F7E4EC;
+  --ref:#0C7480; --ref-soft:#DBEDEF;
+  --ok:#1F7A4D; --bad:#B0175C; --warn:#9A6212;
+  --shadow:0 1px 2px rgba(14,27,25,.05), 0 10px 28px -16px rgba(14,27,25,.28);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0A1312; --surface:#111D1B; --surface-2:#162523;
+    --ink:#E7F0EE; --ink-2:#AEC3BF; --muted:#7D9490;
+    --line:#213230; --line-strong:#334744;
+    --accent:#F46095; --accent-soft:#3B1326;
+    --ref:#43C2CE; --ref-soft:#0E2E32;
+    --ok:#4FC98A; --bad:#F46095; --warn:#E0A951;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 12px 32px -18px rgba(0,0,0,.8);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0A1312; --surface:#111D1B; --surface-2:#162523;
+  --ink:#E7F0EE; --ink-2:#AEC3BF; --muted:#7D9490;
+  --line:#213230; --line-strong:#334744;
+  --accent:#F46095; --accent-soft:#3B1326;
+  --ref:#43C2CE; --ref-soft:#0E2E32;
+  --ok:#4FC98A; --bad:#F46095; --warn:#E0A951;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 12px 32px -18px rgba(0,0,0,.8);
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:"Public Sans",system-ui,sans-serif;font-size:14.5px;line-height:1.5;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1240px;margin:0 auto;padding:26px 18px 60px;display:flex;flex-direction:column;gap:16px}
+.mast{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap}
+h1{font-family:"Bricolage Grotesque",system-ui,sans-serif;font-weight:800;font-size:30px;letter-spacing:-.025em;line-height:1.05;margin:0}
+h1 em{font-style:normal;color:var(--accent)}
+.sub{color:var(--muted);font-size:13.5px;margin:4px 0 0}
+.mono{font-family:"JetBrains Mono",ui-monospace,Menlo,monospace}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{font-family:"JetBrains Mono",monospace;font-size:11.5px;padding:4px 9px;border:1px solid var(--line-strong);border-radius:2px;color:var(--ink-2);background:var(--surface)}
+
+.grid{display:grid;grid-template-columns:minmax(0,1fr) 292px;gap:14px}
+@media (max-width:900px){.grid{grid-template-columns:minmax(0,1fr)}}
+.panel{background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow)}
+.panel-h{display:flex;justify-content:space-between;align-items:baseline;padding:10px 14px;border-bottom:1px solid var(--line);font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.panel-h span.r{letter-spacing:0;text-transform:none;font-weight:400;font-family:"JetBrains Mono",monospace;font-size:11px}
+canvas{display:block;width:100%;touch-action:none}
+#map{cursor:grab;background:var(--surface-2)}
+#plot{background:var(--surface-2)}
+.rail{display:flex;flex-direction:column;gap:14px}
+.card{background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow);padding:14px;display:flex;flex-direction:column;gap:12px}
+.card h3{margin:0;font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.ctrl{display:flex;flex-direction:column;gap:5px}
+.ctrl-top{display:flex;justify-content:space-between;align-items:baseline}
+.ctrl-top label{font-size:13px;color:var(--ink-2)}
+.ctrl-top .v{font-family:"JetBrains Mono",monospace;font-size:13px;font-variant-numeric:tabular-nums}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:20px;background:transparent;cursor:pointer;margin:0}
+input[type=range]::-webkit-slider-runnable-track{height:3px;background:var(--line-strong);border-radius:2px}
+input[type=range]::-moz-range-track{height:3px;background:var(--line-strong);border-radius:2px}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;border-radius:50%;background:var(--accent);border:2px solid var(--surface);margin-top:-6px;box-shadow:0 0 0 1px var(--accent)}
+input[type=range]::-moz-range-thumb{width:13px;height:13px;border-radius:50%;background:var(--accent);border:2px solid var(--surface);box-shadow:0 0 0 1px var(--accent)}
+input[type=range]:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.btns{display:flex;flex-wrap:wrap;gap:6px}
+button{font-family:"JetBrains Mono",monospace;font-size:11.5px;padding:7px 10px;cursor:pointer;background:var(--surface);color:var(--ink-2);border:1px solid var(--line-strong);border-radius:2px;transition:background .12s,color .12s,border-color .12s}
+button:hover{background:var(--accent-soft);color:var(--accent);border-color:var(--accent)}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button[aria-pressed="true"]{background:var(--accent);color:#fff;border-color:var(--accent)}
+:root[data-theme="dark"] button[aria-pressed="true"],:root:not([data-theme="light"]) button[aria-pressed="true"]{color:#180915}
+button.primary{background:var(--ink);color:var(--surface);border-color:var(--ink);font-weight:700}
+button.primary:hover{background:var(--accent);border-color:var(--accent);color:#fff}
+button:disabled{opacity:.45;cursor:not-allowed}
+.stats{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.st{display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);font-size:13px}
+.st dt{color:var(--muted);margin:0}
+.st dd{margin:0;font-family:"JetBrains Mono",monospace;font-variant-numeric:tabular-nums;font-weight:500}
+.st dd.ok{color:var(--ok)} .st dd.bad{color:var(--bad)} .st dd.warn{color:var(--warn)}
+.verdict{padding:10px 12px;border-left:3px solid var(--line-strong);background:var(--surface-2);font-size:13px;color:var(--ink-2)}
+.verdict.ok{border-color:var(--ok)} .verdict.bad{border-color:var(--bad)}
+.verdict b{color:var(--ink)}
+.help{font-size:12.5px;color:var(--muted);line-height:1.45}
+.help kbd{font-family:"JetBrains Mono",monospace;font-size:11px;border:1px solid var(--line-strong);border-radius:3px;padding:0 4px;background:var(--surface)}
+.corners{font-family:"JetBrains Mono",monospace;font-size:11.5px;line-height:1.7;color:var(--ink-2);max-height:150px;overflow:auto}
+.corners .bad{color:var(--bad);font-weight:700}
+textarea{width:100%;height:90px;font-family:"JetBrains Mono",monospace;font-size:11px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink);padding:6px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--muted);padding:8px 14px;border-top:1px solid var(--line)}
+.legend i{display:inline-block;width:18px;height:3px;vertical-align:middle;margin-right:6px}
+</style>
+
+<div class="wrap">
+  <header class="mast">
+    <div>
+      <h1>Centreline <em>Editor</em></h1>
+      <p class="sub">Smooth the skeleton, check the curvature, push the reference off the walls at the hairpins, export for the optimiser.</p>
+    </div>
+    <div class="chips" id="chips"></div>
+  </header>
+
+  <div class="grid">
+    <div style="display:flex;flex-direction:column;gap:14px;min-width:0">
+      <section class="panel">
+        <div class="panel-h"><span>Map</span><span class="r" id="mapinfo">—</span></div>
+        <canvas id="map" aria-label="Track map with the editable centreline. Drag a point to move it; drag empty space to pan; scroll to zoom."></canvas>
+        <div class="legend">
+          <span><i style="background:var(--accent)"></i>centreline (smoothed)</span>
+          <span><i style="background:var(--line-strong)"></i>raw skeleton</span>
+          <span><i style="background:var(--ref)"></i>old raceline</span>
+          <span><i style="background:var(--bad);height:8px;width:8px;border-radius:50%"></i>|κ| over steering limit</span>
+          <span><i style="background:var(--ok)"></i>straight (auto)</span>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="panel-h"><span>Curvature κ(s)</span><span class="r">dashed: ±1.78 steering limit · dotted: ±1.5 kappa_bound</span></div>
+        <canvas id="plot" aria-label="Curvature along the centreline before and after smoothing"></canvas>
+      </section>
+    </div>
+
+    <aside class="rail">
+      <div class="card">
+        <h3>Smoothing</h3>
+        <div class="ctrl">
+          <div class="ctrl-top"><label for="win">Savitzky–Golay window</label><span class="v" id="winv">—</span></div>
+          <input type="range" id="win" min="5" max="61" step="2" value="27">
+        </div>
+        <div class="ctrl">
+          <div class="ctrl-top"><label for="ds">Resample step</label><span class="v" id="dsv">—</span></div>
+          <input type="range" id="ds" min="0.05" max="0.25" step="0.01" value="0.10">
+        </div>
+        <div class="verdict" id="verdict">—</div>
+        <dl class="stats">
+          <div class="st"><dt>straights · max |κ|</dt><dd id="s_max">—</dd></div>
+          <div class="st"><dt>straights · rms κ</dt><dd id="s_rms">—</dd></div>
+          <div class="st"><dt>lap · max |κ|</dt><dd id="k_max">—</dd></div>
+          <div class="st"><dt>points over 1.78</dt><dd id="k_over">—</dd></div>
+          <div class="st"><dt>lap length</dt><dd id="lap">—</dd></div>
+          <div class="st"><dt>min corridor width</dt><dd id="wmin">—</dd></div>
+        </dl>
+      </div>
+
+      <div class="card">
+        <h3>Corners</h3>
+        <div class="corners" id="corners">—</div>
+      </div>
+
+      <div class="card">
+        <h3>Edit</h3>
+        <div class="ctrl">
+          <div class="ctrl-top"><label for="brush">Brush radius</label><span class="v" id="brushv">—</span></div>
+          <input type="range" id="brush" min="0.2" max="2.5" step="0.1" value="0.9">
+        </div>
+        <div class="btns">
+          <button id="undo" disabled>Undo</button>
+          <button id="reset">Reset edits</button>
+          <button id="reverse">Reverse direction</button>
+          <button id="setstart" aria-pressed="false">Set start…</button>
+          <button id="showold" aria-pressed="true">Old raceline</button>
+        </div>
+        <p class="help">Drag a point on the map to move it — neighbours follow within the brush radius. Drag empty space to pan, scroll to zoom. <b>Set start…</b> then click a point to put s = 0 there (do this on the long straight, not a hairpin).</p>
+      </div>
+
+      <div class="card">
+        <h3>Export</h3>
+        <div class="btns">
+          <button class="primary" id="save">Save reftrack CSV</button>
+          <button id="copy">Copy CSV</button>
+        </div>
+        <p class="help">TUM reference-track format: <span class="mono">x_m, y_m, w_tr_right_m, w_tr_left_m</span> at the resample step, widths ray-cast on the map from each smoothed point. Extra columns <span class="mono">s_m, kappa_radpm</span> follow — drop them if your importer wants exactly four.</p>
+        <textarea id="csvbox" readonly hidden></textarea>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<script>
+"use strict";
+const DATA = /*__DATA__*/null;
+const TAU=Math.PI*2, KLIM=1.78, KBOUND=1.5;
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+/* ---------- geometry ---------- */
+function resampleClosed(P, ds){
+  const n=P.length, s=[0];
+  for(let i=1;i<=n;i++){ const a=P[i-1], b=P[i%n]; s.push(s[i-1]+Math.hypot(b[0]-a[0],b[1]-a[1])); }
+  const L=s[n]; const m=Math.max(8,Math.round(L/ds)); const step=L/m; const out=[];
+  let j=0;
+  for(let k=0;k<m;k++){
+    const t=k*step; while(j<n-1 && s[j+1]<t) j++;
+    const a=P[j], b=P[(j+1)%n], u=(t-s[j])/Math.max(1e-9,s[j+1]-s[j]);
+    out.push([a[0]+(b[0]-a[0])*u, a[1]+(b[1]-a[1])*u]);
+  }
+  return {P:out, ds:step, L};
+}
+function sgWeights(w, order){
+  const h=(w-1)/2, m=order+1; const A=[]; for(let r=-h;r<=h;r++){ const row=[]; for(let c=0;c<m;c++) row.push(Math.pow(r,c)); A.push(row); }
+  const ATA=Array.from({length:m},()=>new Array(m).fill(0));
+  for(let i=0;i<m;i++)for(let j=0;j<m;j++){ let s=0; for(let r=0;r<w;r++) s+=A[r][i]*A[r][j]; ATA[i][j]=s; }
+  // invert ATA (Gauss-Jordan)
+  const M=ATA.map((row,i)=>[...row, ...Array.from({length:m},(_,j)=>i===j?1:0)]);
+  for(let c=0;c<m;c++){ let p=c; for(let r=c+1;r<m;r++) if(Math.abs(M[r][c])>Math.abs(M[p][c])) p=r; [M[c],M[p]]=[M[p],M[c]];
+    const d=M[c][c]; for(let j=0;j<2*m;j++) M[c][j]/=d;
+    for(let r=0;r<m;r++){ if(r===c) continue; const f=M[r][c]; for(let j=0;j<2*m;j++) M[r][j]-=f*M[c][j]; } }
+  const inv0=M[0].slice(m);   // first row of inverse
+  const wts=[]; for(let r=0;r<w;r++){ let s=0; for(let c=0;c<m;c++) s+=inv0[c]*A[r][c]; wts.push(s); }
+  return wts;
+}
+const wCache={};
+function smoothClosed(P, w){
+  if(w<5) return P.map(p=>[p[0],p[1]]);
+  const n=P.length; if(w>=n) w=(n-1)|1;
+  const key=w; if(!wCache[key]) wCache[key]=sgWeights(w,3);
+  const wt=wCache[key], h=(w-1)/2, out=new Array(n);
+  for(let i=0;i<n;i++){ let x=0,y=0; for(let k=-h;k<=h;k++){ const p=P[(i+k+n)%n]; x+=wt[k+h]*p[0]; y+=wt[k+h]*p[1]; } out[i]=[x,y]; }
+  return out;
+}
+function curvClosed(P, ds){
+  const n=P.length, k=new Array(n), psi=new Array(n);
+  for(let i=0;i<n;i++){
+    const a=P[(i-1+n)%n], b=P[(i+1)%n], c=P[i];
+    const x1=(b[0]-a[0])/(2*ds), y1=(b[1]-a[1])/(2*ds);
+    const x2=(b[0]-2*c[0]+a[0])/(ds*ds), y2=(b[1]-2*c[1]+a[1])/(ds*ds);
+    const den=Math.pow(x1*x1+y1*y1,1.5); k[i]=den>1e-12?(x1*y2-y1*x2)/den:0; psi[i]=Math.atan2(y1,x1);
+  }
+  return {k,psi};
+}
+
+/* ---------- map mask ---------- */
+let maskData=null, mapImg=null;
+function isFree(x,y){
+  const i=Math.floor((x-DATA.xmin)/DATA.res), j=Math.floor((y-DATA.ymin)/DATA.res);
+  if(i<0||j<0||i>=DATA.nx||j>=DATA.ny) return false;
+  return maskData[(i*DATA.ny+j)*4] > 128;     // rotated image: row=i (x), col=j (y)
+}
+function rayWidth(x,y,nx,ny,maxd){
+  const st=0.01; let d=0;
+  while(d<maxd){ d+=st; if(!isFree(x+nx*d,y+ny*d)) return d-st; }
+  return maxd;
+}
+
+/* ---------- state ---------- */
+let raw=null;            // raw points (edited), arbitrary spacing
+let hist=[];
+let showOld=true, setStartMode=false;
+let view={k:1, px:0, py:0};
+let cur=null;            // {P, ds, L, S, k, psi, wl, wr, straight[]}
+
+function recompute(){
+  const ds=parseFloat(document.getElementById('ds').value), w=parseInt(document.getElementById('win').value);
+  const r=resampleClosed(raw, ds);
+  const Ps=smoothClosed(r.P, w);
+  const {k,psi}=curvClosed(Ps, r.ds);
+  // straights: wide-window curvature small over >= 2.5 m
+  const wide=smoothClosed(r.P, Math.min(41, (r.P.length-1)|1)); const kw=curvClosed(wide, r.ds).k;
+  const n=Ps.length, small=kw.map(v=>Math.abs(v)<0.12), straight=new Array(n).fill(false);
+  const minRun=Math.round(2.5/r.ds);
+  for(let i=0;i<n;i++){ if(!small[i]) continue; let j=i, len=0; while(len<n && small[(j)%n]){ j++; len++; } if(len>=minRun) for(let q=i;q<i+len;q++) straight[q%n]=true; i=i+len; }
+  // widths
+  const wl=new Array(n), wr=new Array(n);
+  for(let i=0;i<n;i++){ const nx=-Math.sin(psi[i]), ny=Math.cos(psi[i]); wl[i]=rayWidth(Ps[i][0],Ps[i][1],nx,ny,3.0); wr[i]=rayWidth(Ps[i][0],Ps[i][1],-nx,-ny,3.0); }
+  const S=Ps.map((_,i)=>i*r.ds);
+  cur={P:Ps, raw:r.P, ds:r.ds, L:r.L, S, k, psi, wl, wr, straight, w};
+  stats(); drawMap(); drawPlot();
+}
+function stats(){
+  const {k,straight,S,ds,L,wl,wr,w}=cur, n=k.length;
+  let smax=0, ss=0, sc=0, kmax=0, over=0, wmin=1e9;
+  for(let i=0;i<n;i++){ const a=Math.abs(k[i]); if(a>kmax) kmax=a; if(a>KLIM) over++; if(straight[i]){ if(a>smax) smax=a; ss+=a*a; sc++; } const cw=wl[i]+wr[i]; if(cw<wmin) wmin=cw; }
+  const rms=sc?Math.sqrt(ss/sc):0;
+  document.getElementById('winv').textContent=w+' pts = '+(w*ds).toFixed(1)+' m';
+  document.getElementById('dsv').textContent=ds.toFixed(2)+' m';
+  const set=(id,txt,cls)=>{ const e=document.getElementById(id); e.textContent=txt; e.className=cls||''; };
+  set('s_max', sc? smax.toFixed(3)+' /m' : 'no straight found', sc?(smax<0.10?'ok':smax<0.3?'warn':'bad'):'warn');
+  set('s_rms', sc? rms.toFixed(3)+' /m' : '—', sc?(rms<0.05?'ok':'warn'):'');
+  set('k_max', kmax.toFixed(2)+' /m  (r '+(1/Math.max(kmax,1e-6)).toFixed(2)+' m)', kmax<=KBOUND?'ok':kmax<=KLIM?'warn':'bad');
+  set('k_over', String(over), over?'bad':'ok');
+  set('lap', L.toFixed(2)+' m');
+  set('wmin', wmin.toFixed(2)+' m', wmin<0.9?'bad':'');
+  const v=document.getElementById('verdict');
+  const flat = sc && smax<0.10, drivable = over===0;
+  if(flat && drivable){ v.className='verdict ok'; v.innerHTML='<b>Ready.</b> Straights are flat and nothing is tighter than the car can steer. Export it.'; }
+  else if(!flat && drivable){ v.className='verdict bad'; v.innerHTML='<b>Straights not flat</b> (max |κ| '+smax.toFixed(2)+', target &lt; 0.10). Widen the window — but watch the hairpin peaks.'; }
+  else if(flat && !drivable){ v.className='verdict bad'; v.innerHTML='<b>'+over+' points tighter than 0.56 m radius.</b> Drag those points (red) away from the wall tip into the open area, or the optimiser will fold there.'; }
+  else { v.className='verdict bad'; v.innerHTML='<b>Two problems:</b> straights not flat (max |κ| '+smax.toFixed(2)+') and '+over+' undrivable points. Fix the window first, then drag the hairpins.'; }
+  // corners
+  const peaks=[]; for(let i=0;i<n;i++){ const a=Math.abs(k[i]); if(a<0.35) continue; if(a>=Math.abs(k[(i-1+n)%n]) && a>Math.abs(k[(i+1)%n])) peaks.push([i,a]); }
+  const merged=[]; for(const p of peaks){ if(merged.length && (p[0]-merged[merged.length-1][0])*ds<1.5){ if(p[1]>merged[merged.length-1][1]) merged[merged.length-1]=p; } else merged.push(p); }
+  document.getElementById('corners').innerHTML = merged.length? merged.map(([i,a])=>{
+    const bad=a>KLIM; return '<div'+(bad?' class="bad"':'')+'>s '+S[i].toFixed(1).padStart(5)+' m  κ '+(k[i]>=0?'+':'')+k[i].toFixed(2)+'  r '+(1/a).toFixed(2)+' m'+(bad?'  ✗ undrivable':a>KBOUND?'  ~ at bound':'')+'</div>'; }).join('') : 'none over 0.35';
+}
+
+/* ---------- map drawing ---------- */
+const mapC=document.getElementById('map'), mctx=mapC.getContext('2d');
+const plotC=document.getElementById('plot'), pctx=plotC.getContext('2d');
+function fit(c, aspect){ const w=c.parentElement.clientWidth; const h=Math.round(w/aspect); const dpr=Math.min(devicePixelRatio||1,2); c.style.height=h+'px'; c.width=Math.round(w*dpr); c.height=Math.round(h*dpr); c.getContext('2d').setTransform(dpr,0,0,dpr,0,0); c._w=w; c._h=h; }
+// world -> screen: sx ∝ y, sy ∝ x  (map drawn landscape, handedness preserved)
+const SX=y=>view.px+view.k*(y-DATA.ymin), SY=x=>view.py+view.k*(x-DATA.xmin);
+const WX=sy=>DATA.xmin+(sy-view.py)/view.k, WY=sx=>DATA.ymin+(sx-view.px)/view.k;
+function resetView(){ const Wm=DATA.ny*DATA.res, Hm=DATA.nx*DATA.res; view.k=Math.min((mapC._w-16)/Wm,(mapC._h-16)/Hm); view.px=(mapC._w-view.k*Wm)/2; view.py=(mapC._h-view.k*Hm)/2; }
+function drawMap(){
+  const w=mapC._w,h=mapC._h; mctx.clearRect(0,0,w,h);
+  if(mapImg){ mctx.imageSmoothingEnabled=view.k*DATA.res<2; mctx.drawImage(mapImg, view.px, view.py, view.k*DATA.ny*DATA.res, view.k*DATA.nx*DATA.res); }
+  if(!cur) return;
+  const {P,raw:R,k,straight,S}=cur, n=P.length;
+  // raw skeleton
+  mctx.strokeStyle=css('--line-strong'); mctx.lineWidth=1; mctx.beginPath();
+  R.forEach((p,i)=>i?mctx.lineTo(SX(p[1]),SY(p[0])):mctx.moveTo(SX(p[1]),SY(p[0]))); mctx.closePath(); mctx.stroke();
+  // old raceline
+  if(showOld && DATA.raceline){ mctx.strokeStyle=css('--ref'); mctx.lineWidth=1.6; mctx.globalAlpha=.8; mctx.beginPath();
+    DATA.raceline.forEach((p,i)=>i?mctx.lineTo(SX(p[1]),SY(p[0])):mctx.moveTo(SX(p[1]),SY(p[0]))); mctx.closePath(); mctx.stroke(); mctx.globalAlpha=1; }
+  // smoothed centreline, straights in green
+  mctx.lineWidth=2.6; mctx.lineCap='round';
+  for(let i=0;i<n;i++){ const a=P[i], b=P[(i+1)%n]; mctx.strokeStyle=straight[i]?css('--ok'):css('--accent'); mctx.beginPath(); mctx.moveTo(SX(a[1]),SY(a[0])); mctx.lineTo(SX(b[1]),SY(b[0])); mctx.stroke(); }
+  // undrivable points
+  mctx.fillStyle=css('--bad');
+  for(let i=0;i<n;i++) if(Math.abs(k[i])>KLIM){ mctx.beginPath(); mctx.arc(SX(P[i][1]),SY(P[i][0]),4,0,TAU); mctx.fill(); }
+  // start marker
+  mctx.fillStyle=css('--ink'); mctx.beginPath(); mctx.arc(SX(P[0][1]),SY(P[0][0]),5,0,TAU); mctx.fill();
+  mctx.font='500 10.5px "JetBrains Mono",monospace'; mctx.fillStyle=css('--ink'); mctx.textAlign='left'; mctx.fillText('s=0', SX(P[0][1])+8, SY(P[0][0])+4);
+  // direction arrow at 1/4 lap
+  const q=Math.floor(n/4), a=P[q], b=P[(q+2)%n]; const ang=Math.atan2(SY(b[0])-SY(a[0]),SX(b[1])-SX(a[1]));
+  mctx.save(); mctx.translate(SX(a[1]),SY(a[0])); mctx.rotate(ang); mctx.fillStyle=css('--ink'); mctx.beginPath(); mctx.moveTo(10,0); mctx.lineTo(-4,-6); mctx.lineTo(-4,6); mctx.closePath(); mctx.fill(); mctx.restore();
+  // brush preview when hovering a point
+  if(hover>=0){ const r=parseFloat(document.getElementById('brush').value); mctx.strokeStyle=css('--accent'); mctx.setLineDash([3,4]); mctx.lineWidth=1; mctx.beginPath(); mctx.arc(SX(P[hover][1]),SY(P[hover][0]),r*view.k,0,TAU); mctx.stroke(); mctx.setLineDash([]); }
+  document.getElementById('mapinfo').textContent=(DATA.ny*DATA.res).toFixed(1)+' × '+(DATA.nx*DATA.res).toFixed(1)+' m · '+DATA.res*100+' cm/px · zoom '+(view.k*DATA.res).toFixed(2)+'×';
+}
+function drawPlot(){
+  const w=plotC._w,h=plotC._h; pctx.clearRect(0,0,w,h);
+  const {S,k,L,straight,ds,raw:R}=cur; const kr=curvClosed(R,ds).k;
+  const padL=44,padR=10,padT=10,padB=22, KMAX=3.2;
+  const X=s=>padL+(w-padL-padR)*s/L, Y=v=>padT+(h-padT-padB)*(1-(clamp(v,-KMAX,KMAX)+KMAX)/(2*KMAX));
+  // straights band
+  pctx.fillStyle=css('--ok'); pctx.globalAlpha=.10;
+  for(let i=0;i<S.length;i++) if(straight[i]) pctx.fillRect(X(S[i]),padT,Math.max(1,X(S[i]+ds)-X(S[i])+.5),h-padT-padB);
+  pctx.globalAlpha=1;
+  // grid/limits
+  pctx.strokeStyle=css('--line'); pctx.lineWidth=1;
+  for(const v of [-3,-2,-1,0,1,2,3]){ pctx.beginPath(); pctx.moveTo(padL,Y(v)); pctx.lineTo(w-padR,Y(v)); pctx.stroke(); }
+  pctx.strokeStyle=css('--muted'); pctx.setLineDash([5,4]); for(const v of [KLIM,-KLIM]){ pctx.beginPath(); pctx.moveTo(padL,Y(v)); pctx.lineTo(w-padR,Y(v)); pctx.stroke(); }
+  pctx.setLineDash([2,4]); for(const v of [KBOUND,-KBOUND]){ pctx.beginPath(); pctx.moveTo(padL,Y(v)); pctx.lineTo(w-padR,Y(v)); pctx.stroke(); } pctx.setLineDash([]);
+  pctx.font='500 10px "JetBrains Mono",monospace'; pctx.fillStyle=css('--muted'); pctx.textAlign='right';
+  for(const v of [-3,-2,-1,0,1,2,3]) pctx.fillText(v.toFixed(0), padL-6, Y(v)+3.5);
+  pctx.textAlign='center'; for(let s=0;s<=L;s+=5) pctx.fillText(s.toFixed(0)+' m', X(s), h-7);
+  // raw
+  pctx.strokeStyle=css('--line-strong'); pctx.lineWidth=1; pctx.beginPath(); kr.forEach((v,i)=>i?pctx.lineTo(X(S[i]),Y(v)):pctx.moveTo(X(S[i]),Y(v))); pctx.stroke();
+  // smoothed
+  pctx.strokeStyle=css('--accent'); pctx.lineWidth=2; pctx.beginPath(); k.forEach((v,i)=>i?pctx.lineTo(X(S[i]),Y(v)):pctx.moveTo(X(S[i]),Y(v))); pctx.stroke();
+  pctx.fillStyle=css('--bad'); k.forEach((v,i)=>{ if(Math.abs(v)>KLIM){ pctx.beginPath(); pctx.arc(X(S[i]),Y(v),3,0,TAU); pctx.fill(); } });
+}
+
+/* ---------- interaction ---------- */
+let hover=-1, drag=null;
+function nearest(px,py){ let best=-1,bd=1e9; const P=cur.P; for(let i=0;i<P.length;i++){ const d=Math.hypot(SX(P[i][1])-px,SY(P[i][0])-py); if(d<bd){bd=d;best=i;} } return bd<12?best:-1; }
+function pos(e){ const r=mapC.getBoundingClientRect(); return {px:e.clientX-r.left, py:e.clientY-r.top}; }
+function rawIndexNear(P_i){ // map a smoothed index to nearest raw point index
+  const p=cur.P[P_i]; let b=0,bd=1e9; for(let i=0;i<raw.length;i++){ const d=Math.hypot(raw[i][0]-p[0],raw[i][1]-p[1]); if(d<bd){bd=d;b=i;} } return b;
+}
+mapC.addEventListener('pointerdown',e=>{
+  const {px,py}=pos(e); const i=nearest(px,py);
+  if(setStartMode && i>=0){ const ri=rawIndexNear(i); raw=raw.slice(ri).concat(raw.slice(0,ri)); setStartMode=false; document.getElementById('setstart').setAttribute('aria-pressed','false'); mapC.style.cursor='grab'; recompute(); return; }
+  mapC.setPointerCapture(e.pointerId);
+  if(i>=0){ hist.push(raw.map(p=>[p[0],p[1]])); document.getElementById('undo').disabled=false;
+    const ri=rawIndexNear(i); drag={type:'pt', ri, lastX:WX(py), lastY:WY(px)}; mapC.style.cursor='grabbing'; }
+  else drag={type:'pan', lx:px, ly:py};
+});
+mapC.addEventListener('pointermove',e=>{
+  const {px,py}=pos(e);
+  if(!drag){ const i=nearest(px,py); if(i!==hover){ hover=i; drawMap(); } mapC.style.cursor=setStartMode?'crosshair':(i>=0?'pointer':'grab'); return; }
+  if(drag.type==='pan'){ view.px+=px-drag.lx; view.py+=py-drag.ly; drag.lx=px; drag.ly=py; drawMap(); return; }
+  const wx=WX(py), wy=WY(px); const dx=wx-drag.lastX, dy=wy-drag.lastY; drag.lastX=wx; drag.lastY=wy;
+  const sig=parseFloat(document.getElementById('brush').value)/2, n=raw.length;
+  // arc-length distance along raw
+  const seg=[0]; for(let i=1;i<=n;i++){ const a=raw[i-1],b=raw[i%n]; seg.push(seg[i-1]+Math.hypot(b[0]-a[0],b[1]-a[1])); } const L=seg[n];
+  for(let i=0;i<n;i++){ let d=Math.abs(seg[i]-seg[drag.ri]); d=Math.min(d,L-d); const wgt=Math.exp(-0.5*(d/sig)*(d/sig)); if(wgt<1e-3) continue; raw[i][0]+=dx*wgt; raw[i][1]+=dy*wgt; }
+  recompute();
+});
+const endDrag=()=>{ if(drag && drag.type==='pt') mapC.style.cursor='pointer'; drag=null; };
+mapC.addEventListener('pointerup',endDrag); mapC.addEventListener('pointercancel',endDrag);
+mapC.addEventListener('wheel',e=>{ e.preventDefault(); const {px,py}=pos(e); const f=Math.exp(-e.deltaY*0.0015); const nx=clamp(view.k*f, 5, 4000/DATA.res); const r=nx/view.k; view.px=px-(px-view.px)*r; view.py=py-(py-view.py)*r; view.k=nx; drawMap(); },{passive:false});
+
+document.getElementById('win').addEventListener('input',recompute);
+document.getElementById('ds').addEventListener('input',recompute);
+document.getElementById('brush').addEventListener('input',()=>{ document.getElementById('brushv').textContent=parseFloat(document.getElementById('brush').value).toFixed(1)+' m'; drawMap(); });
+document.getElementById('undo').addEventListener('click',()=>{ if(!hist.length) return; raw=hist.pop(); document.getElementById('undo').disabled=!hist.length; recompute(); });
+document.getElementById('reset').addEventListener('click',()=>{ hist=[]; document.getElementById('undo').disabled=true; raw=DATA.center.map(p=>[p[0],p[1]]); recompute(); });
+document.getElementById('reverse').addEventListener('click',()=>{ raw=[raw[0]].concat(raw.slice(1).reverse()); recompute(); });
+document.getElementById('setstart').addEventListener('click',e=>{ setStartMode=!setStartMode; e.currentTarget.setAttribute('aria-pressed',String(setStartMode)); mapC.style.cursor=setStartMode?'crosshair':'grab'; });
+document.getElementById('showold').addEventListener('click',e=>{ showOld=!showOld; e.currentTarget.setAttribute('aria-pressed',String(showOld)); drawMap(); });
+
+/* ---------- export ---------- */
+function csvText(){
+  const {P,wl,wr,S,k}=cur; const L=['# x_m,y_m,w_tr_right_m,w_tr_left_m,s_m,kappa_radpm'];
+  for(let i=0;i<P.length;i++) L.push(P[i][0].toFixed(4)+','+P[i][1].toFixed(4)+','+wr[i].toFixed(3)+','+wl[i].toFixed(3)+','+S[i].toFixed(3)+','+k[i].toFixed(4));
+  return L.join('\n')+'\n';
+}
+document.getElementById('save').addEventListener('click',async()=>{
+  const txt=csvText(); const name=(DATA.name||'track')+'_centreline_w'+cur.w+'.csv';
+  const dl = window.claude && window.claude.use ? await window.claude.use('downloads') : null;
+  if(dl){ try{ await dl.save({filename:name, data:txt}); return; }catch(err){ if(err && err.code==='declined') return; } }
+  // local file: plain download
+  try{ const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([txt],{type:'text/csv'})); a.download=name; a.click(); }catch(e){}
+  const box=document.getElementById('csvbox'); box.hidden=false; box.value=txt;
+});
+document.getElementById('copy').addEventListener('click',async()=>{
+  const txt=csvText(); const box=document.getElementById('csvbox'); box.hidden=false; box.value=txt;
+  try{ await navigator.clipboard.writeText(txt); document.getElementById('copy').textContent='Copied'; setTimeout(()=>document.getElementById('copy').textContent='Copy CSV',1500);}catch(e){ box.select(); }
+});
+
+/* ---------- boot ---------- */
+function boot(){
+  const chips=document.getElementById('chips');
+  chips.innerHTML=['map '+(DATA.name||''),'skeleton '+DATA.center.length+' pts','car min r 0.56 m','kappa_bound 1.5'].map(t=>'<span class="chip">'+t+'</span>').join('');
+  raw=DATA.center.map(p=>[p[0],p[1]]);
+  document.getElementById('brushv').textContent='0.9 m';
+  fit(mapC, Math.max(1.6, Math.min(3.6,(DATA.ny*DATA.res)/(DATA.nx*DATA.res)))); fit(plotC, 4.2); resetView();
+  const mk=new Image(); mk.onload=()=>{ const c=document.createElement('canvas'); c.width=DATA.ny; c.height=DATA.nx; const x=c.getContext('2d'); x.drawImage(mk,0,0); maskData=x.getImageData(0,0,DATA.ny,DATA.nx).data;
+    const mi=new Image(); mi.onload=()=>{ mapImg=mi; recompute(); }; mi.src=DATA.mapPng; };
+  mk.src=DATA.maskPng;
+}
+let rt; window.addEventListener('resize',()=>{ clearTimeout(rt); rt=setTimeout(()=>{ fit(mapC, Math.max(1.6, Math.min(3.6,(DATA.ny*DATA.res)/(DATA.nx*DATA.res)))); fit(plotC,4.2); resetView(); if(cur){ drawMap(); drawPlot(); } },80); });
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{ if(cur){ drawMap(); drawPlot(); } });
+boot();
+</script>

@@ -148,6 +148,8 @@ class PurePursuit(Node):
         p('lookahead_k', 0.35)                 # Ld = k * speed, then clamped
         p('lookahead_curv_gain', 0.67)         # Ld /= (1 + gain * max |kappa| within Ld); 0 = off
         p('steer_a_lat_max', 7.0)              # cap |kappa_cmd| at this / v^2 [m/s^2]; 0 = off
+        p('exit_guard_from', 0.0)
+        p('exit_guard_full', 0.15)
         # Cap the steering EXCESS over the path's own kinematic steering angle. The
         # sideways force peaks at ~0.6 deg of front slip; the slip angle is roughly
         # (steer angle - atan(L * kappa_actual)), so what saturates the tyre is not
@@ -448,6 +450,10 @@ class PurePursuit(Node):
         self.slip_accel, self.slip_brake = float(g('slip_accel')), float(g('slip_brake'))
         self.slip_circle = float(g('slip_circle'))
         self.accel_ff = float(g('accel_ff')) > 0.5
+        self.exit_guard_from = float(g('exit_guard_from'))
+        self.exit_guard_full = float(g('exit_guard_full'))
+        if self.exit_guard_from < 0.0 or self.exit_guard_full < self.exit_guard_from:
+            raise RuntimeError('exit_guard_full must be >= exit_guard_from >= 0')
         # mu is monotone on [0, S_PEAK]: tabulate it once for the inverse.
         self._s_tab = np.linspace(0.0, TIRE_S_PEAK, 151)
         self._mu_tab = np.array([self._mu(float(S)) for S in self._s_tab])
@@ -1084,6 +1090,8 @@ class PurePursuit(Node):
         # corner: run 25, braking zones 9 % under the profile against 5 % in
         # run 24, 0.05 s a lap.
         near_v = near if self.latency <= 0.0 else int(np.argmin(np.hypot(self.px - x0, self.py - y0)))
+        e_lat = ((x - self.px[near]) * -math.sin(self.psi[near])
+             + (y - self.py[near]) * math.cos(self.psi[near]))
 
         # Phase margin of the pursuit loop is set by v * delay / Ld, so when the
         # measured round trip changes the lookahead must change with it. The
@@ -1203,6 +1211,13 @@ class PurePursuit(Node):
             v_target = float(np.clip(math.sqrt(self.a_lat / max(k_worst, 1e-3)),
                                      self.v_min, self.v_max))
 
+        if self.exit_guard_full > 0.0 and abs(float(self.kappa[near])) > 1e-3:
+            outward = -math.copysign(e_lat, float(self.kappa[near]))
+            if outward > self.exit_guard_from and v_target > self.speed:
+                span = self.exit_guard_full - self.exit_guard_from
+                fraction = 1.0 if span <= 0.0 else min(1.0, (outward - self.exit_guard_from) / span)
+                v_target = self.speed + (v_target - self.speed) * (1.0 - fraction)
+
         # Warmup cap: hold the target down over the first warmup_dist_m of
         # driving, measured by the tire observer (encoders, race-legal) rather
         # than by the pose, which is the thing being protected.
@@ -1240,8 +1255,6 @@ class PurePursuit(Node):
             self._update_delay(now)
 
         # Path error at the nearest point, in the pose the controller used.
-        e_lat = ((x - self.px[near]) * -math.sin(self.psi[near])
-                 + (y - self.py[near]) * math.cos(self.psi[near]))
         e_head = (yaw - self.psi[near] + math.pi) % (2.0 * math.pi) - math.pi
         self._publish_status([                                   # order: STATUS_FIELDS
             self.speed, self.v_enc, self.v_pose, v_target, self.u_cmd, throttle, steering,

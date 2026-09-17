@@ -75,6 +75,8 @@ pure_pursuit:
     # tire's lateral peak more steering means LESS force; at the 6.5 rung the car
     # ran 0.9 m wide at full lock in the S entry. Measured usable maxima 6.4-7.8.
     steer_a_lat_max: 7.0
+    exit_guard_from: 0.0
+    exit_guard_full: 0.15
 
     # ---- Steering ----
     # From the published competition vehicle spec. delta = atan(kappa*wheelbase),

@@ -19,7 +19,7 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${IMAGE:-autodrive_racer}"
 TAG="${TAG:-multi-track}"
-SIM_TAG="${SIM_TAG:-2026-iros-practice}"
+SIM_TAG="${SIM_TAG:-2026-iros-compete}"
 NAME=autodrive_roboracer_api
 IN=/root/Documents/roboracer
 
@@ -31,10 +31,17 @@ racer_run() {
   if [ "${MOUNT_RACELINE:-1}" = "1" ]; then
     mounts+=(-v "$REPO/raceline:$IN/raceline")
   fi
+  # RViz needs the host GPU: without it Mesa's GLX cannot create a render
+  # window on an XWayland display ("Invalid parentWindowHandle", rviz2 aborts).
+  # GPUS=0 skips it on a machine without the NVIDIA container toolkit.
+  local gpu=()
+  if [ "${GPUS:-1}" = "1" ] && command -v nvidia-smi >/dev/null 2>&1; then
+    gpu=(--gpus all -e NVIDIA_DRIVER_CAPABILITIES=all)
+  fi
   exec docker run --name "$NAME" --rm -it \
     --network=host --ipc=host \
     -v /tmp/.X11-unix:/tmp/.X11-unix:rw --env DISPLAY \
-    "${mounts[@]}" \
+    "${gpu[@]}" "${mounts[@]}" \
     "${IMAGE}:${TAG}" "$@"
 }
 

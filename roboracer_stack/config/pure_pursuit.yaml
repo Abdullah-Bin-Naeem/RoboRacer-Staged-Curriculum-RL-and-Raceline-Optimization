@@ -199,7 +199,7 @@ pure_pursuit:
     # are real tire slips: 0.08 is ~5.5 m/s^2 on the fitted curve, above the
     # profile's 4.55 and under the 7.06 peak, encoders ~0.3 m/s high while it binds.
     slip_accel: 0.11
-    slip_brake: 0.08
+    slip_brake: 0.12
     v_slip_den: 4.0            # PhysX minLongSlipDenominator, default 4 m/s
     slip_kp: 0.76              # proportional lead on (v_target - v_land) inside the band;
                                # 0.76 = 25.25 * throttle_kp, the legacy law's gain. Without

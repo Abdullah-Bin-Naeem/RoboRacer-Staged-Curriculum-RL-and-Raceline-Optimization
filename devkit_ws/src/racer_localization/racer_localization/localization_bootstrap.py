@@ -110,6 +110,7 @@ import rclpy
 import tf2_ros
 from geometry_msgs.msg import Point, PoseWithCovarianceStamped
 from lifecycle_msgs.msg import State
+from nav_msgs.msg import OccupancyGrid
 from lifecycle_msgs.srv import GetState
 from racer_common import frames, restricted
 from racer_common.frames import NS as COMMON_NS
@@ -154,6 +155,39 @@ def yaw_from_quat_xyzw(q):
 BACK_SLOP_M = 1.20
 
 
+def near_wall_mask(data, width, height, tol_cells):
+    """Boolean grid, row = y index as in OccupancyGrid: True within tol_cells
+    (a square neighbourhood) of an occupied cell. Box sum by 2-D cumsum."""
+    occ = np.asarray(data, dtype=np.int16).reshape(height, width) >= 65
+    k = max(0, int(tol_cells))
+    c = np.pad(occ.astype(np.int32), ((k + 1, k), (k + 1, k))).cumsum(0).cumsum(1)
+    n = 2 * k + 1
+    box = c[n:, n:] - c[:-n, n:] - c[n:, :-n] + c[:-n, :-n]
+    return box > 0
+
+
+def scan_match_score(mask, resolution, origin_xy, scan, pose, lidar_x,
+                     max_range, stride=4):
+    """Fraction of valid beams, cast from `pose` (x, y, yaw of the base frame),
+    that end on `mask`. None if fewer than 20 beams are usable. Angles follow
+    REP-103 (angle_min + i * increment, counter-clockwise), as AMCL assumes."""
+    x, y, yaw = pose
+    r = np.asarray(scan.ranges, dtype=float)
+    a = scan.angle_min + np.arange(len(r)) * scan.angle_increment
+    r, a = r[::stride], a[::stride]
+    ok = np.isfinite(r) & (r > scan.range_min) & (r < min(scan.range_max, max_range))
+    if ok.sum() < 20:
+        return None
+    lx, ly = x + lidar_x * math.cos(yaw), y + lidar_x * math.sin(yaw)
+    ex = lx + r[ok] * np.cos(yaw + a[ok])
+    ey = ly + r[ok] * np.sin(yaw + a[ok])
+    col = np.floor((ex - origin_xy[0]) / resolution).astype(int)
+    row = np.floor((ey - origin_xy[1]) / resolution).astype(int)
+    h, w = mask.shape
+    inside = (col >= 0) & (col < w) & (row >= 0) & (row < h)
+    hits = int(mask[row[inside], col[inside]].sum())
+    return hits / float(ok.sum())
+
 def pick_back(s_last, cs, lap, slop=BACK_SLOP_M):
     """Arc length from a checkpoint to the car along the lap, or None.
 
@@ -191,6 +225,19 @@ class LocalizationBootstrap(Node):
         p('estimate_topic', '/amcl_pose')     # slam_toolbox publishes /pose
         p('ready_check', 'lifecycle')         # 'lifecycle' | 'tf'; see _ready_yet
         p('localizer_node', 'amcl')           # polled when ready_check=lifecycle
+        # ---- scan-vs-map confirmation (ported from iros_compete_usman) --------
+        # Steps above confirm the estimate against the SEED and against AMCL's own
+        # covariance, and both can agree on a pose that is simply wrong: a stale
+        # SPAWN_* or a map that does not line up with the simulator's frame passes
+        # them. This asks the one independent witness there is -- at the confirmed
+        # pose, what fraction of lidar beams end within scan_match_tol_m of a wall
+        # on the map? A right pose scores near 1; a pose 0.3 m or a few degrees out
+        # scores far lower. 0 disables. Calibrated on track_clean, see LOCALIZER.md
+        # on the iros_compete_usman branch.
+        p('scan_match_min', 0.5)
+        p('scan_match_tol_m', 0.10)
+        p('scan_match_max_range', 6.0)   # far beams amplify a small yaw error
+        p('map_topic', '/map')
         p('verify_via_tf', False)             # confirm on TF map->base, not a topic
         p('map_frame', 'map')
         p('odom_frame', 'odom')
@@ -243,6 +290,11 @@ class LocalizationBootstrap(Node):
         self.localizer_wait = float(g('localizer_wait_s'))
         self.est_topic = str(g('estimate_topic'))
         self.ready_check = str(g('ready_check')).lower()
+        self.scan_min = float(g('scan_match_min'))
+        self.scan_tol = float(g('scan_match_tol_m'))
+        self.scan_range = float(g('scan_match_max_range'))
+        self.map_mask = self.map_res = self.map_origin = None
+        self._scan_warned = False
         self.verify_via_tf = bool(g('verify_via_tf'))
         self.map_frame = str(g('map_frame'))
         self.odom_frame = str(g('odom_frame'))
@@ -331,6 +383,8 @@ class LocalizationBootstrap(Node):
             # /imu is a legal sensor: the truth seed's heading, and the heading
             # step that marks a reset.
             self.create_subscription(Imu, f'{NS}/imu', self._cb_imu, QOS)
+            if self.scan_min > 0.0:
+                self.create_subscription(OccupancyGrid, str(g('map_topic')), self._cb_map, LATCHED)
 
         # TF is needed to notice slam_toolbox coming up (ready_check=tf) and to
         # read the estimate the follower actually drives on (verify_via_tf).
@@ -467,6 +521,36 @@ class LocalizationBootstrap(Node):
             if abs(step) > self.reset_yaw_step:
                 self._flag_reset(f'heading stepped {math.degrees(step):+.0f} deg in one tick')
         self._imu_yaw, self._imu_t = yaw, t
+
+    def _cb_map(self, msg):
+        info = msg.info
+        self.map_res = float(info.resolution)
+        self.map_origin = (info.origin.position.x, info.origin.position.y)
+        self.map_mask = near_wall_mask(msg.data, info.width, info.height,
+                                       math.ceil(self.scan_tol / self.map_res))
+
+    def _scan_check(self, pose):
+        """(ok, text) for the scan scored against the map at `pose`.
+
+        Passes, loudly, when there is nothing to score with: AMCL cannot be
+        active without the map, so a missing map means this node's own
+        subscription is at fault, and that must not park the car.
+        """
+        if self.scan_min <= 0.0:
+            return True, 'scan check off'
+        score = None
+        if self.map_mask is not None and self.scan is not None:
+            score = scan_match_score(self.map_mask, self.map_res, self.map_origin,
+                                     self.scan, pose, float(frames.LIDAR_XYZ[0]),
+                                     self.scan_range)
+        if score is None:
+            if not self._scan_warned:
+                self._scan_warned = True
+                self.get_logger().warn('scan-vs-map check SKIPPED: no map or no usable scan yet')
+            return True, 'scan check skipped'
+        text = (f'{score * 100:.0f}% of beams on a wall within '
+                f'{self.scan_tol * 100:.0f} cm (min {self.scan_min * 100:.0f}%)')
+        return score >= self.scan_min, text
 
     def _seed(self):
         """Publish the true pose to /initialpose and remember what was sent."""
@@ -720,11 +804,12 @@ class LocalizationBootstrap(Node):
                  and self.est_t >= self.seeded_at and self.est_err is not None)
         if fresh:
             gap, dyaw = self.est_err, self.est_dyaw
-            if gap <= self.tol_m and dyaw <= self.tol_yaw and self._recover_ok():
+            scan_ok, scan_text = self._scan_check(self.est) if self.est is not None else (True, 'no estimate')
+            if gap <= self.tol_m and dyaw <= self.tol_yaw and scan_ok and self._recover_ok():
                 std = f'{self.pos_std:.3f} m' if self.pos_std is not None else 'unknown'
                 moving = ' while driving' if abs(self.speed) > 0.3 else ''
                 self._finish(
-                    f'seed CONFIRMED on attempt {self.attempts}{moving}: the '
+                    f'{scan_text}. seed CONFIRMED on attempt {self.attempts}{moving}: the '
                     f'estimate is {gap * 100:.1f} cm / {math.degrees(dyaw):.1f} deg from truth '
                     f'(pos std {std}). Tracking is now lidar + map + dead '
                     'reckoning only.')

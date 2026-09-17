@@ -204,7 +204,19 @@ TRACKS = {
         # (5.0) were compensating for the 175 ms delay's exit swing, gone at
         # 45 Hz. Body-corner clearance min 0.071 m, at s 39.6-40.2 (right wall
         # of the bend before hairpin 2; the car runs 0.10 m right of the line).
-        'raceline': 'raceline_tum_iqp_h7.0_a7.0b.csv',
+        # Promoted 2026-09-17 (run mtb15): 30 laps, ZERO contacts, 9.40 best /
+        # 9.45 typical against the min-curvature line's 9.45 / 9.55, and the
+        # hairpin-1 apex -- the crash site all session -- went from 0.035 m of
+        # body clearance to 0.125 m. Built by raceline/opt_mintime.py, which
+        # solves the line and the speed TOGETHER instead of least-curvature
+        # first and a velocity profile after. What made it work was not the
+        # optimiser but the margin: fed the tracking error the car ACTUALLY
+        # shows at each point (--margin-from, p99 over 63 laps, +0.15 buffer)
+        # instead of one number for the whole lap. The uniform 0.20 m was wrong
+        # by a factor of four between the straight (0.088 m needed) and hairpin
+        # 1 (0.369 m), which is why that apex was always the tight spot.
+        # The previous line is kept as raceline_tum_iqp_h7.0_a7.0b.csv.
+        'raceline': 'rl_mt_b0.15_a7.0b.csv',
         'margin_zones': '',
         'lat_zones': '',
         # Porto/ICRA follower values as the starting point. target_lead_s 0.0:

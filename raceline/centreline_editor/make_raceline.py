@@ -46,6 +46,14 @@ def main():
     ap.add_argument('--plot', action='store_true'); ap.add_argument('--kappa-bound', type=float); ap.add_argument('--ay', type=float); ap.add_argument('--margin', type=float)
     ap.add_argument('--spawn', type=float, nargs=3, metavar=('X', 'Y', 'YAW'), default=(0.802, 3.158, -1.5708),
                     help='spawn pose (m, m, rad) — the line is oriented so it runs in the spawn heading')
+    ap.add_argument('--blend', type=float, default=0.0,
+                    help='weight on the SHORTEST-PATH line, 0 = pure minimum curvature (default, what is raced), '
+                         '1 = pure shortest path. The two are the classic line families: least curvature carries '
+                         'the most corner speed, shortest path covers the least ground, and the fastest line on a '
+                         'track with one long straight and tight hairpins is usually between them. Both solvers '
+                         'return a lateral offset on the SAME reference and normals, and both offsets obey the '
+                         'same box constraint, so any convex combination is still inside the corridor -- but the '
+                         'curvature bound is not a box constraint, so check max|k| in the [3] line.')
     ap.add_argument('--margin-zones', default='', help='extra wall margin in lap-distance zones, "s0:s1:extra[:side],..." '
                     '(m, s from the start line = spawn; s0 > s1 wraps; side L, R or B=both, default B)')
     a = ap.parse_args()
@@ -166,6 +174,14 @@ def main():
             reftrack=reftrack, normvectors=normvec, A=M, spline_len=spline_len, psi=psi_r, kappa=kappa_r, dkappa=dkappa_r,
             kappa_bound=P['kappa_bound'], w_veh=w_veh, print_debug=False, plot_debug=False,
             stepsize_interp=ds, iters_min=P['iters_min'], curv_error_allowed=P['curv_err'])
+        if a.blend > 0.0:
+            # opt_shortest_path solves on the same reference and normals iqp_handler
+            # just returned, so the two offsets are directly comparable.
+            alpha_sp = tph.opt_shortest_path.opt_shortest_path(
+                reftrack=reftrack_i, normvectors=normvec_i, w_veh=w_veh, print_debug=False)
+            alpha = (1.0 - a.blend) * alpha + a.blend * alpha_sp
+            print(f'    blend {a.blend:.2f}: min-curv offset mean |a| {np.abs(alpha).mean():.3f} m '
+                  f'(shortest-path alone {np.abs(alpha_sp).mean():.3f} m)')
         rl, a_rl, cx_rl, cy_rl, inds, tvals, s_rl, spl_len_rl, el_cl = tph.create_raceline.create_raceline(
             refline=reftrack_i[:, :2], normvectors=normvec_i, alpha=alpha, stepsize_interp=ds)
         psi_rl, kappa_rl = tph.calc_head_curv_an.calc_head_curv_an(cx_rl, cy_rl, inds, tvals)

@@ -285,3 +285,61 @@ never did and the car drove blind for half an hour. As the stack stands, one
 contact can end a run. The legal fix, detect the respawn, stop, call AMCL's
 global relocalization, creep until converged, is scoped but not built.
 
+### 10.5 What finally worked: minimum lap time, with a margin that is measured
+
+Seven levers were tried on the follower and the profile and all seven failed the
+same way -- they found time on paper by asking the car for more, and the car,
+already 0.2 m/s under its target everywhere, gave it back in wall clearance:
+
+| change | apex clearance | best lap | outcome |
+|---|---|---|---|
+| baseline | 0.175 m | 9.50 | -- |
+| `slip_kp` 1.5 | 0.035 m | 9.45 | contact in 10 laps |
+| apex margin line | 0.146 m | 9.45 | s 23.9 to 0.025 m |
+| `lookahead_min` 0.6 | 0.090 m | 9.60 | two contacts, slower |
+| lateral limit 7.5 | -- | 9.50 | contact in 5 laps |
+| curvature bound 1.3 | -- | -- | 0.036 s for curvature the car cannot make |
+| `control_hz` 45 | -- | -- | five resets, sim tick fell to 16.5 Hz |
+| shortest-path blend | -- | -- | 10.02-11.39 s predicted, strictly worse |
+
+What worked was `raceline/opt_mintime.py`: one NLP over lateral offset AND
+speed, minimising lap time, so the geometry can trade curvature against a better
+exit instead of being fixed before speed is ever considered. **Run mtb15: 30
+laps, zero contacts, 9.40 best / 9.45 typical against 9.45 / 9.55, and the
+hairpin-1 apex went from 0.035 m of body clearance to 0.125 m.**
+
+Three things had to be right, and two of them bit first.
+
+**The steering rate has to be constrained against the RIGHT metric.** The NLP
+measures curvature as a circle through three adjacent points, which is correct
+for curvature (1.25 against the spline's 1.26) but smooths its DERIVATIVE, and
+the rate depends on the derivative: 2.91 by that measure against 5.04 by spline
+on the same line. The first line looked feasible and demanded 4.47 rad/s at
+s 21.6 against an actuator limit of 3.2; the car washed WIDE there on ten of
+twelve contacts. `--rate-iters` now solves, measures the rate the way the
+profiler does, tightens the internal limit by the ratio and repeats. It
+converges in three passes and costs nothing -- constraining it made the line
+FASTER, because the sharp steering was never where the time was, only somewhere
+the solver was free to be sloppy.
+
+**The margin IS the design, not a safety detail.** A min-time solver spends
+every centimetre of corridor it is given, because clearance it does not use is
+time it does not get. Left at the uniform 0.20 m it pinned itself to the floor
+on the fastest part of the lap. The measured exchange rate on this track is
+about **0.5 s of lap for 0.1 m of clearance**, and the right buffer comes from
+what a contact costs (10 s) rather than from what makes the prediction look
+good.
+
+**A uniform margin is wrong by a factor of four.** Measured over 63 laps, the
+car holds its line to 0.088 m at p99 down the main straight and to 0.369 m
+through hairpin 1. So 0.20 m was simultaneously 0.11 m too generous on the
+straights and 0.17 m too thin in the hairpin -- which is the whole reason that
+apex was always the tight spot, through every line this project has raced.
+`--margin-from RUN.csv` feeds the real profile in. That single change is what
+turned the min-time line from a crash into a win: it put clearance where the car
+wanders and let the solver use the corridor where it does not.
+
+Still open: the follower's 0.2 m/s deficit is untouched (the run predicts 9.13
+and drives 9.45), `mode:=race` has never been run on this track, and this line
+has 30 clean laps against the previous line's 63.
+

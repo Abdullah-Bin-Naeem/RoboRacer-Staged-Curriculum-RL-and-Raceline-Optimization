@@ -50,6 +50,7 @@ from geometry_msgs.msg import TransformStamped
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
+from racer_common.tire_model import TireSpeedObserver
 from sensor_msgs.msg import Imu, JointState
 
 NS = '/autodrive/roboracer_1'
@@ -96,6 +97,20 @@ class DeadReckoning(Node):
         p('transform_tolerance', 0.02)
         # Encoders overread under slip. <1.0 trims the systematic part; AMCL
         # handles what is left.
+        # 'encoder': arc length from the cumulative wheel angle, which is what
+        # this sim's encoders report -- i.e. the THROTTLE, not the car. Every
+        # slip goes straight into the position: measured encoder/true distance
+        # 1.02 over a lap, and up to 1.01 m of ALONG-TRACK error carried into
+        # the hairpin-1 braking point on a run started from the spawn (runs 3,
+        # 13, 14), which is what the follower's warmup cap exists to mask.
+        # 'tire': run the sim's own longitudinal model on the measured wheel
+        # speed and integrate the CAR's speed instead, over the same stamp
+        # interval the wheel speed was measured on so the sum stays unbiased.
+        # Ported from the iros_compete_usman branch (common/tire_model.py).
+        # Default stays 'encoder': 'tire' is an A/B, not a silent switch.
+        p('distance_source', 'encoder')
+        p('tire_rise_slope', 3.0)                   # as pure_pursuit.yaml
+        p('v_slip_den', 4.0)
         p('distance_scale', 1.0)
         # Reset detector, in wheel radians. Cumulative angle survives dropped
         # frames, so the ONLY delta worth rejecting is a discontinuity -- i.e.
@@ -132,6 +147,9 @@ class DeadReckoning(Node):
         self.odom_frame, self.base_frame = g('odom_frame'), g('base_frame')
         self.publish_tf = g('publish_tf')
         self.scale = g('distance_scale')
+        self.dist_src = str(g('distance_source')).lower()
+        self._tire = TireSpeedObserver(rise_slope=float(g('tire_rise_slope')),
+                                       v_slip_den=float(g('v_slip_den')))
         self.tf_tol = float(g('transform_tolerance'))
         self.max_step = float(g('max_wheel_step'))
         self.extrapolate_yaw = bool(g('extrapolate_yaw'))
@@ -163,7 +181,8 @@ class DeadReckoning(Node):
             f'dead reckoning: {self.odom_frame} -> {self.base_frame}, '
             f'wheel r={self.wheel_r} m, scale={self.scale}, '
             f'{g("publish_rate"):.0f} Hz, tf +{self.tf_tol * 1e3:.0f} ms, '
-            f'extrapolate yaw={self.extrapolate_yaw} pos={self.extrapolate_pos}')
+            f'extrapolate yaw={self.extrapolate_yaw} pos={self.extrapolate_pos}, '
+            f'distance from {self.dist_src}')
 
     def _cb_enc(self, side, msg):
         """position is cumulative wheel angle in RADIANS (measured, not ticks)."""
@@ -188,11 +207,18 @@ class DeadReckoning(Node):
                 f'{side} encoder jumped {dang:.1f} rad (> {self.max_step:.0f}); '
                 f'treating as a reset, not travel. AMCL needs re-seeding.')
             return
-        self._ds[side] = self._ds.get(side, 0.0) + dang * self.wheel_r
+        dt = t - prev[1]
+        if self.dist_src != 'tire':
+            self._ds[side] = self._ds.get(side, 0.0) + dang * self.wheel_r
+        elif 1e-4 < dt <= 0.5:
+            # The observer's CAR speed over the same interval the wheel speed was
+            # measured on. Those intervals telescope, so the sum is unbiased;
+            # holding a rate across a different interval inflates it instead.
+            self._ds[side] = self._ds.get(side, 0.0) + self._tire.step(
+                abs(dang) / dt * self.wheel_r, dt) * dt * (1.0 if dang >= 0.0 else -1.0)
         self._enc_t = t if self._enc_t is None else max(self._enc_t, t)
 
         # ---- speed: reported in twist.linear.x, never integrated ----
-        dt = t - prev[1]
         if dt <= 1e-4 or dt > 0.5:
             return          # stale or duplicate stamp; a bad dt gives garbage
         self._rate[side] = dang / dt * self.wheel_r

@@ -223,6 +223,9 @@ def _launch(context, *args, **kwargs):
                     'recover_use_checkpoints': cfg('recover_use_checkpoints')}
         loc_args['map_yaml' if localizer == 'amcl' else 'map_graph'] = (
             map_yaml if localizer == 'amcl' else map_graph)
+        # A/B a localizer parameter set without touching the package's yaml.
+        if localizer == 'amcl' and cfg('amcl_params_file'):
+            loc_args['amcl_params_file'] = cfg('amcl_params_file')
 
         # Warn only when nothing will seed this localizer: no global search AND
         # no one-shot truth seed leaves it on the hardcoded constant, which
@@ -334,6 +337,8 @@ def generate_launch_description():
             'map_graph', default_value='',
             description="serialized pose graph, slam only; empty = the track's"),
         DeclareLaunchArgument('rviz', default_value='true'),
+        DeclareLaunchArgument('amcl_params_file', default_value='',
+                              description='AMCL yaml to use instead of racer_localization/config/amcl.yaml (empty = the package default)'),
 
         # Turn pieces off when running them yourself.
         DeclareLaunchArgument('bridge', default_value='true'),

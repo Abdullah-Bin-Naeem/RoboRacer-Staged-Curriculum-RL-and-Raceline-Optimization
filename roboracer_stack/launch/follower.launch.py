@@ -44,6 +44,8 @@ TUNABLES = ('lookahead_min', 'lookahead_max', 'lookahead_k', 'lookahead_curv_gai
             # slip throttle and fused speed (see pure_pursuit.py docstring)
             'slip_accel', 'slip_brake', 'u_launch', 'u_per_throttle', 'v_slip_den', 'tire_rise_slope',
             'cmd_delay_s', 'slip_kp', 'target_lead_s',
+            # ported from multi-track: warmup cap, friction-circle band, accel feedforward
+            'warmup_v_max', 'warmup_dist_m', 'slip_circle', 'accel_ff', 'enc_rate_window_s',
             # control loop rate; 20 matches the 17.5 Hz sim tick seen here, raise it
             # with the tick (headless sim, faster machine) so the loop is not the limit
             'control_hz',

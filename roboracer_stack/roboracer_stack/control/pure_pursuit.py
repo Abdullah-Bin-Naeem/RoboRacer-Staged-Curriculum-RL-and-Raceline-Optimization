@@ -193,6 +193,28 @@ class PurePursuit(Node):
         p('a_lat_max', 3.0)
         p('v_min', 1.0)
         p('v_max', 4.0)
+        # ---- warmup speed cap ----------------------------------------
+        # Cap the speed TARGET over the first warmup_dist_m of driving
+        # (0 = off). The competition's first lap is a warmup and the timer
+        # starts after it, so this costs no race time.
+        #
+        # Why it is needed: the encoders report the throttle COMMAND, so
+        # dead reckoning over-reads distance while the wheel slips, by 5 %
+        # under hard acceleration and 2 % over a lap. A long straight gives
+        # AMCL almost no along-track correction (its walls are parallel to
+        # the error), so that over-read simply accumulates. Measured on IROS
+        # 2026, whose spawn is at the top of a 16 m straight: from the spawn
+        # the along-track error grows monotonically with distance and peaks
+        # at the hairpin-1 braking point, +0.43 m (run 13), +0.58 (run 3),
+        # +1.01 (run 14, which then hit). Starting the same stack mid-track
+        # instead, so the car meets corners before the straight, it stays
+        # under 0.10 m and the straight later in the run costs only +0.32
+        # (run 18). Corners are what makes the along-track direction
+        # observable; the cap buys the filter metres of scan updates and
+        # gentler acceleration until it has seen one. (Ported from the
+        # multi-track branch.)
+        p('warmup_v_max', 0.0)
+        p('warmup_dist_m', 0.0)
         # ---- speed source ---------------------------------------------
         # 'tire' (default), 'fused' or 'encoder'. See the module docstring: the
         # encoder is the throttle echo in this simulator, so 'tire' runs the
@@ -237,6 +259,22 @@ class PurePursuit(Node):
         # under the 7.06 peak, with the encoders about 0.3 m/s high while it binds.
         p('slip_accel', 0.08)
         p('slip_brake', 0.08)
+        # Friction-circle band. > 0 replaces slip_accel/slip_brake with this
+        # value at zero lateral load, scaled by sqrt(1 - (a_lat/steer_a_lat_max)^2)
+        # where a_lat = v^2 * |kappa| of the path at the car. ICRA run 17: only
+        # 4 % of the lap is grip-limited and 78 % is acceleration or braking,
+        # the +-0.08 band saturated 28 % of the time and the tire ran at slip
+        # 0.03 while its curve is flat-topped at 6.8-7.1 m/s^2 over 0.10-0.18.
+        # 0.12 puts a straight on that top; a hairpin exit at a_lat 6 gets
+        # 0.06, LESS than 0.08, which is what run 14's understeer asked for.
+        p('slip_circle', 0.0)
+        # Feed the slip that produces the PLAN's acceleration forward through
+        # the inverse tire curve, instead of waiting for a speed error to ask
+        # for it: the car delivered 91 % of its plan on run 17. Acceleration
+        # only; see _throttle_slip for what the brake side did on run 18.
+        # Float: the launch files cast every tunable to float, so accel_ff:=1.0
+        # on, 0.0 off.
+        p('accel_ff', 0.0)
         # Loop delay from publishing a throttle to seeing it on the wheel. MEASURED
         # 0.15 s (see _throttle_slip). Everything in the band is predicted this far
         # ahead with the observer's acceleration. 0 = the old behaviour.
@@ -251,6 +289,14 @@ class PurePursuit(Node):
         # wheel speed) pairs are cross-correlated at lags 0..0.35 s and the best
         # lag is low-pass blended into cmd_delay_s. Needs throttle to vary, which
         # any lap provides. Off = the fixed value above.
+        # Encoder rate over at least this much time. One sample at 18 Hz spans 55 ms
+        # and the rate was clean (RMS 0.22 m/s against 25.25*throttle, IROS run 12);
+        # at 45 Hz one sample spans 22 ms with the same +-1 physics step of jitter,
+        # the per-sample rate scattered 0.6-1.9x (RMS 0.44, run 15) and the tire
+        # observer, fed that through a saturating slip curve, ran 0.4 m/s low on the
+        # straight: 0.5 m/s of car speed at the same target, 0.55 s a lap. 0.05 s
+        # picks the previous sample at 18 Hz (unchanged) and the third-previous at 45.
+        p('enc_rate_window_s', 0.05)
         p('cmd_delay_auto', True)
         p('cmd_delay_window_s', 6.0)
         p('cmd_delay_update_s', 2.0)
@@ -395,6 +441,11 @@ class PurePursuit(Node):
         self.max_steer = g('max_steer_rad')
         self.steer_gain = g('steering_gain')
         self.a_lat, self.v_min, self.v_max = g('a_lat_max'), g('v_min'), g('v_max')
+        self.warm_v = float(g('warmup_v_max'))
+        self.warm_d = float(g('warmup_dist_m'))
+        self._warm_dist = 0.0        # metres driven since the follower first moved
+        self._warm_t = None          # previous control tick, for that integral
+        self._warm_done = not (self.warm_v > 0.0 and self.warm_d > 0.0)
         self.hz = float(g('control_hz'))
         self.hz_auto = bool(g('control_hz_auto'))
         self.hz_min = float(g('control_hz_min'))
@@ -424,6 +475,7 @@ class PurePursuit(Node):
         self._delay_base = float(g('cmd_delay_s'))
         self.cmd_delay = self._delay_base
         self.slip_kp = float(g('slip_kp'))
+        self.enc_win = float(g('enc_rate_window_s'))
         self.delay_auto = bool(g('cmd_delay_auto'))
         self.delay_win = float(g('cmd_delay_window_s'))
         self.delay_every = float(g('cmd_delay_update_s'))
@@ -448,6 +500,11 @@ class PurePursuit(Node):
             raise RuntimeError(f"throttle_mode must be 'slip' or 'legacy', not {self.throttle_mode!r}")
         self.u_per_thr = float(g('u_per_throttle'))
         self.slip_accel, self.slip_brake = float(g('slip_accel')), float(g('slip_brake'))
+        self.slip_circle = float(g('slip_circle'))
+        self.accel_ff = float(g('accel_ff')) > 0.5
+        # mu is monotone on [0, S_PEAK]: tabulate it once for the inverse.
+        self._s_tab = np.linspace(0.0, TIRE_S_PEAK, 151)
+        self._mu_tab = np.array([self._mu(float(S)) for S in self._s_tab])
         self.u_launch = float(g('u_launch'))
         self.v_slip_den = float(g('v_slip_den'))
         self.imu_lever = float(g('imu_lever_arm'))
@@ -460,6 +517,7 @@ class PurePursuit(Node):
         # fused speed estimate
         self.v_est = 0.0                # IMU-integrated, pose-corrected car speed
         self.v_enc = 0.0                # wheel surface speed from the encoders
+        self._enc_win = {}              # side -> deque of (t, angle) spanning >= enc_win
         self.v_pose = float('nan')      # speed implied by the pose over pose_win
         self.yaw_rate = 0.0             # IMU gyro z, for latency compensation
         self._imu_t = None
@@ -557,6 +615,15 @@ class PurePursuit(Node):
             f'slip band [-{self.slip_brake:g}, +{self.slip_accel:g}]  u_launch {self.u_launch:g} m/s  '
             f'lookahead {self.ld_min:g}-{self.ld_max:g} m (k {self.ld_k:g})  '
             f'latency_comp {self.latency:g} s')
+        if self.slip_circle > 0.0 or self.accel_ff:
+            self.get_logger().info(
+                (f'slip band: circle {self.slip_circle:.2f} x sqrt(1 - (a_lat/{self.steer_a_lat_max:g})^2), '
+                 'replacing the fixed band above' if self.slip_circle > 0.0 else 'slip band: fixed')
+                + ('  |  plan-acceleration feedforward ON' if self.accel_ff else ''))
+        if not self._warm_done:
+            self.get_logger().info(
+                f'warmup cap: speed target held at {self.warm_v:.2f} m/s for the '
+                f'first {self.warm_d:.1f} m of driving, then released')
         if self.dev_lap:
             # RESTRICTED topics -- never enable this for an evaluation run.
             self.get_logger().warn('dev_lap_telemetry ON: subscribing to RESTRICTED lap topics')
@@ -623,8 +690,18 @@ class PurePursuit(Node):
             return
         dt = t - prev[1]
         if dt <= 1e-4 or dt > 0.5:
+            self._enc_win.pop(side, None)
             return   # stale or duplicate frame; a bad dt yields a garbage speed
-        self._enc_rate[side] = (ang - prev[0]) / dt * self.wheel_r
+        # Difference against the newest sample at least enc_win old, so the rate
+        # spans the same physics time at any loop rate (see enc_rate_window_s).
+        win = self._enc_win.setdefault(side, deque())
+        win.append((t, ang))
+        while len(win) > 2 and t - win[1][0] >= self.enc_win:
+            win.popleft()
+        t_old, a_old = win[0]
+        if t - t_old < self.enc_win:
+            t_old, a_old = prev[1], prev[0]              # window not filled yet: previous sample
+        self._enc_rate[side] = (ang - a_old) / (t - t_old) * self.wheel_r
         if side == 'l':
             self._note_tick(t)
         rates = [v for v in self._enc_rate.values() if v is not None]
@@ -830,6 +907,14 @@ class PurePursuit(Node):
         if msg.data and not self.ready:
             self.ready = True
             self.get_logger().info('localization converged, taking over')
+        elif not msg.data and self.ready:
+            # The bootstrap detected a wall reset and is re-localizing; it owns
+            # the actuators until it latches true again. Nothing is published
+            # from here meanwhile (the control tick returns on not ready).
+            self.ready = False
+            self.v_est = 0.0
+            self._pose_hist.clear()
+            self.get_logger().warn('localization lost after a reset: holding until it is re-confirmed')
 
     def _limit_accel(self, v_target):
         """Hold the speed TARGET down while the car is barely moving.
@@ -869,7 +954,7 @@ class PurePursuit(Node):
         self._v_cmd = min(v_target, self._v_cmd + a_allowed * dt)
         return self._v_cmd
 
-    def _throttle_slip(self, v_target, a_plan=0.0):
+    def _throttle_slip(self, v_target, a_plan=0.0, a_lat=0.0):
         """Command a WHEEL speed, bounded to the tire's peak-force slip band.
 
         The sim spins the wheel to u = u_per_throttle * throttle regardless of
@@ -911,8 +996,28 @@ class PurePursuit(Node):
         # 1.76x the speed error. Commanding u = v_t alone tracked the target 0.15
         # m/s low against legacy's 0.07 (run 5 vs run 4); the same gain, applied
         # to the error at landing time, closes that. The band still bounds the slip.
-        u = v_target + self.slip_kp * (v_target - v_land)
-        u = min(max(u, v_land - self.slip_brake * den), v_land + self.slip_accel * den)
+        if self.slip_circle > 0.0:
+            cap = self.steer_a_lat_max if self.steer_a_lat_max > 0.0 else 7.0
+            f = math.sqrt(max(0.0, 1.0 - (a_lat / cap) ** 2))
+            s_acc = s_brk = max(self.slip_circle * f, 0.02)
+        else:
+            s_acc, s_brk = self.slip_accel, self.slip_brake
+        if self.accel_ff and a_pred > 0.0:
+            # ACCELERATION ONLY. The slip that delivers the plan's (gated)
+            # acceleration at landing, gross of drag; the proportional term then
+            # corrects the lag. Fed forward on the BRAKE side too (ICRA run 18)
+            # it made the car track the plan's deceleration instead of its
+            # speed: a car entering a braking zone slightly slow no longer
+            # braked less and caught up, every apex came in 0.1 m/s lower, and
+            # the lap was 0.09 s slower; braking delivery did not improve (91 %
+            # either way). Accel delivery went 91 -> 98 %, so that half stays.
+            gross = a_pred + DRAG_LIN * v_land
+            mu_need = min(abs(gross) / G, 0.95 * TIRE_MU_PEAK)
+            s_ff = math.copysign(float(np.interp(mu_need, self._mu_tab, self._s_tab)), gross)
+            u = v_land + s_ff * den + self.slip_kp * (v_target - v_land)
+        else:
+            u = v_target + self.slip_kp * (v_target - v_land)
+        u = min(max(u, v_land - s_brk * den), v_land + s_acc * den)
         if v_target > v and u < self.u_launch:
             u = self.u_launch
         self.v_land = v_land
@@ -1230,8 +1335,26 @@ class PurePursuit(Node):
             v_target = float(np.clip(math.sqrt(self.a_lat / max(k_worst, 1e-3)),
                                      self.v_min, self.v_max))
 
+        # Warmup cap: hold the target down over the first warmup_dist_m of
+        # driving, measured by the tire observer (encoders, race-legal) rather
+        # than by the pose, which is the thing being protected.
+        if not self._warm_done:
+            if self._warm_t is not None:
+                dt_w = now - self._warm_t
+                if 0.0 < dt_w < 0.5:
+                    self._warm_dist += max(self.speed, 0.0) * dt_w
+            self._warm_t = now
+            if self._warm_dist >= self.warm_d:
+                self._warm_done = True
+                self.get_logger().info(
+                    f'warmup cap released after {self._warm_dist:.1f} m; '
+                    f'v_max back to {self.v_max:.2f} m/s')
+            else:
+                v_target = min(v_target, self.warm_v)
+
         if self.throttle_mode == 'slip':
-            throttle = self._throttle_slip(v_target, float(self.path_a[near]))
+            throttle = self._throttle_slip(v_target, float(self.path_a[near]),
+                                           max(self.speed, 0.0) ** 2 * abs(float(self.kappa[near])))
         else:
             v_target = self._limit_accel(v_target)
             err = v_target - self.speed

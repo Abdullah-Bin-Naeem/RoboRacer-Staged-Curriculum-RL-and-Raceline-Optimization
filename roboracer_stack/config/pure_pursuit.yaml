@@ -7,6 +7,16 @@
 
 pure_pursuit:
   ros__parameters:
+    # IROS 2026 PORT FROM multi-track (2026-09-17). The values below follow the
+    # run that multi-track validated on this map at a 45 Hz loop (run 18: 19
+    # clean laps, best 9.45 s), not this branch's earlier tuning:
+    #   control_hz_auto false, cmd_delay_tick_seed/floor false,
+    #   lookahead_delay_exp_fast 1.0, min_scale 0.7, lag_step 0.025
+    #                        -> the delay law and lookahead scale multi-track ran
+    #                           (correlator only, linear scale clamped 0.7-1.2)
+    #   v_max 8.5, target_lead_s 0.0, slip_kp 0.76 (was 1.0)
+    #   slip_circle 0.12, accel_ff 1.0 (slip_accel/brake unused while circle > 0)
+    #   warmup_v_max 4.0 over warmup_dist_m 19.0, enc_rate_window_s 0.05
 
     path_csv: ''            # set on the command line or in the launch file
     pose_topic: /autodrive/roboracer_1/odom   # RESTRICTED at race time; see below
@@ -16,7 +26,7 @@ pure_pursuit:
     # second frame and adds up to 25 ms of command staleness on top of the round
     # trip. Clamped to [min, max]: at 17.5 Hz the clamp holds it at the proven
     # 20.0, so nothing about the slow machine changes.
-    control_hz_auto: true
+    control_hz_auto: false
     control_hz_min: 20.0
     control_hz_max: 50.0
 
@@ -68,10 +78,10 @@ pure_pursuit:
     # the proven 2.2 m ran at 175 ms. More margin than the setting it replaces,
     # and the corner cut (kappa Ld^2 / 8) drops from 0.26 m to 0.11 m.
     # 1.0 restores the old proportional behaviour in both directions.
-    lookahead_delay_exp_fast: 0.5
+    lookahead_delay_exp_fast: 1.0
     # Floor and cap on the scale. 0.62 * 2.20 = 1.36 m, which still clears
     # lookahead_min 0.80 -- the node refuses to start if it does not.
-    lookahead_delay_min_scale: 0.62
+    lookahead_delay_min_scale: 0.7
     lookahead_delay_max_scale: 1.2
     # Derate the speed targets on a slow loop. The profile's lateral limit was
     # proven at a 175 ms round trip (runs 17 and 21, 17.3-17.5 Hz); the
@@ -126,7 +136,9 @@ pure_pursuit:
     # and raise it on the car until the back steps out, then back off ~20%.
     a_lat_max: 3.0
     v_min: 1.0
-    v_max: 8.0                 # matches V_MAX in the raceline notebook;
+    warmup_v_max: 4.0          # speed cap over the first warmup_dist_m (warmup lap, untimed)
+    warmup_dist_m: 19.0        # covers the 16 m start straight, releases at the hairpin-1 apex
+    v_max: 8.5                 # matches V_MAX in the raceline notebook;
                                # lower than the profile peak would clip it
     curvature_preview_m: 1.0   # curvature FALLBACK only (no v_mps column): brake for the
                                # worst corner within this distance
@@ -134,7 +146,7 @@ pure_pursuit:
                                # v * cmd_delay_s ahead (floor: this). It used to be the
                                # minimum over a 1 m preview, which reached corner speed a
                                # metre early at every entry: 0.55 s a lap, measured.
-    target_lead_s: 0.08        # extra preview for the speed target, on top of the measured
+    target_lead_s: 0.0        # extra preview for the speed target, on top of the measured
                                # delay. The car's deceleration follows the wheel as slip
                                # builds, and at the 7.0 rung the tire is at its limit in R1
                                # and the S entry: arriving at the profile speed runs wide,
@@ -200,10 +212,13 @@ pure_pursuit:
     # profile's 4.55 and under the 7.06 peak, encoders ~0.3 m/s high while it binds.
     slip_accel: 0.11
     slip_brake: 0.12
+    slip_circle: 0.12          # friction-circle band at zero a_lat; > 0 replaces slip_accel/brake
+    accel_ff: 1.0              # plan-acceleration feedforward, acceleration side only
     v_slip_den: 4.0            # PhysX minLongSlipDenominator, default 4 m/s
-    slip_kp: 1.0              # proportional lead on (v_target - v_land) inside the band;
+    slip_kp: 0.76              # proportional lead on (v_target - v_land) inside the band;
                                # 0.76 = 25.25 * throttle_kp, the legacy law's gain. Without
                                # it tire mode tracked the target 0.15 m/s low vs legacy's 0.07.
+    enc_rate_window_s: 0.05    # encoder rate spans >= this; needed above ~30 Hz
     cmd_delay_auto: true       # measure the delay online (throttle vs wheel-speed cross-
                                # correlation, 6 s window, every 2 s, 25 ms lag grid). The
                                # round trip is three sim frames: 170-175 ms at 17.5 Hz here,
@@ -215,7 +230,7 @@ pure_pursuit:
     # lookahead scale and the derate trigger. 5 ms is what the original
     # throttle-to-wheel regression used. 72 lags x a 6 s window every 2 s is a
     # few ms of numpy.
-    cmd_delay_lag_step_s: 0.005
+    cmd_delay_lag_step_s: 0.025
     cmd_delay_lag_max_s: 0.36
     # The round trip is a fixed number of SIM FRAMES, so the measured tick gives
     # it directly: 3 / 17.5 = 171 ms, 3 / 40 = 75 ms, 3 / 50 = 60 ms. This is
@@ -226,13 +241,13 @@ pure_pursuit:
     # blend needs ~20 s to get from 175 ms to 75 ms: on a 40 Hz machine that is
     # three laps driven on slow-machine lookahead, which on a timed run is most
     # of the run.
-    cmd_delay_tick_seed: true
+    cmd_delay_tick_seed: false
     # Floor the effective delay at frames / tick. The correlator needs ~10 s to
     # notice a collapse (6 s window, 2 s update, 0.3 blend); the tick notices in
     # half a second. This is what makes the derate below able to fire on a
     # mid-lap stall rather than a lap later. It only RAISES the delay and
     # releases as soon as the tick recovers.
-    cmd_delay_tick_floor: true
+    cmd_delay_tick_floor: false
     # Median window in FRAMES, not seconds: a time window keeps the fast tail in
     # the majority, so 0.5 s after 40 Hz collapses to 12 Hz a 1 s window still
     # reads 40 Hz. A count window flips 0.7 s into a collapse while a lone stall

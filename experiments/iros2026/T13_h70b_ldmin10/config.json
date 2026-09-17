@@ -1,0 +1,25 @@
+{
+  "id": "T13",
+  "name": "h70b_ldmin10",
+  "date": "2026-09-17",
+  "started": "2026-09-17T20:22:13",
+  "track": "iros2026",
+  "line": "raceline_tum_iqp_h7.0_a7.0b.csv",
+  "laps": 25,
+  "max_contacts": 2,
+  "hz_cap": "45",
+  "overrides": [
+    "control_hz:=45",
+    "warmup_v_max:=2.0",
+    "warmup_dist_m:=21.0",
+    "enc_rate_window_s:=0.10",
+    "lookahead_min:=1.0"
+  ],
+  "hypothesis": "Hairpin contacts come from late turn-in: with Ld pinned at lookahead_min 0.8 m, ~120 ms delay and the 3.2 rad/s steering rate, yaw builds after the path has already curved (T12 heading error -25 deg, T03 clean -4). lookahead_min 1.0 starts the arc earlier and biases the car inside, the side away from every hairpin contact so far",
+  "prediction": "0-1 contacts in 25 laps; hairpin worst outward < 0.3 m and inside cut < 0.25 m; mean 9.6-9.7",
+  "git_branch": "adil_iros",
+  "git_commit": "a9dd33c",
+  "git_dirty": false,
+  "verdict_short": "REJECTED: 1 timed lap 9.55, then hairpin-1 exit contact at 0.69 m wide with Ld 1.0, loc 8 cm",
+  "verdict": "Rejected. Timed lap 1 9.550; lap 2 hairpin 1 exit: e_lat -0.69 m at 2.5 m/s with lookahead 1.00, steering 0.67, achieved kappa 0.74-0.88 vs 0.9-1.0 path, localization 8 cm. Since T03, every run on this line's kappa-1.2 hairpins has hit a hairpin (planned 7.0, 6.5, 6.0; steer cap 7.8; accel_ff 0; Ld_min 1.0). Next: kappa-1.1 geometry (E05/E06, 0 % lock) with the teammates' longitudinal budget (T14)."
+}

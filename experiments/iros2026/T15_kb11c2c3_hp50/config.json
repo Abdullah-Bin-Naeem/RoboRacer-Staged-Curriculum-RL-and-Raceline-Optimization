@@ -19,6 +19,6 @@
   "git_branch": "adil_iros",
   "git_commit": "ad5490c",
   "git_dirty": false,
-  "verdict_short": "1 timed lap 10.30; hairpin-1 exit contact at steering lock (0.99), 0.48 wide, 2.2-2.5 m/s: kappa 1.1 at 5.0 m/s^2 is over the limit too",
+  "verdict_short": "1 timed lap 10.30; hairpin-1 exit contact at steering lock (0.99), 0.48 wide, 2.2-2.5 m/s: kappa 1.1 at 5.0 m/s^2 is over the limit too [CONFOUNDED: session loop decay, see T18]",
   "verdict": "One timed lap 10.302. Lap 2, hairpin 1 exit: steering at lock (0.99) at s 19.3, e_lat -0.48, speed 2.20-2.48 (plan 2.39-2.66), localization 7 cm, achieved kappa 0.65-0.79 against 0.92-0.70: over the limit at 5.0 m/s^2 even on kappa 1.1. The only hairpin setting clean on this laptop so far is 4.5 (E05/E06, 0 % lock over 24 laps). Next: same line, hairpins 4.5 (T16)."
 }

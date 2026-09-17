@@ -19,6 +19,6 @@
   "git_branch": "adil_iros",
   "git_commit": "ad5490c",
   "git_dirty": true,
-  "verdict_short": "Out-lap contact at the s-40 bend (same spot as T11) at 4.6 m/s, e_lat -0.18, loc 4-13 cm: that bend has no margin zone on this geometry",
+  "verdict_short": "Out-lap contact at the s-40 bend (same spot as T11) at 4.6 m/s, e_lat -0.18, loc 4-13 cm: that bend has no margin zone on this geometry [CONFOUNDED: session loop decay, see T18]",
   "verdict": "Out-lap, after the warmup release: contact at the bend before hairpin 2 ((3.7, 2.4) -> respawn (3.36, 2.10)) at 4.55-4.61 m/s, e_lat -0.17..-0.20 (right), localization 4-21 cm, steering small: the T11 spot. This geometry carries right margins at the C2 exit and the chevron lane only. Hairpins not reached at speed. Next: all three right-wall spots protected (T17)."
 }

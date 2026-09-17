@@ -11,3 +11,4 @@ __pycache__/
 
 # Run logs written by the entrypoint inside the container.
 *.log
+.venv-plot/

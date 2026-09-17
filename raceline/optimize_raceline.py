@@ -303,7 +303,7 @@ def apply_v_zones(vx, el, s, zones, lim: ProfileLimits, phys: SimPhysics = PHYS)
     v = np.asarray(vx, float).copy()
     ceiling = np.full(len(v), float(lim.v_max))
     for s0, s1, vc in zones:
-        ceiling[(s >= s0) & (s <= s1)] = vc
+        ceiling[((s >= s0) & (s <= s1)) if s0 <= s1 else ((s >= s0) | (s <= s1))] = vc   # s0 > s1 wraps
     v = np.minimum(v, ceiling)
     return enforce_long(v, el, lim.a_long, lim.a_long, phys)
 
@@ -483,7 +483,7 @@ def apply_margin_zones(x, y, wr, wl, zones):
     s = np.concatenate([[0.0], np.cumsum(seg)[:-1]])
     wr, wl = wr.copy(), wl.copy()
     for s0, s1, side, extra in zones:
-        m = (s >= s0) & (s <= s1)
+        m = ((s >= s0) & (s <= s1)) if s0 <= s1 else ((s >= s0) | (s <= s1))   # s0 > s1 wraps
         if side.upper().startswith('L'):
             wl[m] -= extra
         else:
@@ -836,7 +836,10 @@ def main(argv=None):
                 # planned past the tire's sustained limit, because understeer there
                 # runs wide into room (ICRA T3: 0.45 m outside the line, 0.41 measured).
                 # The follower's steer_a_lat_max must be raised to match or it clips it.
-                mu[(s_win >= s0) & (s_win <= s1)] = a_zone / rung
+                # s0 > s1 wraps past the start line (40:2 covers s 40..lap and 0..2); the
+                # plain and-mask was empty there, so the hairpin-2 zone never applied (runs 12-16)
+                inz = ((s_win >= s0) & (s_win <= s1)) if s0 <= s1 else ((s_win >= s0) | (s_win <= s1))
+                mu[inz] = a_zone / rung
         resweep = bool(vzones) or (a.a_brake is not None and abs(a.a_brake - a.a_long) > 1e-9)
         if resweep:
             # Solve at the highest ceiling any zone asks for, then impose the

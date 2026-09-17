@@ -139,6 +139,34 @@ def yaw_from_quat_xyzw(q):
     return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
 
+
+# How far "ahead" of the car a checkpoint may sit and still count as behind it.
+# The simulator always resets BACKWARD to a checkpoint already passed, but the
+# pose at the contact is projected onto the centreline to order it, and a car
+# cutting inside a tight corner projects SHORT of the progress it has really
+# made. Measured over the six contacts logged on IROS 2026 (runs 14, 19, 20)
+# the projection error runs -1.04 to +1.50 m, and every value in 1.05-1.35
+# picks the checkpoint the simulator actually used for all six; below 1.05 the
+# two hairpin-1 contacts pick the checkpoint 3 m too far back, above 1.35 the
+# contact after hairpin 1 picks the one ahead. 1.20 is the middle of that
+# window. tools/check_recovery_prior.py is the check. Picking wrong is not
+# fatal: the seed then fails its tolerance and the global search takes over.
+BACK_SLOP_M = 1.20
+
+
+def pick_back(s_last, cs, lap, slop=BACK_SLOP_M):
+    """Arc length from a checkpoint to the car along the lap, or None.
+
+    None means the centreline was unusable (a lap length of 0), which is worth
+    saying rather than dividing by: doing that killed this node on the first
+    reset of every run until 2026-09-17 (IROS run 20, 9 resets, none
+    recovered).
+    """
+    if not lap > 0.0:
+        return None
+    return (s_last - cs + slop) % lap - slop
+
+
 class LocalizationBootstrap(Node):
 
     def __init__(self):
@@ -190,7 +218,11 @@ class LocalizationBootstrap(Node):
         p('recover_max_attempts', 3)        # then the global search
         p('recover_global_timeout_s', 15.0)
         p('recover_creep_s', 1.0)           # roll gently after confirmation so AMCL tightens on motion
-        p('reset_yaw_step_deg', 20.0)       # an IMU heading step this size in one tick is a reset
+        p('reset_yaw_step_deg', 10.0)       # an IMU heading step this size in one tick, after the
+        # yaw-rate term, is a reset. 20 missed a 12 deg reset at 45 Hz (IROS run 14):
+        # the residual after subtracting rate*dt is under 2 deg at any tick, the encoder
+        # did NOT collapse through either reset in that run (it reads the command), so
+        # the heading step is the only signature that fires there.
         p('reset_speed_from', 1.0)          # encoder speed collapsing from >= this ...
         p('reset_speed_to', 0.3)            # ... to <= this between two samples is a reset
         p('recover_use_checkpoints', True)  # False forces the no-data tier, to test it where truth exists
@@ -757,13 +789,40 @@ class LocalizationBootstrap(Node):
             return None
         try:
             c = np.genfromtxt(path, delimiter=',', comments='#')
-            return c[:, 0], c[:, 1], c[:, 2]           # s, x, y
+            s, x, y = c[:, 0], c[:, 1], c[:, 2]
         except Exception:                                # noqa: BLE001
             return None
+        # The extractor does not orient the ring: on IROS 2026 the file's s
+        # DECREASES along the lap (spawn at s 44.4, hairpin 1 at 25), on ICRA
+        # and Porto it increases. "Behind the car" below is (s_last - cs), so
+        # a reversed file picks the checkpoint AHEAD. Orient against the spawn
+        # heading: if the tangent at the spawn opposes it, run s the other way.
+        try:
+            sx, sy, syaw = (float(v) for v in frames.spawn(track))
+            j = int(np.argmin((x - sx) ** 2 + (y - sy) ** 2))
+            k = (j + 3) % len(s)
+            tangent = math.atan2(y[k] - y[j], x[k] - x[j])
+            if math.cos(tangent - syaw) < 0.0:
+                # Reverse the VALUES and the ORDER together. Mirroring the
+                # values alone leaves s descending, so s[-1] is 0 and every
+                # lap length taken from it is 0: that made the first reset on
+                # IROS 2026 kill this node with a ZeroDivisionError (run 20,
+                # 9 resets, none recovered). _lap_length below no longer
+                # depends on the ordering either.
+                s = (s[-1] - s)[::-1]
+                x, y = x[::-1], y[::-1]
+                self.get_logger().info('centreline runs against the lap; arc length reversed for checkpoint ordering')
+        except Exception:                                # noqa: BLE001
+            pass
+        return s, x, y
 
     def _s_of(self, x, y):
         s, cx, cy = self._cl
         return float(s[int(np.argmin((cx - x) ** 2 + (cy - y) ** 2))])
+
+    def _lap_length(self):
+        """Lap length from the centreline, whichever way its s runs."""
+        return float(np.max(self._cl[0])) if self._cl is not None else 0.0
 
     def _flag_reset(self, why):
         if not self.recover or self.rec_state in ('off', 'flagged', 'seed', 'global'):
@@ -785,9 +844,16 @@ class LocalizationBootstrap(Node):
                 pass                                              # forced to the no-data tier
             elif self._cl is not None and self._cp_s:
                 # Arc length behind the last pose along the centreline, wrapping.
-                lap = float(self._cl[0][-1]); s_last = self._s_of(lg[0], lg[1])
+                # Up to 1 m "ahead" is allowed: a car cutting inside a hairpin
+                # projects onto the centreline short of where it is along the
+                # arc (IROS run 14: the contact projected 0.8 m short of the
+                # checkpoint the simulator reset it to, and the prior would
+                # have been the one 3.3 m further back).
+                lap = self._lap_length(); s_last = self._s_of(lg[0], lg[1])
                 for (cx, cy, _), cs in zip(self.checkpoints, self._cp_s):
-                    back = (s_last - cs) % lap
+                    back = pick_back(s_last, cs, lap)
+                    if back is None:
+                        continue                      # unusable centreline
                     if back <= 25.0 and (best is None or back < best[0]):
                         best = (back, cx, cy)
             else:

@@ -43,13 +43,11 @@ PARAMS = dict(
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('map_yaml'); ap.add_argument('-o', '--out'); ap.add_argument('--old', help='previous raceline CSV to overlay')
-    ap.add_argument('--plot', action='store_true'); ap.add_argument('--ay', type=float); ap.add_argument('--margin', type=float)
-    ap.add_argument('--kappa-bound', type=float, help='curvature bound for the QP (default PARAMS kappa_bound); '
-                    'the hairpins sit on it, and at steering lock the car turns far less than the geometric 1.78 above ~1.8 m/s')
+    ap.add_argument('--plot', action='store_true'); ap.add_argument('--kappa-bound', type=float); ap.add_argument('--ay', type=float); ap.add_argument('--margin', type=float)
     ap.add_argument('--spawn', type=float, nargs=3, metavar=('X', 'Y', 'YAW'), default=(0.802, 3.158, -1.5708),
                     help='spawn pose (m, m, rad) — the line is oriented so it runs in the spawn heading')
     ap.add_argument('--margin-zones', default='', help='extra wall margin in lap-distance zones, "s0:s1:extra[:side],..." '
-                    '(m, s from the seam mid-straight; side L, R or B=both, default B)')
+                    '(m, s from the start line = spawn; s0 > s1 wraps; side L, R or B=both, default B)')
     a = ap.parse_args()
     zones = []
     for z in a.margin_zones.split(','):
@@ -64,6 +62,15 @@ def main():
     # ---------- map ----------
     m, img = load(a.map_yaml); res = float(m['resolution']); ox, oy = map(float, m['origin'][:2]); H, W = img.shape
     free = img >= 250
+    # stray non-free specks inside the corridor (an 'unknown' pixel or two left by the mapper) would act as
+    # obstacles for the distance transform and bend the ridge around nothing: drop islands under 40 px (0.025 m²)
+    lab, n = ndimage.label(~free); sizes = ndimage.sum(~free, lab, range(1, n + 1))
+    specks = np.isin(lab, [i + 1 for i, sz in enumerate(sizes) if sz < 40])
+    if specks.any():
+        rr, cc = np.nonzero(specks)
+        print(f'[0] removed {int(specks.sum())} stray non-free pixels inside free space at ' +
+              ', '.join(f'({ox + (c + 0.5) * res:.2f}, {oy + (H - r - 0.5) * res:.2f})' for r, c in list(zip(rr, cc))[:6]))
+        free = free | specks
     opened = ndimage.binary_opening(free, structure=np.ones((P['open_px'], P['open_px']), bool))
     D = ndimage.distance_transform_edt(opened) * res
     def Dat(x, y):
@@ -101,16 +108,10 @@ def main():
         C = C[::-1].copy(); k, psi = frame(C, ds); wl, wr = wr, wl
     print(f'    direction vs spawn yaw {np.degrees(syaw):+.0f} deg: cos = {dot:+.2f} -> {"REVERSED" if dot < 0 else "ok"}; '
           f'line passes {np.hypot(C[i0,0]-sx, C[i0,1]-sy):.2f} m from spawn')
-    # seam: put s=0 in the middle of the longest straight (never at a hairpin)
-    kw, _ = frame(sg(C, 41), ds); small = np.abs(kw) < 0.12; best = (0, 0); i = 0; nC = len(C)
-    while i < nC:
-        if small[i]:
-            j = i
-            while j < nC and small[j]: j += 1
-            if j - i > best[1] - best[0]: best = (i, j)
-            i = j
-        else: i += 1
-    C = np.roll(C, -((best[0] + best[1]) // 2), axis=0)
+    # seam: s = 0 at the point nearest the spawn (the start line), so zone numbers and the follower's s agree
+    # from one regeneration to the next
+    i0 = int(np.argmin(np.hypot(C[:, 0] - sx, C[:, 1] - sy)))
+    C = np.roll(C, -i0, axis=0)
 
     # ---------- 2. reference: Gaussian-smoothed medial axis, widths capped so Frenet normals cannot cross ----------
     def gauss_closed(Pn, sigma_m):
@@ -146,9 +147,11 @@ def main():
         if zones:  # extra margin in zones where the follower runs wide (both walls pulled in by `extra`)
             s_ref = np.concatenate([[0], np.cumsum(np.hypot(*np.diff(Pn, axis=0).T))])
             for s0, s1, extra, side in zones:
-                z = (s_ref >= s0) & (s_ref <= s1)
-                if side in 'LB': wl_[z] = np.maximum(wl_[z] - extra, w_veh / 2 + 0.03)
-                if side in 'RB': wr_[z] = np.maximum(wr_[z] - extra, w_veh / 2 + 0.03)
+                z = ((s_ref >= s0) & (s_ref <= s1)) if s0 <= s1 else ((s_ref >= s0) | (s_ref <= s1))   # s0 > s1 wraps past the start line
+                # a one-sided margin may push the window past the reference point (that is the point: it moves the
+                # line towards the other wall); it only has to leave a window the car fits in: wl + wr >= w_veh
+                if side in 'LB': wl_[z] = np.maximum(wl_[z] - extra, w_veh - wr_[z] + 0.03)
+                if side in 'RB': wr_[z] = np.maximum(wr_[z] - extra, w_veh - wl_[z] + 0.03)
         rt = np.c_[Pn, wr_, wl_]
         return rt, nv, Mm, sl, ps, kp, dk
     w_veh = P['veh_width'] + 2 * P['margin']

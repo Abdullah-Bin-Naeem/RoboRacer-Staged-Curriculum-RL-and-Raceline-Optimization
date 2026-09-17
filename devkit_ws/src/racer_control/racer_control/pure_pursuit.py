@@ -63,8 +63,8 @@ DEVELOPMENT tool -- for validating a path and a controller offline. Point
 `pose_topic` at an online-SLAM or particle-filter pose to make it raceable.
 """
 
+import collections
 import math
-from collections import deque
 
 import numpy as np
 import rclpy
@@ -120,16 +120,6 @@ class PurePursuit(Node):
         p('path_csv', '')
         p('pose_topic', f'{NS}/odom')          # or an AMCL PoseWithCovarianceStamped
         p('control_hz', 20.0)
-        # Adaptive loop (ported from 472d782, Usman, iros_compete_usman), every
-        # switch OFF by default so the ported code is bit-identical to the
-        # validated follower until an experiment turns a piece on. Floats, not
-        # bools, because launch overrides arrive float-cast (as accel_ff does).
-        # control_hz_auto 1: follow the simulator tick (median left-encoder
-        # frame gap) within [control_hz_min, control_hz_max]; a fixed 20 Hz
-        # drops every second frame of a 40-50 Hz evaluation loop.
-        p('control_hz_auto', 0.0)
-        p('control_hz_min', 20.0)
-        p('control_hz_max', 50.0)
         # Pose arrives in /odom's frame, which the devkit calls 'world'.
         p('viz_frame', 'world')
 
@@ -158,16 +148,23 @@ class PurePursuit(Node):
         p('lookahead_k', 0.35)                 # Ld = k * speed, then clamped
         p('lookahead_curv_gain', 0.67)         # Ld /= (1 + gain * max |kappa| within Ld); 0 = off
         p('steer_a_lat_max', 7.0)              # cap |kappa_cmd| at this / v^2 [m/s^2]; 0 = off
+        # Cap the steering EXCESS over the path's own kinematic steering angle. The
+        # sideways force peaks at ~0.6 deg of front slip; the slip angle is roughly
+        # (steer angle - atan(L * kappa_actual)), so what saturates the tyre is not
+        # a_lat but how far the command sits past the path's curvature. Measured
+        # iros2026: mid corners at steer 0.4 (slip ~0) hold 7 m/s^2; hairpin exits
+        # at steer 0.72 (slip ~7.5 deg) get 4.5 and run 0.4-0.5 m wide. A flat
+        # steer_a_lat_max cannot express that (5.0 fixed the hairpins and lost the
+        # 6 m/s right-hander). 0.06 rad = 3.4 deg of excess. 0 = off.
+        p('steer_excess_rad', 0.0)
+        # What the excess is measured against: 'gyro' = the turn the car is ACTUALLY
+        # making now, atan(L * yaw_rate / v) -- a real slip-angle limiter, the
+        # command may only lead the car's own turning by the excess, so the tyre is
+        # never asked past its peak; 'path' = the path's curvature at the lookahead
+        # point, a plain feed-forward bound.
+        p('steer_excess_ref', 'gyro')
         p('lookahead_sag_frac', 0.5)           # chord sagitta <= frac * inside margin; 0 = off
         p('lookahead_delay_ref', 0.175)        # k and max scale by cmd_delay / this; 0 = off
-        # Scale law BELOW the reference (a faster loop): scale = (delay/ref)^exp,
-        # clamped to [min_scale, max_scale]. Defaults 1.0 / 0.7 / 1.2 reproduce the
-        # validated linear law exactly. 472d782 proposes 0.5 / 0.62: at 70 ms the
-        # linear law sits on its 0.7 floor (Ld_max 1.54 m), sqrt gives 0.63 (1.39 m).
-        # Above the reference the law stays linear either way.
-        p('lookahead_delay_exp_fast', 1.0)
-        p('lookahead_delay_min_scale', 0.7)
-        p('lookahead_delay_max_scale', 1.2)
         # ---- derating on a slow loop ------------------------------------
         # The profile's lateral limit was proven on a 175 ms round trip. A slower
         # machine (the evaluation box is unknown; this one decayed from 17.3 to
@@ -191,6 +188,27 @@ class PurePursuit(Node):
         p('a_lat_max', 3.0)
         p('v_min', 1.0)
         p('v_max', 4.0)
+        # ---- warmup speed cap ----------------------------------------
+        # Cap the speed TARGET over the first warmup_dist_m of driving
+        # (0 = off). The competition's first lap is a warmup and the timer
+        # starts after it, so this costs no race time.
+        #
+        # Why it is needed: the encoders report the throttle COMMAND, so
+        # dead reckoning over-reads distance while the wheel slips, by 5 %
+        # under hard acceleration and 2 % over a lap. A long straight gives
+        # AMCL almost no along-track correction (its walls are parallel to
+        # the error), so that over-read simply accumulates. Measured on IROS
+        # 2026, whose spawn is at the top of a 16 m straight: from the spawn
+        # the along-track error grows monotonically with distance and peaks
+        # at the hairpin-1 braking point, +0.43 m (run 13), +0.58 (run 3),
+        # +1.01 (run 14, which then hit). Starting the same stack mid-track
+        # instead, so the car meets corners before the straight, it stays
+        # under 0.10 m and the straight later in the run costs only +0.32
+        # (run 18). Corners are what makes the along-track direction
+        # observable; the cap buys the filter metres of scan updates and
+        # gentler acceleration until it has seen one.
+        p('warmup_v_max', 0.0)
+        p('warmup_dist_m', 0.0)
         # ---- speed source ---------------------------------------------
         # 'tire' (default), 'fused' or 'encoder'. See the module docstring: the
         # encoder is the throttle echo in this simulator, so 'tire' runs the
@@ -281,34 +299,17 @@ class PurePursuit(Node):
         # wheel speed) pairs are cross-correlated at lags 0..0.35 s and the best
         # lag is low-pass blended into cmd_delay_s. Needs throttle to vary, which
         # any lap provides. Off = the fixed value above.
+        # Encoder rate over at least this much time. One sample at 18 Hz spans 55 ms
+        # and the rate was clean (RMS 0.22 m/s against 25.25*throttle, IROS run 12);
+        # at 45 Hz one sample spans 22 ms with the same +-1 physics step of jitter,
+        # the per-sample rate scattered 0.6-1.9x (RMS 0.44, run 15) and the tire
+        # observer, fed that through a saturating slip curve, ran 0.4 m/s low on the
+        # straight: 0.5 m/s of car speed at the same target, 0.55 s a lap. 0.05 s
+        # picks the previous sample at 18 Hz (unchanged) and the third-previous at 45.
+        p('enc_rate_window_s', 0.05)
         p('cmd_delay_auto', True)
         p('cmd_delay_window_s', 6.0)
         p('cmd_delay_update_s', 2.0)
-        # Cross-correlation lag grid. 25 ms is 7 % of a 175 ms round trip but
-        # ~35 % of the ~70 ms at 45 Hz; 472d782 uses 5 ms.
-        # Differentiate the wheel angle over this TIME WINDOW instead of message
-        # to message (ported from 389e561, adil-icra-longitudinal). 0 = the old
-        # per-message behaviour, bit-identical. The bridge stamps are its publish
-        # times, not the simulator's; at 45 Hz with the nodelay shim the per-frame
-        # gap is ~22 ms and its jitter is a large fraction of it, so v_enc swung
-        # 2.8 <-> 5.4 m/s at a steady 3.9 (E02), the tire observer read 0.7-1.0
-        # m/s high through the C1 braking zone, and the slip band, anchored on
-        # that estimate, could not brake: contact at 3.9 m/s against a 1.9 plan.
-        # At ~18 Hz a 0.05 s window spans one message, so it is a no-op there.
-        p('enc_window_s', 0.0)
-        p('cmd_delay_lag_step_s', 0.025)
-        p('cmd_delay_lag_max_s', 0.35)
-        # The round trip is a fixed number of simulator FRAMES (3), so the tick
-        # gives it directly. tick_seed 1: seed the delay from the first full
-        # window of frames instead of walking from cmd_delay_s for ~20 s.
-        # tick_floor 1: never let the effective delay fall below frames/tick,
-        # which reacts to a loop collapse in under a second (the correlator
-        # needs ~10 s). The floor releases when the tick recovers.
-        p('cmd_delay_frames', 3.0)
-        p('cmd_delay_tick_seed', 0.0)
-        p('cmd_delay_tick_floor', 0.0)
-        p('cmd_delay_tick_frames', 16.0)
-        p('cmd_delay_max_s', 0.35)
         # Proportional gain on (v_target - v_land) added to the wheel command inside
         # the band; 0.76 = 25.25 * throttle_kp, the legacy law's effective gain.
         p('slip_kp', 0.76)
@@ -392,6 +393,8 @@ class PurePursuit(Node):
         self.ld_min, self.ld_max, self.ld_k = g('lookahead_min'), g('lookahead_max'), g('lookahead_k')
         self.ld_curv_gain = float(g('lookahead_curv_gain'))
         self.steer_a_lat_max = float(g('steer_a_lat_max'))
+        self.steer_excess_rad = float(g('steer_excess_rad'))
+        self.steer_excess_ref = str(g('steer_excess_ref'))
         self.ld_sag_frac = float(g('lookahead_sag_frac'))
         self.ld_delay_ref = float(g('lookahead_delay_ref'))
         self.derate_from = float(g('derate_delay_from'))
@@ -401,14 +404,12 @@ class PurePursuit(Node):
         self.max_steer = g('max_steer_rad')
         self.steer_gain = g('steering_gain')
         self.a_lat, self.v_min, self.v_max = g('a_lat_max'), g('v_min'), g('v_max')
+        self.warm_v = float(g('warmup_v_max'))
+        self.warm_d = float(g('warmup_dist_m'))
+        self._warm_dist = 0.0        # metres driven since the follower first moved
+        self._warm_t = None          # previous control tick, for that integral
+        self._warm_done = not (self.warm_v > 0.0 and self.warm_d > 0.0)
         self.hz = float(g('control_hz'))
-        self.hz_auto = float(g('control_hz_auto')) > 0.5
-        self.hz_min = float(g('control_hz_min'))
-        self.hz_max = float(g('control_hz_max'))
-        self._control_timer = None
-        self.ld_delay_exp = float(g('lookahead_delay_exp_fast'))
-        self.ld_scale_min = float(g('lookahead_delay_min_scale'))
-        self.ld_scale_max = float(g('lookahead_delay_max_scale'))
         self.a_long_launch = float(g('a_long_launch'))
         self.a_long_launch_v = float(g('a_long_launch_v'))
         self._v_cmd = 0.0               # rate-limited speed target, m/s
@@ -428,24 +429,9 @@ class PurePursuit(Node):
         if self.speed_source not in ('tire', 'fused', 'encoder'):
             raise RuntimeError(f"speed_source must be 'tire', 'fused' or 'encoder', not {self.speed_source!r}")
         self.tire_m = float(g('tire_rise_slope'))
-        # _delay_base is what the correlator estimates (or the fixed value);
-        # self.cmd_delay is the EFFECTIVE delay every consumer reads, recomputed
-        # each cycle as max(base, tick-implied) when the tick floor is on.
-        self._delay_base = float(g('cmd_delay_s'))
-        self.cmd_delay = self._delay_base
-        self.delay_lag_step = float(g('cmd_delay_lag_step_s'))
-        self.enc_window_s = float(g('enc_window_s'))
-        self._enc_win = {}              # side -> [(t, angle)] inside the window
-        self.delay_lag_max = float(g('cmd_delay_lag_max_s'))
-        self.delay_frames = float(g('cmd_delay_frames'))
-        self.delay_tick_seed = float(g('cmd_delay_tick_seed')) > 0.5
-        self.delay_tick_floor = float(g('cmd_delay_tick_floor')) > 0.5
-        self.tick_frames = max(4, int(float(g('cmd_delay_tick_frames'))))
-        self.delay_max = float(g('cmd_delay_max_s'))
-        self.tick_hz = float('nan')     # measured simulator tick
-        self._tick_t = deque()          # last tick_frames+1 frame stamps
-        self._delay_seeded = False
+        self.cmd_delay = float(g('cmd_delay_s'))
         self.slip_kp = float(g('slip_kp'))
+        self.enc_win = float(g('enc_rate_window_s'))
         self.delay_auto = bool(g('cmd_delay_auto'))
         self.delay_win = float(g('cmd_delay_window_s'))
         self.delay_every = float(g('cmd_delay_update_s'))
@@ -477,6 +463,7 @@ class PurePursuit(Node):
         # fused speed estimate
         self.v_est = 0.0                # IMU-integrated, pose-corrected car speed
         self.v_enc = 0.0                # wheel surface speed from the encoders
+        self._enc_win = {}              # side -> deque of (t, angle) spanning >= enc_win
         self.v_pose = float('nan')      # speed implied by the pose over pose_win
         self.yaw_rate = 0.0             # IMU gyro z, for latency compensation
         self.steer_angle = 0.0          # last commanded steer [rad], for the 4-wheel observer
@@ -566,6 +553,11 @@ class PurePursuit(Node):
         else:
             self.get_logger().info(f'steering on {self.pose_topic}')
 
+        if not self._warm_done:
+            self.get_logger().info(
+                f'warmup cap: speed target held at {self.warm_v:.2f} m/s for the '
+                f'first {self.warm_d:.1f} m of driving, then released')
+
         if self.using_truth:
             self.create_subscription(Odometry, self.bootstrap_topic,
                                      self._cb_truth, QOS)
@@ -608,9 +600,7 @@ class PurePursuit(Node):
         self.pub_target = self.create_publisher(Marker, '~/lookahead', 1)
         self.pub_status = self.create_publisher(Float32MultiArray, '~/status', 1)
 
-        self._control_timer = self.create_timer(1.0 / self.hz, self._control)
-        if self.hz_auto:
-            self.create_timer(1.0, self._retune_control_timer)
+        self.create_timer(1.0 / g('control_hz'), self._control)
         self.create_timer(2.0, self._publish_path)
 
     # ---- callbacks -------------------------------------------------------
@@ -655,19 +645,18 @@ class PurePursuit(Node):
             return
         dt = t - prev[1]
         if dt <= 1e-4 or dt > 0.5:
+            self._enc_win.pop(side, None)
             return   # stale or duplicate frame; a bad dt yields a garbage speed
-        if self.enc_window_s > 0.0:
-            # Angle travelled over the window / time it took: both are right
-            # however unevenly the messages were stamped (see enc_window_s).
-            hist = self._enc_win.setdefault(side, [])
-            hist.append((t, ang))
-            while len(hist) > 2 and t - hist[1][0] >= self.enc_window_s:
-                hist.pop(0)
-            self._enc_rate[side] = (ang - hist[0][1]) / max(t - hist[0][0], dt) * self.wheel_r
-        else:
-            self._enc_rate[side] = (ang - prev[0]) / dt * self.wheel_r
-        if side == 'l':
-            self._note_tick(t)
+        # Difference against the newest sample at least enc_win old, so the rate
+        # spans the same physics time at any loop rate (see enc_rate_window_s).
+        win = self._enc_win.setdefault(side, collections.deque())
+        win.append((t, ang))
+        while len(win) > 2 and t - win[1][0] >= self.enc_win:
+            win.popleft()
+        t_old, a_old = win[0]
+        if t - t_old < self.enc_win:
+            t_old, a_old = prev[1], prev[0]              # window not filled yet: previous sample
+        self._enc_rate[side] = (ang - a_old) / (t - t_old) * self.wheel_r
         rates = [v for v in self._enc_rate.values() if v is not None]
         if rates:
             self.v_enc = float(np.mean(rates))
@@ -1002,67 +991,6 @@ class PurePursuit(Node):
         self.u_cmd = u
         return float(np.clip(u / self.u_per_thr, 0.0, self.thr_max))
 
-    def _note_tick(self, t):
-        """One simulator frame arrived (the bridge publishes every topic once per
-        frame, so a left-encoder message IS a frame). Median gap over a count
-        window: one stall does not move it, a sustained collapse does."""
-        if self._tick_t and t <= self._tick_t[-1]:
-            return
-        self._tick_t.append(t)
-        while len(self._tick_t) > self.tick_frames + 1:
-            self._tick_t.popleft()
-        if len(self._tick_t) < 4:
-            return
-        gaps = sorted(b - a for a, b in zip(self._tick_t, list(self._tick_t)[1:]))
-        med = gaps[len(gaps) // 2]
-        if med > 1e-4:
-            self.tick_hz = 1.0 / med
-
-    def _tick_delay(self, now=None):
-        """Round trip implied by the tick (frames / tick), NaN before one is known.
-        With `now`, silence since the last frame counts as the gap when larger,
-        so a freeze is visible while it is still happening."""
-        if self.tick_hz != self.tick_hz or self.tick_hz <= 0.0:
-            return float('nan')
-        gap = 1.0 / self.tick_hz
-        if now is not None and self._tick_t:
-            gap = max(gap, now - self._tick_t[-1])
-        return min(self.delay_frames * gap, self.delay_max)
-
-    def _apply_tick_delay(self, now):
-        """Seed once from a full window (median only), then floor every cycle."""
-        d = self._tick_delay(now)
-        if d != d:
-            return
-        if self.delay_tick_seed and not self._delay_seeded and len(self._tick_t) > self.tick_frames:
-            self._delay_seeded = True
-            self._delay_base = self._tick_delay()
-            self.get_logger().info(
-                f'cmd_delay seeded from a {self.tick_hz:.1f} Hz tick: {self._delay_base * 1e3:.0f} ms '
-                f'({self.delay_frames:.0f} frames), lookahead scale {self._delay_scale(self._delay_base):.2f}')
-        self.cmd_delay = max(self._delay_base, d) if self.delay_tick_floor else self._delay_base
-
-    def _delay_scale(self, delay):
-        """Lookahead scale for a round trip: linear above the reference, (ratio)^exp below."""
-        if self.ld_delay_ref <= 0.0:
-            return 1.0
-        r = delay / self.ld_delay_ref
-        s = r if r >= 1.0 else r ** self.ld_delay_exp
-        return max(self.ld_scale_min, min(self.ld_scale_max, s))
-
-    def _retune_control_timer(self):
-        """Track the tick with the control rate, 10 % deadband, from its own 1 s timer."""
-        if self.tick_hz != self.tick_hz:
-            return
-        target = min(self.hz_max, max(self.hz_min, self.tick_hz))
-        if abs(target - self.hz) <= 0.1 * self.hz:
-            return
-        old, self.hz = self.hz, target
-        if self._control_timer is not None:
-            self.destroy_timer(self._control_timer)
-        self._control_timer = self.create_timer(1.0 / self.hz, self._control)
-        self.get_logger().info(f'control_hz {old:.1f} -> {self.hz:.1f} (tick {self.tick_hz:.1f} Hz)')
-
     def _update_delay(self, now):
         """Cross-correlate published throttle against measured wheel speed.
 
@@ -1085,13 +1013,11 @@ class PurePursuit(Node):
         te = np.array([p[0] for p in self._enc_hist]); ve = np.array([p[1] for p in self._enc_hist])
         if ut.std() < 0.3:                          # throttle barely moved: nothing to correlate
             return
-        lags = np.arange(0.0, self.delay_lag_max + 1e-9, self.delay_lag_step)
+        lags = np.arange(0.0, 0.36, 0.025)
         rms = [math.sqrt(np.mean((ve - np.interp(te - lag, tt, ut)) ** 2)) for lag in lags]
         best = float(lags[int(np.argmin(rms))])
         self.delay_meas = best
-        self._delay_base += 0.3 * (best - self._delay_base)
-        if not self.delay_tick_floor:
-            self.cmd_delay = self._delay_base
+        self.cmd_delay += 0.3 * (best - self.cmd_delay)
 
     def _publish_status(self, values):
         m = Float32MultiArray()
@@ -1103,8 +1029,6 @@ class PurePursuit(Node):
             return
 
         now = self.get_clock().now().nanoseconds * 1e-9
-        if self.delay_tick_seed or self.delay_tick_floor:
-            self._apply_tick_delay(now)
         pose = self.pose
         if self.use_tf_pose:
             tf_pose = self._pose_from_tf()
@@ -1171,9 +1095,9 @@ class PurePursuit(Node):
         # gave a 2.9 m lookahead whose
         # lateral gain (2/Ld^2) was too soft to catch a 0.1 m drift with 5 deg of
         # heading before a wall 0.33 m away, twice, on the straight after R1.
-        # Below the reference the exponent and floor are parameters (see
-        # lookahead_delay_exp_fast); the defaults are this law unchanged.
-        d_scale = self._delay_scale(self.cmd_delay)
+        d_scale = 1.0
+        if self.ld_delay_ref > 0.0:
+            d_scale = max(0.7, min(1.2, self.cmd_delay / self.ld_delay_ref))
         ld = float(np.clip(self.ld_k * d_scale * abs(self.speed), self.ld_min, self.ld_max * d_scale))
         # Shorten the lookahead where the path AHEAD curves. Pure pursuit aims at
         # the chord to the lookahead point, so on corner entry it cuts inside by
@@ -1234,6 +1158,16 @@ class PurePursuit(Node):
             k_cap = self.steer_a_lat_max / (self.speed ** 2)
             kappa_cmd = max(-k_cap, min(k_cap, kappa_cmd))
         delta = math.atan(kappa_cmd * self.wheelbase)          # bicycle model
+        if self.steer_excess_rad > 0.0:
+            # feed-forward angle from the path curvature at the lookahead point (same
+            # sign convention as kappa_cmd: + left), command may sit at most
+            # steer_excess_rad either side of it
+            if self.steer_excess_ref == 'gyro' and self.speed > 0.8:
+                k_ref = self.yaw_rate / self.speed
+            else:
+                k_ref = self.kappa[idx]
+            delta_ref = math.atan(k_ref * self.wheelbase)
+            delta = max(delta_ref - self.steer_excess_rad, min(delta_ref + self.steer_excess_rad, delta))
         steering = float(np.clip(self.steer_gain * delta / self.max_steer, -1.0, 1.0))
         self.steer_angle = steering * self.max_steer
 
@@ -1268,6 +1202,23 @@ class PurePursuit(Node):
             k_worst = max(abs(self.kappa[i]) for i in window)
             v_target = float(np.clip(math.sqrt(self.a_lat / max(k_worst, 1e-3)),
                                      self.v_min, self.v_max))
+
+        # Warmup cap: hold the target down over the first warmup_dist_m of
+        # driving, measured by the tire observer (encoders, race-legal) rather
+        # than by the pose, which is the thing being protected.
+        if not self._warm_done:
+            if self._warm_t is not None:
+                dt_w = now - self._warm_t
+                if 0.0 < dt_w < 0.5:
+                    self._warm_dist += max(self.speed, 0.0) * dt_w
+            self._warm_t = now
+            if self._warm_dist >= self.warm_d:
+                self._warm_done = True
+                self.get_logger().info(
+                    f'warmup cap released after {self._warm_dist:.1f} m; '
+                    f'v_max back to {self.v_max:.2f} m/s')
+            else:
+                v_target = min(v_target, self.warm_v)
 
         if self.throttle_mode == 'slip':
             throttle = self._throttle_slip(v_target, float(self.path_a[near]),

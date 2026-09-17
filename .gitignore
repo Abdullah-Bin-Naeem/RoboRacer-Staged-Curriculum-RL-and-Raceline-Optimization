@@ -53,3 +53,4 @@ events.out.tfevents.*
 /.posegraph
 /.data
 tools/libnodelay.so
+runs_docker/

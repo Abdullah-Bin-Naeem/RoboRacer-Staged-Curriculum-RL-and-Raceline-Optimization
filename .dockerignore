@@ -1,0 +1,17 @@
+# The Dockerfile copies only devkit_ws/src, raceline, tools and ros_env.sh;
+# everything else stays out of the build context.
+*
+!devkit_ws/src
+!raceline
+!tools
+!ros_env.sh
+!docker/entrypoint.sh
+
+# colcon artefacts and caches inside the copied directories
+**/build/
+**/install/
+**/log/
+**/__pycache__/
+**/*.pyc
+**/*.egg-info/
+tools/libnodelay.so

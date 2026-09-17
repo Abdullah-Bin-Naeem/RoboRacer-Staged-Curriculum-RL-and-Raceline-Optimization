@@ -1,5 +1,7 @@
 # RoboRacer — AutoDRIVE Sim Racing League 2026
 
+Run it without ROS installed: see [DOCKER.md](DOCKER.md) (branch `multi_track_dockerized`).
+
 Autonomous racing on the **Porto** track in the AutoDRIVE RoboRacer simulator.
 
 Two independent approaches, one workspace:

@@ -62,8 +62,11 @@ def load_log(path):
 
 
 def load_line(path):
-    D = np.loadtxt(path, delimiter=',')
-    if D.shape[1] < 7:
+    try:
+        D = np.loadtxt(path, delimiter=',')
+    except ValueError:
+        return None          # not a line: a run log (header row) or anything else
+    if D.ndim != 2 or D.shape[1] < 7:
         return None
     return dict(name=os.path.basename(path), s=D[:, 0], x=D[:, 1], y=D[:, 2], psi=D[:, 3], kappa=D[:, 4],
                 v=D[:, 7] if D.shape[1] > 7 else None, L=float(D[-1, 0] + (D[1, 0] - D[0, 0])))
@@ -163,7 +166,7 @@ def analyze(path, explicit_line, min_speed):
     yaw_r = np.deg2rad(log['true_yaw_deg'])
     step = np.abs(np.angle(np.exp(1j * np.diff(yaw_r))))
     jump = np.hypot(np.diff(log['true_x']), np.diff(log['true_y']))
-    resets = [j for j in np.flatnonzero((step > np.radians(20)) & (jump > 0.3))]
+    resets = [j for j in np.flatnonzero((step > np.radians(10)) & (jump > 0.3))]   # 10 deg: run 14's first reset stepped 12
     resets = [j for n, j in enumerate(resets) if n == 0 or j - resets[n - 1] > 5]
     if resets:
         rdy = log['ready'] if 'ready' in log else None

@@ -196,20 +196,60 @@ TRACKS = {
         # margin, min wall clearance 0.33 m, tightest r 0.78 m) is an
         # independent geometry for A/B against this pipeline's ladder; it must
         # be re-profiled with --lat-zones / --v-zones before being raced.
-        'raceline': 'raceline_a4.0.csv',
+        # Promoted 2026-09-17 (run 17): 20 clean laps at 9.55-9.70 s, 45 Hz loop,
+        # tum_iqp geometry (kappa_bound 1.2, margin zones
+        # 19.3:23:0.30:R,24:29:0.15:R,36.5:39:0.12:R,42.3:3.7:0.30:R in
+        # centreline_editor/make_raceline.py), profile a_lat 7.0 everywhere,
+        # a_long 5.0, a_brake 5.5, v_max 8.5, no lat zones: the hairpin caps
+        # (5.0) were compensating for the 175 ms delay's exit swing, gone at
+        # 45 Hz. Body-corner clearance min 0.071 m, at s 39.6-40.2 (right wall
+        # of the bend before hairpin 2; the car runs 0.10 m right of the line).
+        'raceline': 'raceline_tum_iqp_h7.0_a7.0b.csv',
         'margin_zones': '',
         'lat_zones': '',
         # Porto/ICRA follower values as the starting point. target_lead_s 0.0:
         # ICRA's 7.8 m braking zones cost 0.28 s/lap at 0.08 and this track
         # has a comparable braking zone into the bottom hairpin.
-        'follower': {'v_max': '8.0', 'target_lead_s': '0.0'},
-        # Measured from seven resets in experiment E00 (2026-09-17), the first
-        # truth sample after each respawn: repeatable to 3 mm / 0.4 deg. One after
-        # the bottom hairpin (C1, 3 resets), one after the right chevron tip (C2, 4).
-        # More will appear as contacts happen elsewhere; the bootstrap prints them.
-        'checkpoints': [('1.708', '-15.771', '0.265'),     # C1 exit
-                        ('5.047', '-11.498', '1.577'),     # C2 apex
-                        ('3.730', '-9.945', '2.356')],     # C2 exit (E04, E05: contact at s 13.8-14.5)
+        # slip_circle 0.12 + accel_ff 1.0 (ICRA's validated exit pair): run 18,
+        # 19 clean laps, best 9.45 against run 17's 9.55, target tracking
+        # -0.090 m/s against -0.141. v_max 8.5: run 17, straight tops at 8.36.
+        # warmup cap: this track's spawn sits at the top of the 16 m straight,
+        # which is where AMCL has the least along-track correction, so a run
+        # started from the spawn accumulates the encoders' 2-5 % distance
+        # over-read all the way into the hairpin-1 braking point: +0.43 to
+        # +1.01 m in runs 3, 13 and 14 against +0.32 once the filter has seen
+        # a corner. 19 m covers the straight and releases at the hairpin-1
+        # apex, where the profile itself asks 2.40 m/s: the cap is not
+        # binding at the moment it lifts, so there is no speed step (it is
+        # below 4.0 for s 17.0-23.9; releasing at 22 m would have stepped
+        # +0.74 m/s, the profile having recovered to 4.85 by there). The
+        # first lap is a warmup and the timer starts after it: this is free,
+        # and costs about 1.3 s of that untimed lap.
+        'follower': {'v_max': '8.5', 'target_lead_s': '0.0',
+                     'slip_circle': '0.12', 'accel_ff': '1.0',
+                     'warmup_v_max': '4.0', 'warmup_dist_m': '19.0'},
+        # Reset poses seen in logged runs 1-14 (2026-09-16/17), ordered along
+        # the lap; annotated with centerline_full.csv's s, which on this track
+        # runs AGAINST the lap (the bootstrap reverses it). Spacing is 3.0 m
+        # down the straight and about 1 m through hairpin 1. Every pose within
+        # 0.07 m of the centreline except the two marked, seen once each.
+        # The encoder does not collapse on a reset here (it reads the throttle
+        # command); only the IMU heading step catches one.
+        'checkpoints': [('0.800', '3.653', '-1.577'),      # s 44.9  start straight
+                        ('0.800', '0.647', '-1.578'),      # s 41.9
+                        ('0.800', '-2.348', '-1.575'),     # s 38.9
+                        ('0.800', '-5.346', '-1.570'),     # s 35.8
+                        ('0.800', '-8.348', '-1.572'),     # s 32.7
+                        ('0.800', '-11.340', '-1.571'),    # s 29.8
+                        ('0.718', '-15.575', '-0.600'),    # s 25.6  hairpin 1 entry (once, run 14, 0.13 m off)
+                        ('1.713', '-15.770', '0.268'),     # s 24.6  hairpin 1 exit (6 runs)
+                        ('3.018', '-13.624', '1.225'),     # s 22.2  after hairpin 1 (runs 8, 12)
+                        ('5.047', '-11.480', '1.585'),     # s 19.3  after the chicane (run 15, 5 resets, 0.28 m off)
+                        ('3.728', '-9.942', '2.356'),      # s 17.5  (once, run 3)
+                        ('2.500', '-6.660', '1.571'),      # s 13.8
+                        ('2.500', '-4.653', '1.574'),      # s 11.7
+                        ('3.525', '-1.396', '1.047'),      # s 8.2   (run 13)
+                        ('5.070', '0.121', '1.573')],      # s 6.1   (once, run 13, 0.29 m off)
     },
 }
 

@@ -86,6 +86,8 @@ from racer_common.frames import TRACK
 TUNABLES = ('lookahead_min', 'lookahead_max', 'lookahead_k', 'lookahead_curv_gain', 'lookahead_sag_frac',
             'lookahead_delay_ref', 'derate_delay_from', 'derate_delay_to', 'derate_a_lat',
             'steer_a_lat_max', 'steer_excess_rad',
+            'exit_guard_from', 'exit_guard_full',
+            'lqr_k_lat', 'lqr_k_head', 'lqr_k_yaw', 'lqr_max_correction_rad',
             'v_max', 'a_lat_max', 'throttle_max', 'steering_gain',
             'warmup_v_max', 'warmup_dist_m',
             'curvature_preview_m',
@@ -93,13 +95,13 @@ TUNABLES = ('lookahead_min', 'lookahead_max', 'lookahead_k', 'lookahead_curv_gai
             # Tunable from the command line for the same reason as the rest:
             # limits are measured on the car, and a rebuild per attempt is tedious.
             'slip_accel', 'slip_brake', 'u_launch', 'u_per_throttle', 'v_slip_den', 'tire_rise_slope',
-            'observer_wheels', 'slip_circle', 'accel_ff',
+            'observer_wheels', 'slip_circle', 'accel_ff' 'drag_ff',
             'cmd_delay_s', 'slip_kp', 'target_lead_s',
             # control loop rate; 20 matches the 17.5 Hz sim tick seen here, raise it
             # with the tick (headless sim, faster machine) so the loop is not the limit
             'control_hz',
             'pose_speed_window', 'pose_speed_gain', 'pose_corr_max', 'imu_lever_arm', 'latency_comp_s',
-            'speed_source', 'throttle_mode', 'steer_excess_ref',
+            'speed_source', 'throttle_mode', 'steer_excess_ref', 'controller_mode',
             # legacy launch ramp (throttle_mode:=legacy only)
             'a_long_launch', 'a_long_launch_v')
 
@@ -205,6 +207,7 @@ def _launch(context, *args, **kwargs):
     #    follower's odometry even when localizer:=none.
     actions.append(IncludeLaunchDescription(
         src(loc_share, 'chassis.launch.py'),
+        launch_arguments={'distance_source': cfg('distance_source')}.items(),
         condition=IfCondition(LaunchConfiguration('chassis')),
     ))
 
@@ -345,6 +348,9 @@ def generate_launch_description():
                               description='re-localize after a wall reset; see localization_bootstrap'),
         DeclareLaunchArgument('recover_use_checkpoints', default_value='true',
                               description='false forces the no-data recovery tier; see localization_bootstrap'),
+        DeclareLaunchArgument(
+            'distance_source', default_value='encoder',
+            description="dead reckoning distance source, 'encoder' or 'tire'; see dead_reckoning.py"),
         DeclareLaunchArgument('chassis', default_value='true'),
         DeclareLaunchArgument('localization', default_value='true'),
         DeclareLaunchArgument('follower', default_value='true'),

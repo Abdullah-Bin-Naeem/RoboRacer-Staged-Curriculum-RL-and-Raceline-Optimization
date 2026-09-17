@@ -156,6 +156,32 @@ class PurePursuit(Node):
         # at steer 0.72 (slip ~7.5 deg) get 4.5 and run 0.4-0.5 m wide. A flat
         # steer_a_lat_max cannot express that (5.0 fixed the hairpins and lost the
         # 6 m/s right-hander). 0.06 rad = 3.4 deg of excess. 0 = off.
+        # ---- ported from the adil_iros branch ------------------------------
+        # 'hybrid_lqr' layers a BOUNDED LQR correction on pure pursuit: pure
+        # pursuit still supplies the path-curvature feedforward, the LQR only
+        # corrects measured lateral, heading and yaw-rate error, and the clamp
+        # means stale localization cannot replace the proven fallback. Adil's
+        # A03: 38 laps, zero contacts, median 9.600 against 9.550 for the same
+        # line without it -- i.e. clean but not faster, so it is an option.
+        p('controller_mode', 'pure_pursuit')
+        p('lqr_k_lat', 0.18)
+        p('lqr_k_head', 0.70)
+        p('lqr_k_yaw', 0.035)
+        p('lqr_max_correction_rad', 0.12)
+        # Corner-exit guard. When the car is running OUTWARD in a corner and the
+        # profile wants to accelerate, hold the speed increase back in proportion
+        # to how far out it is. It can only ever REDUCE the demand. This is aimed
+        # at the failure that has ended most runs on IROS 2026: the car runs wide
+        # on a hairpin exit and the profile feeds it more speed while it is still
+        # off-line. 0 disables.
+        # OFF by default (0.0). Adil's branch ships 0.15, i.e. active, but this
+        # stack has 63 clean laps behind it and a default-on change would be a
+        # silent one. Measured here on the 7.0/10 line: tracking p90 0.198 ->
+        # 0.142 and the s-38.6 contact gone, but the lap went 9.15 -> 9.25 and
+        # the hairpin-1 exit still bit. It trims speed AFTER the car is already
+        # wide, so it mitigates rather than prevents.
+        p('exit_guard_from', 0.0)
+        p('exit_guard_full', 0.0)
         p('steer_excess_rad', 0.0)
         # What the excess is measured against: 'gyro' = the turn the car is ACTUALLY
         # making now, atan(L * yaw_rate / v) -- a real slip-angle limiter, the
@@ -285,6 +311,25 @@ class PurePursuit(Node):
         # Float, like observer_wheels: the launch files cast every tunable to
         # float, so accel_ff:=1.0 on, 0.0 off.
         p('accel_ff', 0.0)
+        # Drag is a DISTURBANCE, not an acceleration. Where the profile holds a
+        # speed the plan's acceleration is ~0, accel_ff above does not fire, and
+        # the law falls through to a plain proportional term with no drag
+        # compensation at all -- so the whole drag-balancing slip has to come out
+        # of the tracking error and the car settles that far under its target.
+        # Measured on IROS 2026 (run 21, 63 laps): 0.199 m/s under the profile
+        # wherever the profile is flat, at BOTH the 8.5 m/s cap and the 2.4 m/s
+        # hairpin apexes, and drag there is 32 % and 9 % of peak longitudinal
+        # grip respectively. Raising slip_kp barely touches it (run kp15: flat
+        # zones 0.202 -> 0.182 while the powered zones scaled as 1/(1+kp) to the
+        # decimal), because the offset is set by the missing feedforward, not by
+        # the gain. 1.0 feeds drag forward at a_pred == 0 as well, which closes
+        # the offset WITHOUT raising the target -- unlike every profile-side
+        # lever tried on that track, which bought time on paper and paid for it
+        # in wall clearance. Braking is deliberately untouched: fed forward there
+        # it tracks the plan's deceleration instead of its speed and cost 0.09 s
+        # (ICRA run 18), and a car already ABOVE its target must be allowed to
+        # fall back to it rather than hold speed against drag.
+        p('drag_ff', 0.0)
         # Loop delay from publishing a throttle to seeing it on the wheel. MEASURED
         # 0.15 s (see _throttle_slip). Everything in the band is predicted this far
         # ahead with the observer's acceleration. 0 = the old behaviour.
@@ -393,6 +438,17 @@ class PurePursuit(Node):
         self.ld_min, self.ld_max, self.ld_k = g('lookahead_min'), g('lookahead_max'), g('lookahead_k')
         self.ld_curv_gain = float(g('lookahead_curv_gain'))
         self.steer_a_lat_max = float(g('steer_a_lat_max'))
+        self.controller_mode = str(g('controller_mode')).lower()
+        self.lqr_k_lat = float(g('lqr_k_lat'))
+        self.lqr_k_head = float(g('lqr_k_head'))
+        self.lqr_k_yaw = float(g('lqr_k_yaw'))
+        self.lqr_max_correction = float(g('lqr_max_correction_rad'))
+        if self.controller_mode not in ('pure_pursuit', 'hybrid_lqr'):
+            raise RuntimeError(f'controller_mode must be pure_pursuit or hybrid_lqr, not {self.controller_mode!r}')
+        self.exit_guard_from = float(g('exit_guard_from'))
+        self.exit_guard_full = float(g('exit_guard_full'))
+        if self.exit_guard_from < 0.0 or self.exit_guard_full < self.exit_guard_from:
+            raise RuntimeError('exit_guard_full must be >= exit_guard_from >= 0')
         self.steer_excess_rad = float(g('steer_excess_rad'))
         self.steer_excess_ref = str(g('steer_excess_ref'))
         self.ld_sag_frac = float(g('lookahead_sag_frac'))
@@ -448,6 +504,7 @@ class PurePursuit(Node):
         self.slip_accel, self.slip_brake = float(g('slip_accel')), float(g('slip_brake'))
         self.slip_circle = float(g('slip_circle'))
         self.accel_ff = float(g('accel_ff')) > 0.5
+        self.drag_ff = float(g('drag_ff')) > 0.0
         # mu is monotone on [0, S_PEAK]: tabulate it once for the inverse.
         self._s_tab = np.linspace(0.0, TIRE_S_PEAK, 151)
         self._mu_tab = np.array([self._mu(float(S)) for S in self._s_tab])
@@ -969,7 +1026,13 @@ class PurePursuit(Node):
             s_acc = s_brk = max(self.slip_circle * f, 0.02)
         else:
             s_acc, s_brk = self.slip_accel, self.slip_brake
-        if self.accel_ff and a_pred > 0.0:
+        # a_pred == 0 covers two different states: the profile is flat and the car
+        # is at or under its target (drag must be fed forward), or the car is
+        # ABOVE its target and the plan says accelerate (it must be allowed to
+        # fall back). Only the first gets the feedforward. See drag_ff.
+        ff_on = self.accel_ff and (a_pred > 0.0
+                                   or (self.drag_ff and a_pred == 0.0 and v_target >= v))
+        if ff_on:
             # ACCELERATION ONLY. The slip that delivers the plan's (gated)
             # acceleration at landing, gross of drag; the proportional term then
             # corrects the lag. Fed forward on the BRAKE side too (ICRA run 18)
@@ -1157,6 +1220,19 @@ class PurePursuit(Node):
         if self.steer_a_lat_max > 0.0 and self.speed > 0.5:
             k_cap = self.steer_a_lat_max / (self.speed ** 2)
             kappa_cmd = max(-k_cap, min(k_cap, kappa_cmd))
+        e_lat_now = ((x - self.px[near]) * -math.sin(self.psi[near])
+                     + (y - self.py[near]) * math.cos(self.psi[near]))
+        if self.controller_mode == 'hybrid_lqr' and self.speed > 0.8:
+            # Pure pursuit supplies the path-curvature feedforward term. LQR
+            # only corrects measured lateral/heading/yaw-rate error and is
+            # bounded so stale localization cannot replace the proven fallback.
+            yaw_error = (yaw - self.psi[near] + math.pi) % (2.0 * math.pi) - math.pi
+            yaw_error_rate = self.yaw_rate - self.speed * float(self.kappa[near])
+            delta_lqr = -(self.lqr_k_lat * e_lat_now
+                          + self.lqr_k_head * yaw_error
+                          + self.lqr_k_yaw * yaw_error_rate)
+            delta_lqr = float(np.clip(delta_lqr, -self.lqr_max_correction, self.lqr_max_correction))
+            kappa_cmd += math.tan(delta_lqr) / self.wheelbase
         delta = math.atan(kappa_cmd * self.wheelbase)          # bicycle model
         if self.steer_excess_rad > 0.0:
             # feed-forward angle from the path curvature at the lookahead point (same
@@ -1219,6 +1295,16 @@ class PurePursuit(Node):
                     f'v_max back to {self.v_max:.2f} m/s')
             else:
                 v_target = min(v_target, self.warm_v)
+
+        # Corner-exit guard: while the car is outward of the line in a corner and
+        # the profile is asking for MORE speed, give it only the part of that
+        # increase it has earned back. Reduces the demand, never raises it.
+        if self.exit_guard_full > 0.0 and abs(float(self.kappa[near])) > 1e-3:
+            outward = -math.copysign(e_lat_now, float(self.kappa[near]))
+            if outward > self.exit_guard_from and v_target > self.speed:
+                span = self.exit_guard_full - self.exit_guard_from
+                fraction = 1.0 if span <= 0.0 else min(1.0, (outward - self.exit_guard_from) / span)
+                v_target = self.speed + (v_target - self.speed) * (1.0 - fraction)
 
         if self.throttle_mode == 'slip':
             throttle = self._throttle_slip(v_target, float(self.path_a[near]),

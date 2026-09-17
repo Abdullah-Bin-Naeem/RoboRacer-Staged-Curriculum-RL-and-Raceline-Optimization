@@ -158,6 +158,14 @@ class PurePursuit(Node):
         p('lookahead_k', 0.35)                 # Ld = k * speed, then clamped
         p('lookahead_curv_gain', 0.67)         # Ld /= (1 + gain * max |kappa| within Ld); 0 = off
         p('steer_a_lat_max', 7.0)              # cap |kappa_cmd| at this / v^2 [m/s^2]; 0 = off
+        # Never cap below (1 + this) * the path's own curvature within the
+        # lookahead. 0 = off (the cap alone, as before).
+        p('steer_cap_path_margin', 0.0)
+        # Hold the speed target at the current speed while the car is outside
+        # the line in a corner: ramps in from _from to full at _full metres of
+        # outward error. 0 = off.
+        p('exit_guard_from', 0.0)
+        p('exit_guard_full', 0.15)
         p('lookahead_sag_frac', 0.5)           # chord sagitta <= frac * inside margin; 0 = off
         p('lookahead_delay_ref', 0.175)        # k and max scale by cmd_delay / this; 0 = off
         # Exponent applied to (cmd_delay / ref) when the loop is FASTER than the
@@ -419,6 +427,9 @@ class PurePursuit(Node):
         self.ld_min, self.ld_max, self.ld_k = g('lookahead_min'), g('lookahead_max'), g('lookahead_k')
         self.ld_curv_gain = float(g('lookahead_curv_gain'))
         self.steer_a_lat_max = float(g('steer_a_lat_max'))
+        self.steer_cap_margin = float(g('steer_cap_path_margin'))
+        self.exit_from = float(g('exit_guard_from'))
+        self.exit_full = float(g('exit_guard_full'))
         self.ld_sag_frac = float(g('lookahead_sag_frac'))
         self.ld_delay_ref = float(g('lookahead_delay_ref'))
         self.ld_delay_exp = float(g('lookahead_delay_exp_fast'))
@@ -1299,6 +1310,16 @@ class PurePursuit(Node):
         # instead of spiralling. Measured usable maxima: 6.4-7.8 m/s^2.
         if self.steer_a_lat_max > 0.0 and self.speed > 0.5:
             k_cap = self.steer_a_lat_max / (self.speed ** 2)
+            # The profile is planned AT steer_a_lat_max, so wherever it is at its
+            # limit the cap equals the path's own curvature and leaves nothing to
+            # correct with: once the car is wide it can only stay wide. Run
+            # iros_21: cap binding 36 % of corner time and 53 % of the time the
+            # car was > 0.10 m outside, 0.25 m wide through the hairpin exits at
+            # BELOW profile speed. Keep headroom above the path's curvature.
+            if self.steer_cap_margin > 0.0:
+                span = max(1, int(actual_ld / (self.lap_len / len(self.px))))
+                k_path = max(abs(self.kappa[(near + i) % len(self.px)]) for i in range(span + 1))
+                k_cap = max(k_cap, (1.0 + self.steer_cap_margin) * k_path)
             kappa_cmd = max(-k_cap, min(k_cap, kappa_cmd))
         delta = math.atan(kappa_cmd * self.wheelbase)          # bicycle model
         steering = float(np.clip(self.steer_gain * delta / self.max_steer, -1.0, 1.0))
@@ -1334,6 +1355,17 @@ class PurePursuit(Node):
             k_worst = max(abs(self.kappa[i]) for i in window)
             v_target = float(np.clip(math.sqrt(self.a_lat / max(k_worst, 1e-3)),
                                      self.v_min, self.v_max))
+
+        # Exit guard: accelerating out of a corner while already wide spends the
+        # grip the car needs to come back to the line (friction circle), which is
+        # where the exits went into the wall. Hold speed until it is back.
+        if self.exit_from > 0.0 and v_target > self.speed and abs(self.kappa[near]) > 0.1:
+            e_out = -math.copysign(1.0, self.kappa[near]) * (
+                (x - self.px[near]) * -math.sin(self.psi[near])
+                + (y - self.py[near]) * math.cos(self.psi[near]))
+            if e_out > self.exit_from:
+                f = min(1.0, (e_out - self.exit_from) / max(self.exit_full - self.exit_from, 1e-3))
+                v_target = max(self.speed, 0.0) + (v_target - max(self.speed, 0.0)) * (1.0 - f)
 
         # Warmup cap: hold the target down over the first warmup_dist_m of
         # driving, measured by the tire observer (encoders, race-legal) rather

@@ -1,3 +1,7 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
 <title>Raceline editor</title>
 <!--
   The editor's whole UI. Served by scripts/raceline_editor.py, which does I/O
@@ -29,8 +33,24 @@
             convention that also appears in this repo is a half-cell off and
             costs 0.019 m of median width error.
 
-  The velocity model is tools/reprofile_raceline.py's plan(), ported line for
-  line so a profile made here and one made by that tool are the same object.
+  THE CAR
+  Every physical cap is derived from the competition guide's vehicle tables,
+  which the server sends as `vehicle` (raceline_editor.py VEHICLE_GUIDE), plus
+  the simulator's linear drag, which the guide does not publish
+  (`vehicle_source`, from raceline/VEHICLE_MODEL.md). Nothing numeric about the
+  car is typed into this file.
+
+  HARD versus PLANNING limits
+    The velocity limits in the side panel are PLANNING choices; each is
+    refused above the physical cap it cannot exceed (tyre peaks, top speed).
+    The geometry has two caps no speed can fix -- curvature past the steering
+    lock, and the body footprint touching a wall -- and while "enforce" is on a
+    handle drag cannot make either worse; it stops at the boundary instead.
+    Steering RATE is a speed limit, v <= 3.2 (1+(kL)^2) / (L |dk/ds|), and is
+    folded into the profile's ceiling.
+
+  The velocity model is tools/reprofile_raceline.py's plan() (main_track_algorithm),
+  ported, with the simulator's drag applied and the steering-rate ceiling added.
 -->
 <style>
   :root {
@@ -42,93 +62,258 @@
   body { margin: 0; background: var(--bg); color: var(--ink);
          font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, sans-serif;
          height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
-  header { display: flex; align-items: center; gap: 14px; padding: 8px 12px;
-           background: var(--panel); border-bottom: 1px solid var(--edge); flex: none; }
-  header h1 { font-size: 13px; font-weight: 600; margin: 0; letter-spacing: .02em; }
+  header { display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+           background: var(--panel); border-bottom: 1px solid var(--edge); flex: none;
+           flex-wrap: wrap; }
+  header h1 { font-size: 13px; font-weight: 600; margin: 0 6px 0 0; letter-spacing: .02em; }
   header .sp { flex: 1; }
-  main { flex: 1; display: grid; grid-template-columns: 1fr 320px; min-height: 0; }
-  #panes { display: grid; grid-template-rows: 1fr 240px; min-width: 0; min-height: 0; }
-  .pane { position: relative; min-height: 0; min-width: 0; }
+  header .grp { display: flex; gap: 4px; align-items: center; }
+  main { flex: 1; display: grid; grid-template-columns: 1fr 340px; min-height: 0; position: relative; }
+  #panes { display: grid; grid-template-rows: 1fr 270px; min-width: 0; min-height: 0; }
+  #maps { display: flex; min-height: 0; min-width: 0; }
+  .pane { position: relative; min-height: 0; min-width: 0; flex: 1; }
+  #paneB { display: none; border-left: 2px solid var(--edge); }
+  #maps.split #paneB { display: block; }
   #profile { border-top: 1px solid var(--edge); }
   canvas { display: block; width: 100%; height: 100%; touch-action: none; }
   aside { background: var(--panel); border-left: 1px solid var(--edge);
-          overflow-y: auto; padding: 12px; }
+          overflow-y: auto; padding: 10px 12px 30px; }
   aside h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
-             color: var(--dim); margin: 18px 0 8px; font-weight: 600; }
+             color: var(--dim); margin: 16px 0 6px; font-weight: 600; }
   aside h2:first-child { margin-top: 0; }
-  label { display: grid; grid-template-columns: 1fr 78px; gap: 8px;
-          align-items: center; margin-bottom: 6px; color: var(--dim); }
+  label.f { display: grid; grid-template-columns: 1fr 74px; gap: 8px;
+            align-items: center; margin-bottom: 2px; color: var(--dim); }
+  .cap { font-size: 11px; color: #6f7888; margin: 0 0 6px; text-align: right; }
+  .cap.hit { color: var(--warn); }
+  label.c { display: flex; gap: 6px; align-items: center; color: var(--dim); margin: 3px 0; }
   input[type=number], input[type=text], select {
     background: var(--bg); color: var(--ink); border: 1px solid var(--edge);
-    border-radius: 4px; padding: 4px 6px; font: inherit; font-variant-numeric: tabular-nums;
+    border-radius: 4px; padding: 3px 6px; font: inherit; font-variant-numeric: tabular-nums;
     width: 100%; }
+  input[readonly] { color: var(--dim); }
   button { background: var(--edge); color: var(--ink); border: 1px solid #3a4150;
-           border-radius: 5px; padding: 5px 11px; font: inherit; cursor: pointer; }
+           border-radius: 5px; padding: 4px 10px; font: inherit; cursor: pointer; }
   button:hover { background: #333a47; }
+  button.on { background: #2c3e5c; border-color: var(--accent); }
   button.primary { background: var(--accent); color: #0b1020; border-color: var(--accent);
                    font-weight: 600; }
+  button.sm { padding: 1px 7px; font-size: 12px; }
   button:disabled { opacity: .45; cursor: default; }
+  .row { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
+  .row > * { flex: 1; }
+  .row > button { flex: none; }
   table.stats { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
   table.stats td { padding: 2px 0; }
   table.stats td:first-child { color: var(--dim); }
   table.stats td:nth-child(2) { text-align: right; }
-  table.stats td:nth-child(3) { text-align: right; width: 74px; padding-left: 8px;
+  table.stats td:nth-child(3) { text-align: right; width: 64px; padding-left: 8px;
                                 color: var(--dim); font-size: 12px; }
+  table.checks { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  table.checks td { padding: 2px 3px; vertical-align: top; }
+  table.checks tr { cursor: pointer; }
+  table.checks tr:hover { background: #242833; }
+  table.checks td.m { width: 16px; font-weight: 700; }
+  table.checks td.v { text-align: right; white-space: nowrap; }
+  table.checks .lim { color: #6f7888; font-size: 11px; }
+  .ok { color: var(--good); } .soft { color: var(--warn); } .hard { color: var(--bad); }
   .up { color: var(--warn); } .down { color: var(--good); } .flat { color: var(--dim); }
-  .readout { position: absolute; top: 8px; left: 8px; background: rgba(20,22,26,.86);
+  .readout { position: absolute; top: 8px; left: 8px; background: rgba(20,22,26,.88);
              border: 1px solid var(--edge); border-radius: 5px; padding: 5px 9px;
-             font-variant-numeric: tabular-nums; pointer-events: none; white-space: pre; }
-  .hint { color: var(--dim); font-size: 12px; margin: 8px 0 0; }
+             font-variant-numeric: tabular-nums; pointer-events: none; white-space: pre;
+             font-size: 12px; }
+  .readout:empty { display: none; }
+  .tag { position: absolute; top: 8px; right: 8px; background: rgba(20,22,26,.88);
+         border: 1px solid var(--edge); border-radius: 5px; padding: 3px 8px;
+         pointer-events: none; font-size: 12px; }
+  #status { position: absolute; bottom: 8px; right: 8px; background: rgba(20,22,26,.9);
+            border: 1px solid var(--warn); border-radius: 5px; padding: 4px 9px;
+            pointer-events: none; font-size: 12px; display: none; max-width: 60%; }
+  .hint { color: var(--dim); font-size: 12px; margin: 6px 0 0; }
+  .hint kbd { background: var(--bg); border: 1px solid var(--edge); border-radius: 3px;
+              padding: 0 4px; font: 11px ui-monospace, monospace; }
   #toast { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
            background: var(--panel); border: 1px solid var(--edge); border-radius: 6px;
-           padding: 8px 14px; max-width: 70vw; display: none; }
+           padding: 8px 14px; max-width: 70vw; display: none; z-index: 30; white-space: pre-line; }
   #toast.bad { border-color: var(--bad); }
   #toast.good { border-color: var(--good); }
+  .reflist { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 12px; }
+  .reflist td { padding: 3px 2px; border-top: 1px solid var(--edge); vertical-align: middle; }
+  .reflist .nm { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: middle; }
+
+  /* The vehicle drawer: a tab on the left edge of the map, a panel on click. */
+  #vehTab { position: absolute; left: 0; top: 50%; transform: translateY(-50%); z-index: 20;
+            writing-mode: vertical-rl; rotate: 180deg; border-radius: 0 6px 6px 0;
+            padding: 10px 4px; background: var(--panel); border: 1px solid var(--edge);
+            border-left: none; color: var(--ink); cursor: pointer; font-size: 12px;
+            letter-spacing: .06em; }
+  #vehTab:hover { background: #262a33; }
+  #veh { position: absolute; left: 0; top: 0; bottom: 0; width: 380px; z-index: 21;
+         background: var(--panel); border-right: 1px solid var(--edge); overflow-y: auto;
+         padding: 12px 14px 30px; transform: translateX(-100%); transition: transform .18s ease;
+         box-shadow: 6px 0 18px rgba(0,0,0,.35); }
+  #veh.open { transform: none; }
+  #veh h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+            color: var(--dim); margin: 14px 0 6px; font-weight: 600; }
+  #veh table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  #veh td { padding: 2px 0; border-top: 1px solid #242833; vertical-align: top; }
+  #veh td:first-child { color: var(--dim); padding-right: 10px; }
+  #veh td:last-child { text-align: right; }
+  #veh .src { font-size: 11px; color: #6f7888; margin: 4px 0; }
+  #veh a { color: var(--accent); }
+  #veh .close { position: absolute; right: 10px; top: 8px; }
 </style>
+</head>
+<body>
 
 <header>
   <h1>Raceline editor</h1>
   <span id="what" class="flat"></span>
   <span class="sp"></span>
-  <label style="grid-template-columns:auto 130px;margin:0">grid
-    <select id="layer"></select></label>
-  <button id="undo" title="ctrl-z">Undo</button>
-  <button id="reset">Reset</button>
-  <button id="save" class="primary">Save as…</button>
+  <span class="grp">
+    <button id="zoomOut" title="zoom out (-)">−</button>
+    <button id="zoomIn" title="zoom in (+)">+</button>
+    <button id="fit" title="fit the track (F)">Fit</button>
+  </span>
+  <span class="grp">
+    <label class="c" style="margin:0">grid <select id="layer" style="width:120px"></select></label>
+  </span>
+  <span class="grp">
+    <button id="splitBtn" title="edited line on the left, a reference on the right">Split view</button>
+    <button id="raceBtn" title="replay both lines against the clock (P)">▶ Race</button>
+    <select id="raceRate" title="replay speed" style="width:70px">
+      <option value="0.25">0.25×</option><option value="0.5">0.5×</option>
+      <option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option>
+    </select>
+  </span>
+  <span class="grp">
+    <button id="undo" title="ctrl-z">Undo</button>
+    <button id="reset">Reset</button>
+    <button id="save" class="primary">Save as…</button>
+  </span>
 </header>
 
 <main>
+  <button id="vehTab" title="the car, from the competition guide">VEHICLE</button>
+  <div id="veh"></div>
+
   <div id="panes">
-    <div class="pane"><canvas id="map"></canvas><div class="readout" id="mapread"></div></div>
+    <div id="maps">
+      <div class="pane" id="paneA"><canvas id="map"></canvas>
+        <div class="readout" id="mapread"></div><div class="tag" id="tagA">edited</div>
+        <div id="status"></div></div>
+      <div class="pane" id="paneB"><canvas id="mapB"></canvas>
+        <div class="readout" id="mapreadB"></div><div class="tag" id="tagB"></div></div>
+    </div>
     <div class="pane" id="profile"><canvas id="prof"></canvas>
       <div class="readout" id="profread"></div></div>
   </div>
 
   <aside>
-    <h2>Velocity limits</h2>
-    <label>a_lat  <input type="number" id="a_lat"   step="0.1"></label>
-    <label>a_accel<input type="number" id="a_accel" step="0.1"></label>
-    <label>a_brake<input type="number" id="a_brake" step="0.1"></label>
-    <label>power  <input type="number" id="power"   step="0.5"></label>
-    <label>drag   <input type="number" id="drag"    step="0.001"></label>
-    <label>v_max  <input type="number" id="v_max"   step="0.1"></label>
-    <label>v_min  <input type="number" id="v_min"   step="0.1"></label>
-    <button id="replan" style="width:100%;margin-top:6px">Re-plan, clear pins</button>
+    <h2>Physical constraints</h2>
+    <table class="checks" id="checks"></table>
+    <p class="hint">✗ red: the car cannot do it. ! amber: it can, but the follower or your
+      margin will object. Click a row to jump to the worst point.</p>
+
+    <h2>Velocity limits (planning)</h2>
+    <label class="f">a_lat m/s²   <input type="number" id="a_lat"   step="0.1"></label>
+    <div class="cap" id="cap_a_lat"></div>
+    <label class="f">a_accel m/s² <input type="number" id="a_accel" step="0.1"></label>
+    <div class="cap" id="cap_a_accel"></div>
+    <label class="f">a_brake m/s² <input type="number" id="a_brake" step="0.1"></label>
+    <div class="cap" id="cap_a_brake"></div>
+    <label class="f">v_max m/s    <input type="number" id="v_max"   step="0.1"></label>
+    <div class="cap" id="cap_v_max"></div>
+    <label class="f">v_min m/s    <input type="number" id="v_min"   step="0.1"></label>
+    <div class="cap" id="cap_v_min"></div>
+    <label class="f">power W/kg   <input type="number" id="power"   step="0.5"></label>
+    <div class="cap" id="cap_power"></div>
+    <label class="f">drag 1/s     <input type="number" id="drag" readonly></label>
+    <div class="cap">simulator Rigidbody.drag, fixed</div>
+    <label class="c"><input type="checkbox" id="steerLimit" checked> steering-rate ceiling in the profile</label>
+    <div class="row">
+      <button id="infer" title="set the limits to what the loaded file's profile demands, capped">From loaded file</button>
+      <button id="replan">Re-plan, clear pins</button>
+    </div>
+
+    <h2>Editing</h2>
+    <label class="c"><input type="checkbox" id="enforce" checked> enforce hard constraints while dragging</label>
+    <label class="f">hard clearance m <input type="number" id="hardClear" step="0.01" value="0.00"></label>
+    <label class="f">warn below m <input type="number" id="warn" step="0.01" value="0.10"></label>
+    <label class="f">handles<input type="number" id="nctrl" step="1" min="8"></label>
+    <label class="c"><input type="checkbox" id="normalLock"> drag along the line normal only (N)</label>
+    <div id="selBox" style="display:none">
+      <div class="row"><span class="flat" id="selName"></span></div>
+      <div class="row">
+        <label class="c">x <input type="number" id="selX" step="0.005"></label>
+        <label class="c">y <input type="number" id="selY" step="0.005"></label>
+      </div>
+      <div class="row">
+        <label class="c">nudge <select id="nudge">
+          <option value="0.001">1 mm</option><option value="0.005">5 mm</option>
+          <option value="0.01" selected>1 cm</option><option value="0.05">5 cm</option>
+          <option value="0.1">10 cm</option></select></label>
+        <button id="selDel" class="sm" title="Delete">remove</button>
+      </div>
+    </div>
+
+    <h2>Overlays</h2>
+    <label class="f">line colour <select id="colorMode">
+      <option value="clear">body clearance</option>
+      <option value="speed">speed</option>
+      <option value="long">accel / brake</option>
+      <option value="lat">lateral use of a_lat</option>
+      <option value="grip">friction-ellipse use</option>
+      <option value="steer">steering-rate use</option>
+      <option value="none">plain</option>
+    </select></label>
+    <label class="f">profile strip <select id="stripMode">
+      <option value="long">longitudinal accel</option>
+      <option value="lat">lateral accel</option>
+      <option value="dt">Δt vs references</option>
+      <option value="steer">steering rate</option>
+      <option value="clear">body clearance</option>
+      <option value="kappa">curvature</option>
+    </select></label>
+    <label class="c"><input type="checkbox" id="showOrig" checked> loaded line (ghost)</label>
+    <label class="c"><input type="checkbox" id="showHandles" checked> handles</label>
+    <label class="c"><input type="checkbox" id="showFoot"> car footprint at hover</label>
+
+    <h2>Map</h2>
+    <label class="c"><input type="checkbox" id="despeck" checked> free isolated specks up to
+      <input type="number" id="speckCells" value="6" min="1" step="1" style="width:52px"> cells</label>
+    <p class="hint" id="speckNote"></p>
+
+    <h2>Compare / benchmark</h2>
+    <div class="row"><select id="refPick"></select><button id="refAdd">Add</button></div>
+    <div class="row">
+      <button id="genBtn" style="flex:1">Generate min-curvature line</button>
+    </div>
+    <div class="row">
+      <label class="c">seed <select id="genSeed"></select></label>
+      <label class="c">safety m <input type="number" id="genSafety" step="0.01" value="0.12"></label>
+    </div>
+    <table class="reflist" id="refs"></table>
+    <p class="hint" id="refHint">Add a line from the raceline directory (TUM, centreline,
+      older edits) or generate one. Every line is timed with the SAME limits unless you
+      switch its profile to “file”.</p>
 
     <h2>Line</h2>
-    <label>handles<input type="number" id="nctrl" step="1" min="8"></label>
-    <label>warn below<input type="number" id="warn" step="0.01"></label>
     <table class="stats" id="stats"></table>
 
     <h2>How</h2>
     <p class="hint">
-      <b>Map</b> — drag a handle to move the line. Double-click the line to add a
-      handle, double-click a handle to remove it.<br><br>
-      <b>Profile</b> — drag to pin a speed. A pin is a cap: the passes brake into
-      it and accelerate out of it. Pinning above the grip ceiling does nothing,
-      and shows greyed. Double-click a pin to clear it.<br><br>
-      Widths, curvature and the profile are re-derived on every edit; the saved
-      file is always uniformly re-sampled and closed.
+      <b>Map</b> — drag a handle to move it; <kbd>shift</kbd>-drag moves 10× finer.
+      Drag a box over empty track to select several handles (<kbd>shift</kbd> adds,
+      <kbd>ctrl</kbd>-click toggles one, <kbd>ctrl</kbd>+<kbd>A</kbd> all); dragging any
+      selected handle moves them together. Arrows nudge the selection,
+      <kbd>[</kbd> <kbd>]</kbd> step through handles, <kbd>Del</kbd> removes the
+      selection. Double-click the line to add a handle.<br>
+      Wheel zooms at the cursor; right-drag, middle-drag or <kbd>space</kbd>+drag pans;
+      <kbd>F</kbd> fits, <kbd>+</kbd>/<kbd>−</kbd> zoom.<br><br>
+      <b>Profile</b> — drag to pin a speed cap; double-click a pin to clear it. Wheel
+      zooms the distance axis, right-drag pans it.<br><br>
+      <kbd>P</kbd> plays the race replay, <kbd>N</kbd> toggles normal-only dragging.
     </p>
   </aside>
 </main>
@@ -138,31 +323,52 @@
 'use strict';
 
 // ---------------------------------------------------------------- constants
-// planning/raceline.py:25 -- what a corner-cutting chord may not consume.
-const HALF_WIDTH = 0.135;
 const FREE = 254;              // tools/clean_map.py:20
 const MAX_RAY = 3.0;           // metres; optimize_raceline.TrackMap.widths
 const DENSE_PER_SEG = 200;     // spline samples per control segment, for arc length
-const PASSES = 4;              // reprofile_raceline.py:96
+// reprofile_raceline.py ran 4; with drag in the forward pass the loop closes
+// more slowly, and the test below stops as soon as nothing moves anyway.
+const PASSES = 12;
 // A backstop against handles landing on top of each other, where the
 // interpolating cubic's curvature goes as ~2/gap and the solve eventually
 // produces NaN. It is deliberately well BELOW what the initial fit produces
 // (0.199 m at 60 handles, 0.100 m at 110) -- a guard set above that fires on
 // the first nudge in exactly the corners you opened the editor to work on.
-// Quality is not policed here; max|kappa| is live in the stats and checked
-// again at save.
 const MIN_GAP = 0.05;
-// tan(max_steer)/wheelbase = tan(0.5236)/0.324, from config/pure_pursuit.yaml:84.
-// Beyond this the follower saturates the steering and says nothing.
-const KAPPA_LOCK = 1.782;
+// Footprint clearance is searched out to this far; anything roomier reads as it.
+const FOOT_MAX = 0.6;
+
+// The car. Filled from the session in boot(); see deriveCar().
+let CAR = null;
+
+function deriveCar(veh, src) {
+  const g = src.g, WB = veh.wheelbase;
+  return {
+    g, WB, drag: src.linear_drag,
+    // Bicycle model at the commanded angle: the guide's Ackermann split turns
+    // the INNER wheel further, but the command itself is what is limited.
+    KLOCK: Math.tan(veh.steer_angle_max) / WB,
+    AX_PEAK: veh.long_tire_extremum[1] * g, AX_ASYM: veh.long_tire_asymptote[1] * g,
+    AY_PEAK: veh.lat_tire_extremum[1] * g, AY_ASYM: veh.lat_tire_asymptote[1] * g,
+    V_TOP: veh.top_speed, STEER_RATE: veh.steer_rate,
+    HALF_W: veh.car_width / 2,
+    // The vehicle frame is the rear axle centre (guide 1.3.1), and that is the
+    // point the follower puts on the line. The body runs from the rear
+    // overhang behind it to wheelbase + front overhang ahead of it.
+    FRONT: WB + veh.front_overhang, REAR: veh.rear_overhang,
+  };
+}
 
 const S = {                    // the whole editor state
   meta: null, grids: {}, layer: null,
   ctrl: [],                    // [{x,y}] control points, the things you drag
   line: null,                  // the resampled line, everything below is derived
   pins: null,                  // Float64Array of per-station speed caps, +Inf = none
-  orig: null,                  // the line as loaded, for the delta column
+  orig: null,                  // the line as loaded, for the ghost and the delta column
   N: 0, limits: {}, history: [], hover: -1,
+  sel: new Set(), primary: -1,  // selected handle indices; primary = last clicked
+  refs: [],                    // comparison lines, see addRef()
+  follower: {},
 };
 
 // ------------------------------------------------------- cyclic tridiagonal
@@ -211,8 +417,6 @@ function makeSpline(pts) {
   for (let i = 0; i < n; i++) {
     const j = (i + 1) % n;
     h[i] = Math.hypot(pts[j].x - pts[i].x, pts[j].y - pts[i].y);
-    // Coincident control points would divide by zero below. Nudging is kinder
-    // than refusing: you get this by dropping a handle on top of another.
     // A floor only against division by zero. NOT MIN_GAP: h IS the chord
     // length, and substituting anything else for it silently reparameterises
     // the spline -- clamping to 0.25 here put max|kappa| at 1.908, past the
@@ -248,16 +452,16 @@ function evalSeg(sp, vals, m, i, u) {
 
 // --------------------------------------------------- resample to uniform ds
 // planning/raceline.py:60 takes lap_len = s[-1] + (s[1]-s[0]) and pure_pursuit
-// turns that into a metres-per-index conversion (lines 945, 958, 997, 1012).
-// Non-uniform spacing therefore mis-places the speed target with no error
-// anywhere -- so the line is ALWAYS re-sampled, and s is written as exactly
-// j*(L/N) rather than accumulated, which makes ds uniform by construction.
-function resample(sp, N) {
+// turns that into a metres-per-index conversion. Non-uniform spacing therefore
+// mis-places the speed target with no error anywhere -- so the line is ALWAYS
+// re-sampled, and s is written as exactly j*(L/N) rather than accumulated,
+// which makes ds uniform by construction.
+function resample(sp, N, perSeg = DENSE_PER_SEG) {
   const dense = [];
   let acc = 0;
   for (let i = 0; i < sp.n; i++) {
-    for (let k = 0; k < DENSE_PER_SEG; k++) {
-      const u = sp.h[i] * k / DENSE_PER_SEG;
+    for (let k = 0; k < perSeg; k++) {
+      const u = sp.h[i] * k / perSeg;
       const px = evalSeg(sp, sp.x, sp.mx, i, u).p;
       const py = evalSeg(sp, sp.y, sp.my, i, u).p;
       if (dense.length) acc += Math.hypot(px - dense[dense.length - 1].x,
@@ -297,6 +501,39 @@ function resample(sp, N) {
 // --------------------------------------------------------------- the grid
 // Cell-centre indexing. The floor convention also present in this repo
 // (scan_alignment.py:117) is half a cell off and costs 0.019 m of median width.
+// Isolated non-free blobs of at most `maxCells` cells that do not touch the map
+// edge. Mapping leaves them in open track (track_clean has a two-cell 'unknown'
+// speck 0.13 m left of the start-straight line at x 0.89, y -3.34), and every
+// width, footprint and corridor treats them as walls: the shipped line's width
+// column dips to 0.116 m there. Nothing on a real track is 5 cm across and
+// free-standing. Returns the data with them freed, and a mask of what went.
+function despeck(meta, bytes, maxCells) {
+  const { w, h } = meta, n = w * h;
+  const data = Uint8Array.from(bytes), mask = new Uint8Array(n), seen = new Uint8Array(n);
+  let count = 0;
+  const stack = [], comp = [];
+  for (let s = 0; s < n; s++) {
+    if (bytes[s] >= FREE || seen[s]) continue;
+    comp.length = 0; stack.push(s); seen[s] = 1;
+    let edge = false;
+    while (stack.length) {
+      const q = stack.pop(), r = (q / w) | 0, c = q - r * w;
+      comp.push(q);
+      if (r === 0 || c === 0 || r === h - 1 || c === w - 1) edge = true;
+      for (const nq of [q - 1, q + 1, q - w, q + w]) {
+        if (nq < 0 || nq >= n || seen[nq] || bytes[nq] >= FREE) continue;
+        if ((nq === q - 1 || nq === q + 1) && ((nq / w) | 0) !== r) continue;
+        seen[nq] = 1; stack.push(nq);
+      }
+    }
+    if (!edge && comp.length <= maxCells) {
+      for (const q of comp) { data[q] = FREE; mask[q] = 1; }
+      count++;
+    }
+  }
+  return { data, mask, count };
+}
+
 function Grid(meta, bytes) {
   const { w, h, res } = meta, ox = meta.origin[0], oy = meta.origin[1];
   const g = {
@@ -308,7 +545,7 @@ function Grid(meta, bytes) {
     free(c, r) { return c >= 0 && c < w && r >= 0 && r < h && bytes[r * w + c] >= FREE; },
   };
   // Bucket every non-free cell so the nearest-obstacle cap is a local scan
-  // rather than a sweep over all ~26k of them per point per drag frame.
+  // rather than a sweep over all of them per point per drag frame.
   const BS = 0.5;
   g.bs = BS;
   g.bw = Math.ceil(w * res / BS) + 1;
@@ -320,8 +557,7 @@ function Grid(meta, bytes) {
       if (bytes[r * w + c] >= FREE) continue;
       // BOUNDARY cells only. The nearest non-free cell to a point standing in
       // free space is always one with a free neighbour, so an interior wall
-      // cell can never win -- and dropping them takes icra's candidate set from
-      // ~25k to ~2.4k, which is what makes the cap affordable every frame.
+      // cell can never win.
       if (!solid(c - 1, r) || !solid(c + 1, r) || !solid(c, r - 1) || !solid(c, r + 1)) {
         // keep it
       } else continue;
@@ -352,10 +588,7 @@ function widths(g, x, y, psi) {
   const b0x = Math.floor((x - g.ox) / g.bs), b0y = Math.floor((y - g.oy) / g.bs);
   const maxRing = Math.ceil(MAX_RAY / g.bs);
   // Expand in square rings and stop as soon as nothing further out could be
-  // closer than what we already have. A flat scan of every bucket within 3 m is
-  // ~3M distance tests per rebuild on icra, which is too slow to drag against;
-  // the nearest wall is almost always one or two buckets away, so this ends
-  // after a couple of rings and the result is identical.
+  // closer than what we already have.
   for (let ring = 0; ring <= maxRing; ring++) {
     if (ring > 0 && (ring - 1) * g.bs >= Math.max(wr, wl)) break;
     for (let by = b0y - ring; by <= b0y + ring; by++) {
@@ -379,25 +612,66 @@ function widths(g, x, y, psi) {
   return [wr, wl];
 }
 
+// The body's distance to the nearest wall with the rear axle on (x, y) facing
+// psi. Negative = the rectangle overlaps a wall cell. This is what a respawn is
+// made of, and it is NOT min(w_left, w_right) - half width: in a corner the
+// front of the car swings out past the line by about FRONT^2 kappa / 2, which
+// is 0.12 m at kappa 1.4. Each wall cell is treated as a disc of res/2.
+function footprint(g, x, y, psi) {
+  const c = Math.cos(psi), s = Math.sin(psi);
+  const hx = (CAR.FRONT + CAR.REAR) / 2, hy = CAR.HALF_W, off = (CAR.FRONT - CAR.REAR) / 2;
+  const mx = x + c * off, my = y + s * off;
+  const R = Math.hypot(hx, hy) + FOOT_MAX, R2 = R * R;
+  const bx0 = Math.max(0, Math.floor((mx - R - g.ox) / g.bs));
+  const bx1 = Math.min(g.bw - 1, Math.floor((mx + R - g.ox) / g.bs));
+  const by0 = Math.max(0, Math.floor((my - R - g.oy) / g.bs));
+  const by1 = Math.min(g.bh - 1, Math.floor((my + R - g.oy) / g.bs));
+  let best = FOOT_MAX;
+  for (let by = by0; by <= by1; by++) {
+    for (let bx = bx0; bx <= bx1; bx++) {
+      const cell = g.buckets[by * g.bw + bx];
+      for (let k = 0; k < cell.length; k += 2) {
+        const vx = cell[k] - mx, vy = cell[k + 1] - my;
+        if (vx * vx + vy * vy > R2) continue;
+        const lx = c * vx + s * vy, ly = -s * vx + c * vy;
+        const dx = Math.abs(lx) - hx, dy = Math.abs(ly) - hy;
+        let d = (dx > 0 || dy > 0) ? Math.hypot(Math.max(dx, 0), Math.max(dy, 0))
+                                   : Math.max(dx, dy);
+        d -= g.res / 2;
+        if (d < best) best = d;
+      }
+    }
+  }
+  return best;
+}
+
 // ------------------------------------------------------- velocity profile
-// tools/reprofile_raceline.py:158-204, ported. Same seed, same friction
-// circle, same forward/backward passes, same convergence test -- so a profile
-// planned here and one planned by that CLI are the same object.
+// tools/reprofile_raceline.py's plan(), ported, with two changes that make it
+// the car rather than a convention:
+//   drag   the simulator's linear 0.273 v, taken off the forward pass and
+//          added to the backward pass (VEHICLE_MODEL.md 3.3)
+//   steer  a ceiling v <= rate_max (1 + (kL)^2) / (L |dk/ds|): the steering
+//          actuator slews at 3.2 rad/s, and delta = atan(kL) has to keep up
+//          with the curvature the car passes through (VEHICLE_MODEL.md 3.5)
 //
-// `pins` is the only addition: a per-station CAP folded into the seed. The
-// passes then re-impose the real limits around it, which is what makes a hand
-// edit produce a drivable profile instead of a drawn one.
-function plan(kap, ds, L, pins) {
-  const n = kap.length, a_lat = L.a_lat;
+// `pins` is a per-station CAP folded into the seed. The passes then re-impose
+// the real limits around it, which is what makes a hand edit produce a
+// drivable profile instead of a drawn one.
+function plan(kap, ds, L, pins, steerLimit) {
+  const n = kap.length, a_lat = L.a_lat, WB = CAR.WB, drag = CAR.drag;
   const circle = (v, k) => {
     const used = Math.min(v * v * Math.abs(k) / a_lat, 1);
     return Math.sqrt(Math.max(0, 1 - used * used));
   };
-  const ceil = new Float64Array(n);          // the grip ceiling, drawn behind your edits
-  const v = new Float64Array(n);
+  const ceil = new Float64Array(n), vsteer = new Float64Array(n), v = new Float64Array(n);
   for (let i = 0; i < n; i++) {
-    ceil[i] = Math.max(Math.min(L.v_max, Math.sqrt(a_lat / Math.max(Math.abs(kap[i]), 1e-6))),
-                       L.v_min);
+    const k = kap[i];
+    const kp = (kap[(i + 1) % n] - kap[(i - 1 + n) % n]) / (2 * ds);
+    const perV = Math.abs(kp) * WB / (1 + (k * WB) ** 2);   // rad/s per m/s
+    vsteer[i] = perV > 1e-9 ? CAR.STEER_RATE / perV : Infinity;
+    let c = Math.min(L.v_max, Math.sqrt(a_lat / Math.max(Math.abs(k), 1e-6)));
+    if (steerLimit) c = Math.min(c, vsteer[i]);
+    ceil[i] = Math.max(c, L.v_min);
     v[i] = pins && isFinite(pins[i]) ? Math.min(ceil[i], Math.max(pins[i], L.v_min)) : ceil[i];
   }
   for (let pass = 0; pass < PASSES; pass++) {
@@ -406,12 +680,12 @@ function plan(kap, ds, L, pins) {
       const j = (i + 1) % n;
       let a = L.a_accel * circle(v[i], kap[i]);
       if (L.power > 0) a = Math.min(a, L.power / Math.max(v[i], 1e-3));
-      a -= L.drag * v[i];
+      a -= drag * v[i];
       v[j] = Math.min(v[j], Math.sqrt(Math.max(0, v[i] * v[i] + 2 * a * ds)));
     }
     for (let i = n - 1; i >= 0; i--) {
       const j = (i + 1) % n;
-      const a = L.a_brake * circle(v[j], kap[j]) + L.drag * v[j];
+      const a = L.a_brake * circle(v[j], kap[j]) + drag * v[j];
       v[i] = Math.min(v[i], Math.sqrt(Math.max(0, v[j] * v[j] + 2 * a * ds)));
     }
     for (let i = 0; i < n; i++) v[i] = Math.max(v[i], L.v_min);
@@ -419,73 +693,212 @@ function plan(kap, ds, L, pins) {
     for (let i = 0; i < n; i++) worst = Math.max(worst, Math.abs(v[i] - before[i]));
     if (worst < 1e-9) break;
   }
-  return { v, ceil };
+  return { v, ceil, vsteer };
 }
 
-// What a line actually demands -- reprofile_raceline.stats(), same fields.
-function summarise(line) {
-  const n = line.N, v = line.v, k = line.kap, ds = line.ds;
-  let aLat = 0, aAcc = -1e9, aBrk = 1e9, pw = 0, t = 0, minClear = 1e9;
-  for (let i = 0; i < n; i++) {
-    const j = (i + 1) % n;
-    aLat = Math.max(aLat, v[i] * v[i] * Math.abs(k[i]));
-    const al = (v[j] * v[j] - v[i] * v[i]) / (2 * ds);
-    aAcc = Math.max(aAcc, al); aBrk = Math.min(aBrk, al);
-    pw = Math.max(pw, al * v[i]);
-    t += ds / Math.max(0.5 * (v[i] + v[j]), 1e-3);
-    minClear = Math.min(minClear, line.margin[i]);
-  }
-  let kmax = 0;
-  for (let i = 0; i < n; i++) kmax = Math.max(kmax, Math.abs(k[i]));
-  // How close the line comes to ANOTHER part of itself. pure_pursuit finds the
-  // current station by argmin over every point (line 913), so where two parts of
-  // the lap run closer together than the lookahead can reach, a large lateral
-  // error can snap the controller onto the wrong branch -- and nothing
-  // downstream notices. icra's shipped line is already at 2.06 m against a
-  // lookahead_max of 2.20, so an edit that pulls two branches together makes a
-  // pre-existing hazard worse.
-  const apart = Math.round(3.0 / ds);
-  let branch = 1e9;
-  for (let i = 0; i < n; i++) {
-    for (let j = i + apart; j < n - Math.min(apart, i); j++) {
-      const d = (line.x[i] - line.x[j]) ** 2 + (line.y[i] - line.y[j]) ** 2;
-      if (d < branch) branch = d;
-    }
-  }
-  branch = Math.sqrt(branch);
-  return { lap: line.lap, time: t, aLat, aAcc, aBrk, power: pw, kmax, minClear, branch };
-}
-
-// ------------------------------------------------------------- the pipeline
-// One edit -> one call. Everything downstream of the control points is derived
-// here and nowhere else, so there is no way for the picture, the numbers and
-// the saved file to disagree.
-function rebuild() {
-  const sp = makeSpline(S.ctrl);
-  const line = resample(sp, S.N);
-  const g = S.grids[S.layer];
-  line.wr = new Float64Array(S.N);
-  line.wl = new Float64Array(S.N);
-  line.margin = new Float64Array(S.N);
-  for (let i = 0; i < S.N; i++) {
+// Widths, footprint clearance and the profile for any resampled line. `fileV`
+// keeps a loaded profile instead of planning one (the ghost, or a reference
+// shown "as the file drives it").
+function deriveLine(line, g, L, opts) {
+  const N = line.N;
+  line.wr = new Float64Array(N); line.wl = new Float64Array(N);
+  line.margin = new Float64Array(N); line.foot = new Float64Array(N);
+  for (let i = 0; i < N; i++) {
     const [wr, wl] = widths(g, line.x[i], line.y[i], line.psi[i]);
     line.wr[i] = wr; line.wl[i] = wl;
     // planning/raceline.py:50 -- the wall on the INSIDE of this point's curve.
-    line.margin[i] = (line.kap[i] > 0 ? wl : wr) - HALF_WIDTH;
+    line.margin[i] = (line.kap[i] > 0 ? wl : wr) - CAR.HALF_W;
+    line.foot[i] = footprint(g, line.x[i], line.y[i], line.psi[i]);
   }
-  const { v, ceil } = plan(line.kap, line.ds, S.limits, S.pins);
-  line.v = v; line.ceil = ceil;
-  line.stats = summarise(line);
-  S.line = line;
+  const p = plan(line.kap, line.ds, L, opts.pins, opts.steerLimit);
+  line.ceil = p.ceil; line.vsteer = p.vsteer;
+  line.v = opts.fileV ? opts.fileV : p.v;
+  analyse(line, L);
+  return line;
+}
+
+// What a line actually demands, per station and at worst.
+function analyse(line, L) {
+  const n = line.N, v = line.v, k = line.kap, ds = line.ds, WB = CAR.WB, drag = CAR.drag;
+  const ax = new Float64Array(n), axT = new Float64Array(n), ay = new Float64Array(n);
+  const steer = new Float64Array(n), gripPlan = new Float64Array(n), gripPhys = new Float64Array(n);
+  const t = new Float64Array(n + 1);
+  const W = {                                   // [value, station] of each worst case
+    kmax: [0, 0], aLat: [0, 0], aAcc: [-1e9, 0], aBrk: [1e9, 0], trac: [-1e9, 0], brake: [-1e9, 0],
+    steer: [0, 0], gripPhys: [0, 0], vmax: [0, 0], foot: [1e9, 0], margin: [1e9, 0],
+    lateralPhys: [0, 0],
+  };
+  const hi = (key, val, i) => { if (val > W[key][0]) W[key] = [val, i]; };
+  const lo = (key, val, i) => { if (val < W[key][0]) W[key] = [val, i]; };
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    ax[i] = (v[j] * v[j] - v[i] * v[i]) / (2 * ds);
+    // What the TYRE supplies: accelerating it also fights drag, braking drag helps.
+    axT[i] = ax[i] >= 0 ? ax[i] + drag * v[i] : ax[i] + drag * v[j];
+    ay[i] = v[i] * v[i] * k[i];
+    const kp = (k[j] - k[(i - 1 + n) % n]) / (2 * ds);
+    steer[i] = Math.abs(kp) * v[i] * WB / (1 + (k[i] * WB) ** 2);
+    const capX = axT[i] >= 0 ? L.a_accel : L.a_brake;
+    gripPlan[i] = Math.hypot(axT[i] / capX, ay[i] / L.a_lat);
+    gripPhys[i] = Math.hypot(axT[i] / CAR.AX_PEAK, ay[i] / CAR.AY_PEAK);
+    t[i + 1] = t[i] + ds / Math.max(0.5 * (v[i] + v[j]), 1e-3);
+    hi('kmax', Math.abs(k[i]), i); hi('aLat', Math.abs(ay[i]), i);
+    hi('aAcc', ax[i], i); lo('aBrk', ax[i], i);
+    hi('trac', axT[i], i); hi('brake', -axT[i], i);
+    hi('steer', steer[i], i); hi('gripPhys', gripPhys[i], i); hi('vmax', v[i], i);
+    lo('foot', line.foot[i], i); lo('margin', line.margin[i], i);
+  }
+  // How close the line comes to ANOTHER part of itself. pure_pursuit finds the
+  // current station by argmin over every point, so where two parts of the lap
+  // run closer together than the lookahead can reach, a large lateral error
+  // can snap the controller onto the wrong branch.
+  const apart = Math.round(3.0 / ds);
+  let branch = 1e9, bi = 0;
+  for (let i = 0; i < n; i++) {
+    // Stations at least `apart` from i ALONG THE LOOP, both ways round: the
+    // upper bound excludes the ones just behind i across the seam, which the
+    // old `n - min(apart, i)` let through at i = 0 (a 0.10 m "gap" to s[-1]).
+    for (let j = i + apart; j <= i + n - apart && j < n; j++) {
+      const d = (line.x[i] - line.x[j]) ** 2 + (line.y[i] - line.y[j]) ** 2;
+      if (d < branch) { branch = d; bi = i; }
+    }
+  }
+  Object.assign(line, { ax, axT, ay, steer, gripPlan, gripPhys, t });
+  line.W = W;
+  line.stats = {
+    lap: line.lap, time: t[n], kmax: W.kmax[0], aLat: W.aLat[0], aAcc: W.aAcc[0],
+    aBrk: W.aBrk[0], steer: W.steer[0], foot: W.foot[0], margin: W.margin[0],
+    branch: Math.sqrt(branch), branchAt: bi, vmax: W.vmax[0],
+  };
+}
+
+// Sum of how far the GEOMETRY is past what no speed can fix. A drag may not
+// raise it; comparing sums rather than maxima means a move that opens a new,
+// smaller violation somewhere else is still caught.
+function geomScore(line, hard) {
+  let s = 0;
+  for (let i = 0; i < line.N; i++) {
+    s += Math.max(0, Math.abs(line.kap[i]) - CAR.KLOCK);
+    s += Math.max(0, hard - line.foot[i]);
+  }
+  return s;
+}
+
+// A line from CSV rows, as the follower will read it: the file's own x, y,
+// psi and kappa, not a refit.
+function lineFromRows(rows) {
+  const N = rows.length, ds = rows[1][0] - rows[0][0];
+  const col = (c) => Float64Array.from(rows, r => r[c]);
+  return {
+    N, ds, lap: rows[N - 1][0] + ds, s: col(0), x: col(1), y: col(2), psi: col(3), kap: col(4),
+    fileV: rows[0].length > 7 ? col(7) : null,
+  };
+}
+
+// Rotate/reverse a line so it starts where `ref` starts and runs the same way.
+// Every comparison (time delta, replay, the speed overlay) assumes this.
+function alignTo(line, x0, y0, psi0) {
+  const N = line.N;
+  let best = 0, bd = 1e18;
+  for (let i = 0; i < N; i++) {
+    const d = (line.x[i] - x0) ** 2 + (line.y[i] - y0) ** 2;
+    if (d < bd) { bd = d; best = i; }
+  }
+  const reverse = Math.cos(line.psi[best] - psi0) < 0;
+  const idx = (m) => reverse ? (best - m + N) % N : (best + m) % N;
+  const pick = (arr, f) => arr ? Float64Array.from({ length: N }, (_, m) => f(arr[idx(m)])) : null;
+  const out = {
+    N, ds: line.ds, lap: line.lap, reversed: reverse,
+    s: Float64Array.from({ length: N }, (_, m) => m * line.ds),
+    x: pick(line.x, v => v), y: pick(line.y, v => v),
+    psi: pick(line.psi, v => reverse ? Math.atan2(-Math.sin(v), -Math.cos(v)) : v),
+    kap: pick(line.kap, v => reverse ? -v : v),
+    fileV: pick(line.fileV, v => v),
+  };
+  return out;
+}
+
+// --------------------------------------------------------- line generators
+// Stand-ins for optimize_raceline.py's TUM min-curvature and shortest-path
+// solves, which need numpy/tph and cannot run on this host. Same formulation
+// as its solve_scipy(): lateral offsets alpha along the normals of a reference,
+// bounded by the corridor minus (half width + safety), objective the squared
+// second difference (curvature) or first difference (length). Solved by
+// projected SOR, coarse to fine so the smooth modes converge, re-measuring the
+// corridor around the current solution at every level.
+function resampleXY(x, y, n) {
+  const pts = [];
+  for (let i = 0; i < x.length; i++) pts.push({ x: x[i], y: y[i] });
+  return resample(makeSpline(pts), n, 24);
+}
+
+// beta (1/m^2) blends in path length: J = sum|D2|^2/ds^4 + beta sum|D1|^2/ds^2.
+// 0 is pure minimum curvature; large beta approaches the shortest path, whose
+// taut-string corners are past the steering lock on any real track.
+function generateLine(beta, seed, g, margin) {
+  let x = seed.x, y = seed.y;
+  const N = seed.N;
+  const levels = [50, 100, 200, N, N, N];
+  const sweeps = [4000, 2500, 1500, 800, 600, 600];
+  const omega = 1.7;
+  for (let lv = 0; lv < levels.length; lv++) {
+    const n = levels[lv], b = resampleXY(x, y, n);
+    const nx = new Float64Array(n), ny = new Float64Array(n);
+    const lo = new Float64Array(n), hi = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      nx[i] = -Math.sin(b.psi[i]); ny[i] = Math.cos(b.psi[i]);   // LEFT normal
+      const [wr, wl] = widths(g, b.x[i], b.y[i], b.psi[i]);
+      lo[i] = -(wr - margin); hi[i] = wl - margin;
+      if (lo[i] > hi[i]) lo[i] = hi[i] = (lo[i] + hi[i]) / 2;
+    }
+    const px = Float64Array.from(b.x), py = Float64Array.from(b.y), al = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      al[i] = Math.min(Math.max(0, lo[i]), hi[i]);
+      px[i] = b.x[i] + al[i] * nx[i]; py[i] = b.y[i] + al[i] * ny[i];
+    }
+    const P = (i) => (i + n) % n;
+    const wLen = beta * b.ds * b.ds;          // the length term in curvature units
+    for (let sw = 0; sw < sweeps[lv]; sw++) {
+      for (let i = 0; i < n; i++) {
+        // The terms of J that contain alpha_i, each with alpha_i's own
+        // contribution taken out, give alpha_i's exact 1-D minimiser.
+        let num = 0;
+        for (let d = -1; d <= 1; d++) {
+          const j = P(i + d), c = d === 0 ? -2 : 1;
+          const rx = px[P(j - 1)] - 2 * px[j] + px[P(j + 1)] - c * al[i] * nx[i];
+          const ry = py[P(j - 1)] - 2 * py[j] + py[P(j + 1)] - c * al[i] * ny[i];
+          num += c * (nx[i] * rx + ny[i] * ry);
+        }
+        if (wLen > 0) {
+          const i0 = P(i - 1), i1 = P(i + 1);
+          const qx = px[i] - al[i] * nx[i], qy = py[i] - al[i] * ny[i];
+          // e_{i-1} = p_i - p_{i-1} (coef +1), e_i = p_{i+1} - p_i (coef -1)
+          num += wLen * ((nx[i] * (qx - px[i0]) + ny[i] * (qy - py[i0])) -
+                         (nx[i] * (px[i1] - qx) + ny[i] * (py[i1] - qy)));
+        }
+        const target = -num / (6 + 2 * wLen);
+        const a = Math.min(Math.max(al[i] + omega * (target - al[i]), lo[i]), hi[i]);
+        al[i] = a; px[i] = b.x[i] + a * nx[i]; py[i] = b.y[i] + a * ny[i];
+      }
+    }
+    x = px; y = py;
+  }
+  return resampleXY(x, y, N);
 }
 </script>
 <script>
 'use strict';
 
 const $ = (id) => document.getElementById(id);
-const mapCv = $('map'), profCv = $('prof');
-let view = null;                 // world <-> screen for the map pane
+const mapCv = $('map'), mapCvB = $('mapB'), profCv = $('prof');
+const dprOf = () => devicePixelRatio || 1;
 let drag = null;                 // what the pointer currently owns
+const VIEW = { cx: 0, cy: 0, ppm: 30 };      // shared by both map panes (device px per metre)
+const PROF = { s0: 0, s1: 1 };               // visible distance range of the profile
+const PG = {};                               // profile geometry of the last draw
+const RACE = { on: false, T: 0, last: 0 };
+const REF_COLOURS = ['#ff7eb6', '#b48cff', '#5fd7ff', '#ffa94d', '#9be564', '#ff6b6b'];
+let splitIdx = 0;                            // which reference the right pane shows
 
 function toast(msg, cls) {
   const t = $('toast');
@@ -494,22 +907,65 @@ function toast(msg, cls) {
   toast.t = setTimeout(() => { t.style.display = 'none'; }, cls === 'bad' ? 9000 : 4000);
 }
 
+function setStatus(msg) {
+  const el = $('status');
+  if (!msg) { el.style.display = 'none'; return; }
+  el.textContent = msg; el.style.display = 'block';
+  clearTimeout(setStatus.t);
+  setStatus.t = setTimeout(() => { el.style.display = 'none'; }, 2500);
+}
+
 // ------------------------------------------------------------------- view
+function sizeCanvas(cv) {
+  const r = cv.getBoundingClientRect(), dpr = dprOf();
+  const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+}
+
 function fitView() {
-  const g = S.grids[S.layer], r = mapCv.getBoundingClientRect();
-  const dpr = devicePixelRatio || 1;
-  mapCv.width = Math.round(r.width * dpr); mapCv.height = Math.round(r.height * dpr);
-  const wx = g.w * g.res, wy = g.h * g.res, pad = 14 * dpr;
-  const k = Math.min((mapCv.width - 2 * pad) / wx, (mapCv.height - 2 * pad) / wy);
-  view = {
-    k, dpr,
-    ox: (mapCv.width - wx * k) / 2, oy: (mapCv.height - wy * k) / 2,
-    // map y is up, canvas y is down -- the same flip svg_report.track_map makes.
-    sx: (x) => view.ox + (x - g.ox) * k,
-    sy: (y) => view.oy + (g.oy + wy - y) * k,
-    wx: (px) => g.ox + (px - view.ox) / k,
-    wy: (py) => g.oy + wy - (py - view.oy) / k,
-  };
+  const g = S.grids[S.layer];
+  sizeCanvas(mapCv);
+  const pad = 14 * dprOf(), wx = g.w * g.res, wy = g.h * g.res;
+  VIEW.ppm = Math.min((mapCv.width - 2 * pad) / wx, (mapCv.height - 2 * pad) / wy);
+  VIEW.cx = g.ox + wx / 2; VIEW.cy = g.oy + wy / 2;
+  PROF.s0 = 0; PROF.s1 = S.line ? S.line.lap : 1;
+}
+
+// map y is up, canvas y is down -- the same flip svg_report.track_map makes.
+const sx = (cv, x) => cv.width / 2 + (x - VIEW.cx) * VIEW.ppm;
+const sy = (cv, y) => cv.height / 2 - (y - VIEW.cy) * VIEW.ppm;
+const wxOf = (cv, px) => VIEW.cx + (px - cv.width / 2) / VIEW.ppm;
+const wyOf = (cv, py) => VIEW.cy - (py - cv.height / 2) / VIEW.ppm;
+
+function zoomAt(cv, px, py, f) {
+  const wx = wxOf(cv, px), wy = wyOf(cv, py);
+  VIEW.ppm = Math.min(Math.max(VIEW.ppm * f, 2), 4000);
+  VIEW.cx = wx - (px - cv.width / 2) / VIEW.ppm;
+  VIEW.cy = wy + (py - cv.height / 2) / VIEW.ppm;
+}
+
+function centreOn(i, minPpm) {
+  const L = S.line;
+  VIEW.cx = L.x[i]; VIEW.cy = L.y[i];
+  if (minPpm && VIEW.ppm < minPpm * dprOf()) VIEW.ppm = minPpm * dprOf();
+}
+
+// (Re)build every layer's Grid from the raw bytes, with or without specks.
+function buildGrids() {
+  const on = $('despeck').checked, maxCells = Math.max(0, parseInt($('speckCells').value, 10) || 0);
+  const notes = [];
+  for (const m of S.meta) {
+    let bytes = S.raw[m.name], mask = null;
+    if (on && maxCells > 0) {
+      const d = despeck(m, bytes, maxCells);
+      bytes = d.data; mask = d.mask;
+      notes.push(`${m.name}: ${d.count}`);
+    }
+    S.grids[m.name] = Grid(m, bytes);
+    S.grids[m.name].speckMask = mask;
+  }
+  $('speckNote').textContent = on ? `specks freed — ${notes.join(', ')} (shown orange)` :
+    'specks are treated as walls';
 }
 
 function gridImage(g) {
@@ -523,6 +979,7 @@ function gridImage(g) {
     // the line and the handles stay legible on top of it.
     const s = v >= FREE ? 226 : (v === 0 ? 24 : 92);
     im.data[i * 4] = s; im.data[i * 4 + 1] = s; im.data[i * 4 + 2] = s;
+    if (g.speckMask && g.speckMask[i]) { im.data[i * 4] = 255; im.data[i * 4 + 1] = 150; im.data[i * 4 + 2] = 40; }
     im.data[i * 4 + 3] = 255;
   }
   c.getContext('2d').putImageData(im, 0, 0);
@@ -530,149 +987,488 @@ function gridImage(g) {
   return c;
 }
 
-// Clearance -> colour. Green at comfortable, amber approaching the threshold,
-// red past it. The threshold is yours; nothing is ever blocked.
+// ----------------------------------------------------------------- colour
+const lerp3 = (a, b, f) => [0, 1, 2].map(k => Math.round(a[k] + (b[k] - a[k]) * f));
+const rgb = (c) => `rgb(${c[0]},${c[1]},${c[2]})`;
+function ramp(stops, t) {
+  t = Math.min(Math.max(t, 0), 1) * (stops.length - 1);
+  const i = Math.min(Math.floor(t), stops.length - 2);
+  return lerp3(stops[i], stops[i + 1], t - i);
+}
+const R_SPEED = [[68, 1, 84], [59, 82, 139], [33, 145, 140], [94, 201, 98], [253, 231, 37]];
+const R_USE = [[78, 201, 160], [150, 205, 110], [240, 200, 80], [240, 140, 60], [229, 72, 77]];
+const GREY = [120, 126, 138], RED = [229, 72, 77], GREEN = [78, 201, 160], OVER = [255, 61, 242];
+
 function clearColour(m) {
   const warn = parseFloat($('warn').value) || 0.10;
-  if (m < warn) return '#e5484d';
+  const hard = parseFloat($('hardClear').value) || 0;
+  if (m < hard) return rgb(OVER);
+  if (m < warn) return rgb(RED);
   if (m < warn * 2) return '#f0a04b';
-  return '#4ec9a0';
+  return rgb(GREEN);
 }
 
-function drawMap() {
-  const g = S.grids[S.layer], c = mapCv.getContext('2d'), L = S.line;
-  c.setTransform(1, 0, 0, 1, 0, 0);
-  c.fillStyle = '#14161a'; c.fillRect(0, 0, mapCv.width, mapCv.height);
-  c.imageSmoothingEnabled = false;
-  c.drawImage(gridImage(g), view.ox, view.oy, g.w * g.res * view.k, g.h * g.res * view.k);
+function useColour(u) { return u > 1.0005 ? rgb(OVER) : rgb(ramp(R_USE, u)); }
 
-  // The line as loaded, dimmed, so an edit is always visible as a change.
-  if (S.orig) {
-    c.strokeStyle = 'rgba(230,233,239,.22)'; c.lineWidth = 1.5 * view.dpr;
-    c.beginPath();
-    for (let i = 0; i <= S.orig.N; i++) {
-      const j = i % S.orig.N, X = view.sx(S.orig.x[j]), Y = view.sy(S.orig.y[j]);
-      i ? c.lineTo(X, Y) : c.moveTo(X, Y);
+function segColour(line, i, mode) {
+  const j = (i + 1) % line.N, L = S.limits;
+  switch (mode) {
+    case 'clear': return clearColour(Math.min(line.foot[i], line.foot[j]));
+    case 'speed': return rgb(ramp(R_SPEED, line.v[i] / Math.max(L.v_max, 1)));
+    case 'long': {
+      const a = line.axT[i];
+      if (a >= 0) return a > L.a_accel * 1.0005 ? rgb(OVER) : rgb(lerp3(GREY, GREEN, Math.min(a / L.a_accel, 1)));
+      return -a > L.a_brake * 1.0005 ? rgb(OVER) : rgb(lerp3(GREY, RED, Math.min(-a / L.a_brake, 1)));
     }
-    c.stroke();
+    case 'lat': return useColour(Math.abs(line.ay[i]) / L.a_lat);
+    case 'grip': return useColour(line.gripPlan[i]);
+    case 'steer': return useColour(line.steer[i] / CAR.STEER_RATE);
+    default: return '#6ea8fe';
   }
+}
 
-  // The line itself, one segment per sample, coloured by body-to-wall margin.
-  c.lineWidth = 2.6 * view.dpr; c.lineCap = 'round';
-  for (let i = 0; i < L.N; i++) {
-    const j = (i + 1) % L.N;
-    c.strokeStyle = clearColour(Math.min(L.margin[i], L.margin[j]));
+function legend(c, mode) {
+  const dpr = dprOf(), L = S.limits;
+  const x = 10 * dpr, w = 180 * dpr, h = 9 * dpr, y = c.canvas.height - 34 * dpr;
+  let title, lab0, lab1, stops;
+  switch (mode) {
+    case 'clear':
+      title = `body clearance: magenta < hard ${$('hardClear').value}, red < warn ${$('warn').value}`;
+      stops = null; break;
+    case 'speed': title = 'speed'; lab0 = '0'; lab1 = `${L.v_max} m/s`; stops = R_SPEED; break;
+    case 'long': title = 'tyre longitudinal: brake ← coast → accel (share of limit)';
+      lab0 = `−${L.a_brake}`; lab1 = `+${L.a_accel} m/s²`; stops = [RED, GREY, GREEN]; break;
+    case 'lat': title = '|a_lat| / planning a_lat'; lab0 = '0'; lab1 = '100%'; stops = R_USE; break;
+    case 'grip': title = 'friction ellipse use (planning limits)'; lab0 = '0'; lab1 = '100%'; stops = R_USE; break;
+    case 'steer': title = `steering rate / ${CAR.STEER_RATE} rad/s`; lab0 = '0'; lab1 = '100%'; stops = R_USE; break;
+    default: return;
+  }
+  c.font = `${11 * dpr}px ui-sans-serif, system-ui`;
+  const boxW = Math.max(w + 50 * dpr, c.measureText(title).width) + 12 * dpr;
+  c.fillStyle = 'rgba(20,22,26,.85)';
+  c.fillRect(x - 6 * dpr, y - 16 * dpr, boxW, 44 * dpr);
+  c.fillStyle = '#9aa3b2'; c.textAlign = 'left';
+  c.fillText(title, x, y - 4 * dpr);
+  if (!stops) return;
+  const gr = c.createLinearGradient(x, 0, x + w, 0);
+  stops.forEach((s, k) => gr.addColorStop(k / (stops.length - 1), rgb(s)));
+  c.fillStyle = gr; c.fillRect(x, y, w, h);
+  c.fillStyle = '#9aa3b2';
+  c.fillText(lab0, x, y + h + 11 * dpr);
+  c.textAlign = 'right'; c.fillText(lab1, x + w, y + h + 11 * dpr);
+  c.fillStyle = rgb(OVER); c.textAlign = 'left';
+  if (mode !== 'speed') c.fillText('■ over', x + w + 6 * dpr, y + h);
+}
+
+function scaleBar(c) {
+  const dpr = dprOf();
+  const target = 120 * dpr / VIEW.ppm;
+  const nice = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10].find(v => v >= target * 0.5) || 10;
+  const len = nice * VIEW.ppm, x = c.canvas.width - len - 14 * dpr, y = c.canvas.height - 14 * dpr;
+  c.strokeStyle = '#e6e9ef'; c.lineWidth = 2 * dpr;
+  c.beginPath(); c.moveTo(x, y); c.lineTo(x + len, y);
+  c.moveTo(x, y - 4 * dpr); c.lineTo(x, y + 1); c.moveTo(x + len, y - 4 * dpr); c.lineTo(x + len, y + 1);
+  c.stroke();
+  c.fillStyle = '#e6e9ef'; c.font = `${11 * dpr}px ui-sans-serif, system-ui`; c.textAlign = 'center';
+  c.fillText(nice < 1 ? `${Math.round(nice * 100)} cm` : `${nice} m`, x + len / 2, y - 6 * dpr);
+}
+
+// ----------------------------------------------------------------- drawing
+function strokeLoop(c, cv, line, colour, width) {
+  c.strokeStyle = colour; c.lineWidth = width;
+  c.beginPath();
+  for (let i = 0; i <= line.N; i++) {
+    const j = i % line.N, X = sx(cv, line.x[j]), Y = sy(cv, line.y[j]);
+    i ? c.lineTo(X, Y) : c.moveTo(X, Y);
+  }
+  c.stroke();
+}
+
+function colouredLoop(c, cv, line, mode, width) {
+  c.lineWidth = width; c.lineCap = 'round';
+  const W = cv.width, H = cv.height, m = 40;
+  for (let i = 0; i < line.N; i++) {
+    const j = (i + 1) % line.N;
+    const X0 = sx(cv, line.x[i]), Y0 = sy(cv, line.y[i]), X1 = sx(cv, line.x[j]), Y1 = sy(cv, line.y[j]);
+    if ((X0 < -m && X1 < -m) || (X0 > W + m && X1 > W + m) ||
+        (Y0 < -m && Y1 < -m) || (Y0 > H + m && Y1 > H + m)) continue;
+    c.strokeStyle = segColour(line, i, mode);
+    c.beginPath(); c.moveTo(X0, Y0); c.lineTo(X1, Y1); c.stroke();
+  }
+}
+
+// The body rectangle with the rear axle at (x, y).
+function drawCar(c, cv, x, y, psi, fill, stroke) {
+  const co = Math.cos(psi), si = Math.sin(psi), hw = CAR.HALF_W;
+  const pts = [[CAR.FRONT, hw], [CAR.FRONT, -hw], [-CAR.REAR, -hw], [-CAR.REAR, hw]]
+    .map(([a, b]) => [sx(cv, x + co * a - si * b), sy(cv, y + si * a + co * b)]);
+  c.beginPath();
+  pts.forEach(([X, Y], k) => k ? c.lineTo(X, Y) : c.moveTo(X, Y));
+  c.closePath();
+  if (fill) { c.fillStyle = fill; c.fill(); }
+  if (stroke) { c.strokeStyle = stroke; c.lineWidth = 1.5 * dprOf(); c.stroke(); }
+  // nose marker
+  const nx = sx(cv, x + co * CAR.FRONT), ny = sy(cv, y + si * CAR.FRONT);
+  c.beginPath(); c.arc(nx, ny, 2.5 * dprOf(), 0, 7); c.fillStyle = '#fff'; c.fill();
+}
+
+function drawGridAndBase(c, cv) {
+  const g = S.grids[S.layer];
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  c.fillStyle = '#14161a'; c.fillRect(0, 0, cv.width, cv.height);
+  c.imageSmoothingEnabled = false;
+  const X = sx(cv, g.ox), Y = sy(cv, g.oy + g.h * g.res);
+  c.drawImage(gridImage(g), X, Y, g.w * g.res * VIEW.ppm, g.h * g.res * VIEW.ppm);
+  // Cell edges once a cell is big enough to place a point inside it on purpose.
+  const cellPx = g.res * VIEW.ppm;
+  if (cellPx >= 14) {
+    c.strokeStyle = 'rgba(0,0,0,.10)'; c.lineWidth = 1;
+    const c0 = Math.max(0, Math.floor((wxOf(cv, 0) - g.ox) / g.res));
+    const c1 = Math.min(g.w, Math.ceil((wxOf(cv, cv.width) - g.ox) / g.res));
+    const r0 = Math.max(0, Math.floor((wyOf(cv, cv.height) - g.oy) / g.res));
+    const r1 = Math.min(g.h, Math.ceil((wyOf(cv, 0) - g.oy) / g.res));
     c.beginPath();
-    c.moveTo(view.sx(L.x[i]), view.sy(L.y[i]));
-    c.lineTo(view.sx(L.x[j]), view.sy(L.y[j]));
+    for (let k = c0; k <= c1; k++) { const px = sx(cv, g.ox + k * g.res); c.moveTo(px, 0); c.lineTo(px, cv.height); }
+    for (let k = r0; k <= r1; k++) { const py = sy(cv, g.oy + k * g.res); c.moveTo(0, py); c.lineTo(cv.width, py); }
     c.stroke();
   }
+}
+
+function carAt(line, T) {
+  const lapT = line.t[line.N], tt = ((T % lapT) + lapT) % lapT;
+  let lo = 0, hi = line.N;
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (line.t[m] <= tt) lo = m; else hi = m; }
+  const j = (lo + 1) % line.N, f = (tt - line.t[lo]) / Math.max(line.t[lo + 1] - line.t[lo], 1e-9);
+  let dpsi = line.psi[j] - line.psi[lo];
+  dpsi = Math.atan2(Math.sin(dpsi), Math.cos(dpsi));
+  return { x: line.x[lo] + f * (line.x[j] - line.x[lo]), y: line.y[lo] + f * (line.y[j] - line.y[lo]),
+           psi: line.psi[lo] + f * dpsi, i: lo, lap: Math.floor(T / lapT), v: line.v[lo] };
+}
+
+function drawMapA() {
+  const cv = mapCv, c = cv.getContext('2d'), L = S.line, dpr = dprOf();
+  sizeCanvas(cv);
+  drawGridAndBase(c, cv);
+  const mode = $('colorMode').value;
+  const split = $('maps').classList.contains('split');
+
+  if (S.orig && $('showOrig').checked) strokeLoop(c, cv, S.orig, 'rgba(230,233,239,.28)', 1.5 * dpr);
+  if (!split) {
+    for (const r of S.refs) if (r.visible) strokeLoop(c, cv, r.line, r.colour, 1.6 * dpr);
+  }
+  colouredLoop(c, cv, L, mode, 3 * dpr);
 
   // s = 0, kept where the loaded file had it so two lines stay comparable.
   c.fillStyle = '#6ea8fe';
-  c.beginPath(); c.arc(view.sx(L.x[0]), view.sy(L.y[0]), 4 * view.dpr, 0, 7); c.fill();
+  c.beginPath(); c.arc(sx(cv, L.x[0]), sy(cv, L.y[0]), 5 * dpr, 0, 7); c.fill();
 
-  // Handles.
-  for (let i = 0; i < S.ctrl.length; i++) {
-    const p = S.ctrl[i], X = view.sx(p.x), Y = view.sy(p.y);
-    c.beginPath(); c.arc(X, Y, (drag && drag.kind === 'ctrl' && drag.i === i ? 7 : 5) * view.dpr,
-                         0, 7);
-    c.fillStyle = '#ffd166'; c.fill();
-    c.lineWidth = 1.5 * view.dpr; c.strokeStyle = '#14161a'; c.stroke();
+  if ($('showHandles').checked) {
+    for (let i = 0; i < S.ctrl.length; i++) {
+      const p = S.ctrl[i], X = sx(cv, p.x), Y = sy(cv, p.y);
+      const sel = S.sel.has(i), active = drag && drag.kind === 'ctrl' && drag.i === i;
+      c.beginPath(); c.arc(X, Y, (active || sel ? 6.5 : 4.5) * dpr, 0, 7);
+      c.fillStyle = sel ? '#ffffff' : '#ffd166'; c.fill();
+      c.lineWidth = 1.5 * dpr; c.strokeStyle = sel ? '#ffd166' : '#14161a'; c.stroke();
+    }
+    // Precision crosshair on the selected handles when zoomed in.
+    if (S.sel.size && VIEW.ppm > 300 * dpr) {
+      c.strokeStyle = 'rgba(255,209,102,.6)'; c.lineWidth = 1;
+      c.beginPath();
+      for (const i of S.sel) {
+        const X = sx(cv, S.ctrl[i].x), Y = sy(cv, S.ctrl[i].y);
+        c.moveTo(X - 18 * dpr, Y); c.lineTo(X + 18 * dpr, Y);
+        c.moveTo(X, Y - 18 * dpr); c.lineTo(X, Y + 18 * dpr);
+      }
+      c.stroke();
+    }
+  }
+  if (drag && drag.kind === 'box' && drag.cv === cv) {
+    const x0 = Math.min(drag.px0, drag.px), y0 = Math.min(drag.py0, drag.py);
+    c.fillStyle = 'rgba(110,168,254,.12)'; c.strokeStyle = '#6ea8fe'; c.lineWidth = 1 * dpr;
+    c.setLineDash([5 * dpr, 3 * dpr]);
+    c.fillRect(x0, y0, Math.abs(drag.px - drag.px0), Math.abs(drag.py - drag.py0));
+    c.strokeRect(x0, y0, Math.abs(drag.px - drag.px0), Math.abs(drag.py - drag.py0));
+    c.setLineDash([]);
   }
 
   if (S.hover >= 0) {
-    const X = view.sx(L.x[S.hover]), Y = view.sy(L.y[S.hover]);
-    c.beginPath(); c.arc(X, Y, 6 * view.dpr, 0, 7);
-    c.strokeStyle = '#e6e9ef'; c.lineWidth = 2 * view.dpr; c.stroke();
+    const X = sx(cv, L.x[S.hover]), Y = sy(cv, L.y[S.hover]);
+    if ($('showFoot').checked) drawCar(c, cv, L.x[S.hover], L.y[S.hover], L.psi[S.hover],
+                                       'rgba(110,168,254,.25)', '#6ea8fe');
+    c.beginPath(); c.arc(X, Y, 6 * dpr, 0, 7);
+    c.strokeStyle = '#e6e9ef'; c.lineWidth = 2 * dpr; c.stroke();
   }
+
+  if (RACE.on || RACE.T > 0) {
+    if (!split) {
+      for (const r of S.refs) {
+        if (!r.visible) continue;
+        const p = carAt(r.line, RACE.T);
+        drawCar(c, cv, p.x, p.y, p.psi, r.colour, '#14161a');
+      }
+    }
+    const p = carAt(L, RACE.T);
+    drawCar(c, cv, p.x, p.y, p.psi, '#ffd166', '#14161a');
+  }
+  legend(c, mode);
+  scaleBar(c);
+}
+
+function drawMapB() {
+  if (!$('maps').classList.contains('split')) return;
+  const cv = mapCvB, c = cv.getContext('2d'), dpr = dprOf();
+  sizeCanvas(cv);
+  drawGridAndBase(c, cv);
+  const r = S.refs[splitIdx];
+  if (!r) {
+    $('tagB').textContent = 'no reference — add one under Compare';
+    return;
+  }
+  $('tagB').textContent = r.name;
+  $('tagB').style.color = r.colour;
+  strokeLoop(c, cv, S.line, 'rgba(255,209,102,.35)', 1.5 * dpr);
+  const mode = $('colorMode').value;
+  colouredLoop(c, cv, r.line, mode, 3 * dpr);
+  if (S.hover >= 0 && r.nearOnRef) {
+    const k = r.nearOnRef[S.hover];
+    c.beginPath(); c.arc(sx(cv, r.line.x[k]), sy(cv, r.line.y[k]), 6 * dpr, 0, 7);
+    c.strokeStyle = '#e6e9ef'; c.lineWidth = 2 * dpr; c.stroke();
+  }
+  if (RACE.on || RACE.T > 0) {
+    const p = carAt(r.line, RACE.T);
+    drawCar(c, cv, p.x, p.y, p.psi, r.colour, '#14161a');
+    const q = carAt(S.line, RACE.T);
+    drawCar(c, cv, q.x, q.y, q.psi, 'rgba(255,209,102,.45)', null);
+  }
+  legend(c, mode);
+  scaleBar(c);
 }
 
 function drawProfile() {
-  const c = profCv.getContext('2d'), L = S.line, r = profCv.getBoundingClientRect();
-  const dpr = devicePixelRatio || 1;
-  profCv.width = Math.round(r.width * dpr); profCv.height = Math.round(r.height * dpr);
+  const cv = profCv, c = cv.getContext('2d'), L = S.line, dpr = dprOf();
+  sizeCanvas(cv);
   c.setTransform(1, 0, 0, 1, 0, 0);
-  c.fillStyle = '#14161a'; c.fillRect(0, 0, profCv.width, profCv.height);
+  c.fillStyle = '#14161a'; c.fillRect(0, 0, cv.width, cv.height);
 
-  const padL = 44 * dpr, padR = 12 * dpr, padT = 12 * dpr, padB = 26 * dpr;
-  const W = profCv.width - padL - padR, H = profCv.height - padT - padB;
-  const vmax = Math.max(S.limits.v_max, 1) * 1.05;
-  const px = (s) => padL + s / L.lap * W;
+  const padL = 48 * dpr, padR = 12 * dpr, padT = 10 * dpr, gap = 22 * dpr, padB = 22 * dpr;
+  const W = cv.width - padL - padR, Htot = cv.height - padT - padB - gap;
+  const H = Math.round(Htot * 0.6), H2 = Htot - H, top2 = padT + H + gap;
+  PROF.s1 = Math.min(PROF.s1, L.lap);
+  if (PROF.s1 - PROF.s0 < 0.5) { PROF.s0 = 0; PROF.s1 = L.lap; }
+  const s0 = PROF.s0, s1 = PROF.s1;
+  const vmax = Math.max(S.limits.v_max, 1) * 1.08;
+  const px = (s) => padL + (s - s0) / (s1 - s0) * W;
   const py = (v) => padT + H * (1 - v / vmax);
-  P.px = px; P.py = py; P.W = W; P.padL = padL; P.vmax = vmax;
+  Object.assign(PG, { px, py, W, H, padL, padT, vmax, s0, s1 });
 
-  c.strokeStyle = '#2b303a'; c.lineWidth = 1 * dpr;
-  c.fillStyle = '#9aa3b2'; c.font = `${11 * dpr}px ui-sans-serif, system-ui`;
+  c.font = `${11 * dpr}px ui-sans-serif, system-ui`;
+  c.save();
+  c.beginPath(); c.rect(padL, 0, W, cv.height); c.clip();
+  // distance grid
+  const span = s1 - s0, stepS = [0.5, 1, 2, 5, 10, 20].find(v => span / v <= 12) || 20;
+  c.strokeStyle = '#2b303a'; c.lineWidth = 1 * dpr; c.fillStyle = '#9aa3b2'; c.textAlign = 'center';
+  for (let s = Math.ceil(s0 / stepS) * stepS; s <= s1; s += stepS) {
+    c.beginPath(); c.moveTo(px(s), padT); c.lineTo(px(s), top2 + H2); c.stroke();
+    c.fillText(stepS < 1 ? s.toFixed(1) : s.toFixed(0), px(s), top2 + H2 + 15 * dpr);
+  }
+  c.restore();
+  c.strokeStyle = '#2b303a'; c.fillStyle = '#9aa3b2'; c.textAlign = 'right';
   for (let v = 0; v <= vmax; v += 2) {
     c.beginPath(); c.moveTo(padL, py(v)); c.lineTo(padL + W, py(v)); c.stroke();
-    c.textAlign = 'right'; c.fillText(v.toFixed(0), padL - 6 * dpr, py(v) + 4 * dpr);
-  }
-  const stepS = L.lap > 40 ? 10 : 5;
-  c.textAlign = 'center';
-  for (let s = 0; s <= L.lap; s += stepS) {
-    c.beginPath(); c.moveTo(px(s), padT); c.lineTo(px(s), padT + H); c.stroke();
-    c.fillText(s.toFixed(0), px(s), padT + H + 16 * dpr);
+    c.fillText(v.toFixed(0), padL - 6 * dpr, py(v) + 4 * dpr);
   }
 
-  // The grip ceiling behind the profile: what the corner allows before any
-  // acceleration limit is applied. A pin above this line cannot take effect.
-  c.strokeStyle = 'rgba(110,168,254,.35)'; c.lineWidth = 1.5 * dpr;
-  c.beginPath();
-  for (let i = 0; i < L.N; i++) {
-    const X = px(L.s[i]), Y = py(Math.min(L.ceil[i], S.limits.v_max));
-    i ? c.lineTo(X, Y) : c.moveTo(X, Y);
-  }
-  c.stroke();
-
-  if (S.orig) {                     // the profile as loaded
-    c.strokeStyle = 'rgba(230,233,239,.25)'; c.lineWidth = 1.5 * dpr;
+  c.save();
+  c.beginPath(); c.rect(padL, padT, W, H); c.clip();
+  const series = (arr, sArr, colour, width, dash, wrapLap) => {
+    c.strokeStyle = colour; c.lineWidth = width; c.setLineDash(dash || []);
     c.beginPath();
-    for (let i = 0; i < S.orig.N; i++) {
-      const X = px(S.orig.s[i] * L.lap / S.orig.lap), Y = py(S.orig.v[i]);
-      i ? c.lineTo(X, Y) : c.moveTo(X, Y);
+    let prevS = null;
+    for (let i = 0; i < arr.length; i++) {
+      const s = sArr[i], X = px(s), Y = py(arr[i]);
+      if (prevS === null || (wrapLap && Math.abs(s - prevS) > wrapLap / 2)) c.moveTo(X, Y); else c.lineTo(X, Y);
+      prevS = s;
     }
-    c.stroke();
+    c.stroke(); c.setLineDash([]);
+  };
+  // The ceiling: what grip and steering rate allow before any acceleration limit.
+  series(Array.from(L.ceil, v => Math.min(v, S.limits.v_max)), L.s, 'rgba(110,168,254,.35)', 1.5 * dpr);
+  if (S.orig && $('showOrig').checked && S.orig.v) {
+    series(S.orig.v, Array.from(S.orig.s, s => s * L.lap / S.orig.lap), 'rgba(230,233,239,.28)', 1.5 * dpr);
   }
-
-  c.strokeStyle = '#4ec9a0'; c.lineWidth = 2 * dpr;
-  c.beginPath();
-  for (let i = 0; i < L.N; i++) {
-    const X = px(L.s[i]), Y = py(L.v[i]);
-    i ? c.lineTo(X, Y) : c.moveTo(X, Y);
+  for (const r of S.refs) {
+    if (r.visible && r.sOnEdit) series(r.line.v, r.sOnEdit, r.colour, 1.4 * dpr, null, L.lap);
   }
-  c.stroke();
-
+  series(L.v, L.s, '#4ec9a0', 2 * dpr);
   for (let i = 0; i < L.N; i++) {
     if (!isFinite(S.pins[i])) continue;
-    // A pin that the grip ceiling overrules is drawn hollow and grey: it is
+    // A pin that the ceiling overrules is drawn hollow and grey: it is
     // recorded, it just cannot do anything.
     const dead = S.pins[i] > L.ceil[i] + 1e-6;
-    c.beginPath(); c.arc(px(L.s[i]), py(Math.min(S.pins[i], P.vmax)), 4 * dpr, 0, 7);
+    c.beginPath(); c.arc(px(L.s[i]), py(Math.min(S.pins[i], vmax)), 4 * dpr, 0, 7);
     if (dead) { c.strokeStyle = '#9aa3b2'; c.lineWidth = 1.5 * dpr; c.stroke(); }
     else { c.fillStyle = '#ffd166'; c.fill(); }
   }
+  c.restore();
+  c.fillStyle = '#9aa3b2'; c.textAlign = 'left';
+  c.fillText('v m/s', padL + 4 * dpr, padT + 12 * dpr);
+
+  drawStrip(c, px, padL, W, top2, H2);
 
   if (S.hover >= 0) {
     c.strokeStyle = '#e6e9ef'; c.lineWidth = 1 * dpr;
-    c.beginPath(); c.moveTo(px(L.s[S.hover]), padT);
-    c.lineTo(px(L.s[S.hover]), padT + H); c.stroke();
+    const X = px(L.s[S.hover]);
+    if (X >= padL && X <= padL + W) {
+      c.beginPath(); c.moveTo(X, padT); c.lineTo(X, top2 + H2); c.stroke();
+    }
+  }
+  if (RACE.on || RACE.T > 0) {
+    const p = carAt(L, RACE.T), X = px(L.s[p.i]);
+    if (X >= padL && X <= padL + W) {
+      c.strokeStyle = '#ffd166'; c.lineWidth = 1.5 * dpr;
+      c.beginPath(); c.moveTo(X, padT); c.lineTo(X, top2 + H2); c.stroke();
+    }
   }
 }
-const P = {};
+
+// The lower strip of the profile pane: one quantity against its limits.
+function drawStrip(c, px, padL, W, top, H) {
+  const L = S.line, lim = S.limits, dpr = dprOf(), mode = $('stripMode').value;
+  const vis = S.refs.filter(r => r.visible);
+  let lo, hi, lines = [], label, series = [];
+  switch (mode) {
+    case 'long':
+      lo = -Math.max(CAR.AX_PEAK + 1, lim.a_brake + 1); hi = Math.max(CAR.AX_PEAK + 1, lim.a_accel + 1);
+      label = 'tyre a_x m/s² (accel +, brake −)';
+      lines = [[lim.a_accel, '#4ec9a0', [4, 3]], [-lim.a_brake, '#e5484d', [4, 3]],
+               [CAR.AX_PEAK, '#ff3df2', [1, 3]], [-CAR.AX_PEAK, '#ff3df2', [1, 3]], [0, '#3a4150']];
+      series.push([L.axT, L.s, '#e6e9ef']);
+      for (const r of vis) if (r.sOnEdit) series.push([r.line.axT, r.sOnEdit, r.colour]);
+      break;
+    case 'lat':
+      lo = 0; hi = CAR.AY_PEAK + 1; label = '|a_lat| m/s²';
+      lines = [[lim.a_lat, '#4ec9a0', [4, 3]], [CAR.AY_PEAK, '#ff3df2', [1, 3]],
+               [CAR.AY_ASYM, '#9aa3b2', [1, 4]], [S.follower.steer_a_lat_max, '#f0a04b', [6, 3]]];
+      series.push([Array.from(L.ay, Math.abs), L.s, '#e6e9ef']);
+      for (const r of vis) if (r.sOnEdit) series.push([Array.from(r.line.ay, Math.abs), r.sOnEdit, r.colour]);
+      break;
+    case 'steer':
+      lo = 0; hi = CAR.STEER_RATE * 1.4; label = 'steering rate rad/s';
+      lines = [[CAR.STEER_RATE, '#ff3df2', [1, 3]]];
+      series.push([L.steer, L.s, '#e6e9ef']);
+      for (const r of vis) if (r.sOnEdit) series.push([r.line.steer, r.sOnEdit, r.colour]);
+      break;
+    case 'clear':
+      lo = -0.1; hi = FOOT_MAX; label = 'body clearance m';
+      lines = [[parseFloat($('warn').value) || 0.1, '#f0a04b', [4, 3]],
+               [parseFloat($('hardClear').value) || 0, '#ff3df2', [1, 3]]];
+      series.push([L.foot, L.s, '#e6e9ef']);
+      for (const r of vis) if (r.sOnEdit) series.push([r.line.foot, r.sOnEdit, r.colour]);
+      break;
+    case 'kappa':
+      lo = -CAR.KLOCK * 1.15; hi = CAR.KLOCK * 1.15; label = 'kappa 1/m (left +)';
+      lines = [[CAR.KLOCK, '#ff3df2', [1, 3]], [-CAR.KLOCK, '#ff3df2', [1, 3]], [0, '#3a4150']];
+      series.push([L.kap, L.s, '#e6e9ef']);
+      for (const r of vis) if (r.sOnEdit) series.push([r.line.kap, r.sOnEdit, r.colour]);
+      break;
+    case 'dt': {
+      label = 'Δt = reference − edited, s (positive: edited line ahead)';
+      let m = 0.05;
+      for (const r of vis) if (r.dt) for (const d of r.dt) m = Math.max(m, Math.abs(d));
+      lo = -m * 1.1; hi = m * 1.1; lines = [[0, '#3a4150']];
+      for (const r of vis) if (r.dt) series.push([r.dt, L.s, r.colour]);
+      if (!vis.length) label += ' — add a reference under Compare';
+      break;
+    }
+  }
+  const py = (v) => top + H * (1 - (v - lo) / (hi - lo));
+  c.fillStyle = '#9aa3b2'; c.textAlign = 'right'; c.font = `${10 * dpr}px ui-sans-serif, system-ui`;
+  c.fillText(hi.toFixed(mode === 'dt' ? 2 : 1), padL - 6 * dpr, top + 9 * dpr);
+  c.fillText(lo.toFixed(mode === 'dt' ? 2 : 1), padL - 6 * dpr, top + H);
+  c.save();
+  c.beginPath(); c.rect(padL, top, W, H); c.clip();
+  c.fillStyle = '#171a1f'; c.fillRect(padL, top, W, H);
+  for (const [v, col, dash] of lines) {
+    c.strokeStyle = col; c.lineWidth = 1 * dpr; c.setLineDash((dash || []).map(d => d * dpr));
+    c.beginPath(); c.moveTo(padL, py(v)); c.lineTo(padL + W, py(v)); c.stroke();
+  }
+  c.setLineDash([]);
+  for (const [arr, sArr, col] of series) {
+    c.strokeStyle = col; c.lineWidth = 1.4 * dpr;
+    c.beginPath();
+    let prev = null;
+    for (let i = 0; i < arr.length; i++) {
+      const X = px(sArr[i]), Y = py(arr[i]);
+      if (prev === null || Math.abs(sArr[i] - prev) > L.lap / 2) c.moveTo(X, Y); else c.lineTo(X, Y);
+      prev = sArr[i];
+    }
+    c.stroke();
+  }
+  c.restore();
+  c.fillStyle = '#9aa3b2'; c.textAlign = 'left'; c.font = `${11 * dpr}px ui-sans-serif, system-ui`;
+  c.fillText(label, padL + 4 * dpr, top + 12 * dpr);
+}
+
+// ------------------------------------------------------------ constraints
+// Each row: [state, name, value text, limit text, station to jump to].
+// state: 'ok' | 'soft' (drivable, but something will object) | 'hard' (the car cannot)
+function checks(line) {
+  const W = line.W, lim = S.limits, F = S.follower, st = line.stats;
+  const hard = parseFloat($('hardClear').value) || 0, warn = parseFloat($('warn').value) || 0.1;
+  const tol = 1.01;
+  const rows = [];
+  const add = (state, name, val, limit, i) => rows.push({ state, name, val, limit, i });
+  add(W.kmax[0] > CAR.KLOCK ? 'hard' : (W.kmax[0] > 0.9 * CAR.KLOCK ? 'soft' : 'ok'),
+      'steering lock', `|κ| ${W.kmax[0].toFixed(3)}`, `≤ ${CAR.KLOCK.toFixed(3)} 1/m`, W.kmax[1]);
+  add(W.foot[0] < 0 ? 'hard' : (W.foot[0] < Math.max(hard, warn) ? 'soft' : 'ok'),
+      'body clear of walls', `${W.foot[0].toFixed(3)} m`, `≥ ${hard.toFixed(2)} hard, ${warn.toFixed(2)} warn`,
+      W.foot[1]);
+  add(W.aLat[0] > CAR.AY_PEAK * tol ? 'hard' : (W.aLat[0] > F.steer_a_lat_max * tol ? 'soft' : 'ok'),
+      'lateral grip', `${W.aLat[0].toFixed(2)} m/s²`,
+      `≤ ${CAR.AY_PEAK.toFixed(2)} tyre, ${F.steer_a_lat_max} follower`, W.aLat[1]);
+  add(W.trac[0] > CAR.AX_PEAK * tol ? 'hard' : 'ok',
+      'traction', `${W.trac[0].toFixed(2)} m/s²`, `≤ ${CAR.AX_PEAK.toFixed(2)} tyre (+drag)`, W.trac[1]);
+  add(W.brake[0] > CAR.AX_PEAK * tol ? 'hard' : 'ok',
+      'braking', `${W.brake[0].toFixed(2)} m/s²`, `≤ ${CAR.AX_PEAK.toFixed(2)} tyre (−drag)`, W.brake[1]);
+  add(W.gripPhys[0] > 1.02 ? 'hard' : 'ok',
+      'friction ellipse', `${(W.gripPhys[0] * 100).toFixed(0)} %`, '≤ 100 % of tyre peaks', W.gripPhys[1]);
+  add(W.steer[0] > CAR.STEER_RATE * tol ? 'hard' : (W.steer[0] > 0.85 * CAR.STEER_RATE ? 'soft' : 'ok'),
+      'steering rate', `${W.steer[0].toFixed(2)} rad/s`, `≤ ${CAR.STEER_RATE} rad/s`, W.steer[1]);
+  add(W.vmax[0] > CAR.V_TOP ? 'hard' : (W.vmax[0] > F.v_max + 1e-6 ? 'soft' : 'ok'),
+      'top speed', `${W.vmax[0].toFixed(2)} m/s`, `≤ ${CAR.V_TOP} car, ${F.v_max} follower`, W.vmax[1]);
+  add(st.branch < F.lookahead_max ? 'soft' : 'ok',
+      'branch gap', `${st.branch.toFixed(2)} m`, `≥ lookahead_max ${F.lookahead_max}`, st.branchAt);
+  return rows;
+}
+
+function drawChecks() {
+  const rows = checks(S.line);
+  const mark = { ok: '✓', soft: '!', hard: '✗' };
+  $('checks').innerHTML = rows.map((r, k) =>
+    `<tr data-k="${k}"><td class="m ${r.state}">${mark[r.state]}</td><td>${r.name}` +
+    `<div class="lim">${r.limit}</div></td><td class="v ${r.state}">${r.val}</td></tr>`).join('');
+  $('checks').querySelectorAll('tr').forEach(tr => tr.addEventListener('click', () => {
+    const r = rows[+tr.dataset.k];
+    S.hover = r.i; centreOn(r.i, 120);
+    PROF.s0 = Math.max(0, S.line.s[r.i] - 4); PROF.s1 = Math.min(S.line.lap, S.line.s[r.i] + 4);
+    showReadout(); redraw();
+  }));
+}
 
 // ------------------------------------------------------------------ stats
 function drawStats() {
-  const st = S.line.stats, o = S.origStats;
+  const st = S.line.stats, o = S.orig && S.orig.stats;
   const rows = [
     ['lap length', st.lap, o && o.lap, 'm', 2],
     ['planned lap', st.time, o && o.time, 's', 3],
     ['max |kappa|', st.kmax, o && o.kmax, '1/m', 3],
-    ['profile a_lat', st.aLat, o && o.aLat, 'm/s²', 2],
+    ['peak a_lat', st.aLat, o && o.aLat, 'm/s²', 2],
     ['peak accel', st.aAcc, o && o.aAcc, 'm/s²', 2],
     ['peak brake', st.aBrk, o && o.aBrk, 'm/s²', 2],
-    ['peak power', st.power, o && o.power, 'W/kg', 1],
-    ['min clearance', st.minClear, o && o.minClear, 'm', 3],
+    ['peak steer rate', st.steer, o && o.steer, 'rad/s', 2],
+    ['top speed', st.vmax, o && o.vmax, 'm/s', 2],
+    ['min body clear', st.foot, o && o.foot, 'm', 3],
+    ['min inside margin', st.margin, o && o.margin, 'm', 3],
     ['branch gap', st.branch, o && o.branch, 'm', 2],
   ];
   $('stats').innerHTML = rows.map(([name, v, ov, unit, dp]) => {
@@ -683,14 +1479,98 @@ function drawStats() {
       d = `<span class="${cls}">${diff >= 0 ? '+' : ''}${diff.toFixed(dp)}</span>`;
     }
     return `<tr><td>${name}</td><td>${v.toFixed(dp)} ${unit}</td><td>${d}</td></tr>`;
-  }).join('');
-  // max|kappa| against what the steering can actually produce:
-  // tan(max_steer)/wheelbase = tan(0.5236)/0.324 = 1.78 1/m.
-  if (st.kmax > 1.78) toast(`max |kappa| ${st.kmax.toFixed(2)} exceeds the car's ` +
-                            '1.78 1/m steering limit — this corner cannot be driven', 'bad');
+  }).join('') +
+  '<tr><td colspan="3" class="flat" style="font-size:11px;padding-top:4px">delta column: against the ' +
+  'loaded file, with its OWN profile</td></tr>';
 }
 
-function redraw() { drawMap(); drawProfile(); drawStats(); }
+function redraw() { drawMapA(); drawMapB(); drawProfile(); drawChecks(); drawStats(); drawRefs(); }
+function redrawViews() { drawMapA(); drawMapB(); drawProfile(); }
+
+// ------------------------------------------------------------- the pipeline
+const opts = () => ({ pins: S.pins, steerLimit: $('steerLimit').checked });
+
+function rebuild(withRefs = true) {
+  const sp = makeSpline(S.ctrl);
+  const line = resample(sp, S.N);
+  deriveLine(line, S.grids[S.layer], S.limits, opts());
+  S.line = line;
+  if (withRefs) for (const r of S.refs) mapRefToEdit(r);
+}
+
+function rederiveRefs() {
+  for (const r of S.refs) {
+    const base = r.base;
+    const line = Object.assign({}, base);
+    deriveLine(line, S.grids[S.layer], S.limits,
+               { pins: null, steerLimit: $('steerLimit').checked,
+                 fileV: r.profile === 'file' && base.fileV ? base.fileV : null });
+    r.line = line;
+    mapRefToEdit(r);
+  }
+}
+
+// For every edited station: the nearest reference station (hover link), and
+// the reference's time there (the delta trace). For every reference station:
+// where it sits along the edited line (the speed overlay).
+// For every edited station: the matching reference station (hover link), and
+// the reference's time there (the delta trace). For every reference station:
+// where it sits along the edited line (the speed overlay).
+//
+// The match is TRACKED along the lap, not a global nearest point: where two
+// parts of the lap pass within a couple of metres of each other a global search
+// jumps branches and the delta trace spikes by a whole sector.
+function trackMatch(A, B) {
+  // For each station of B in order, the station of A it corresponds to, as an
+  // UNWRAPPED index (may run below 0 or past A.N at the seam).
+  const back = Math.ceil(0.5 / A.ds), fwd = Math.ceil(2.0 / A.ds);
+  const out = new Float64Array(B.N);
+  let bd = 1e18, k0 = 0;
+  for (let k = 0; k < A.N; k++) {
+    const d = (A.x[k] - B.x[0]) ** 2 + (A.y[k] - B.y[0]) ** 2;
+    if (d < bd) { bd = d; k0 = k; }
+  }
+  let ku = k0 > A.N / 2 ? k0 - A.N : k0;
+  for (let i = 0; i < B.N; i++) {
+    let best = ku, bestD = 1e18;
+    for (let m = ku - back; m <= ku + fwd; m++) {
+      const k = ((m % A.N) + A.N) % A.N;
+      const d = (A.x[k] - B.x[i]) ** 2 + (A.y[k] - B.y[i]) ** 2;
+      if (d < bestD) { bestD = d; best = m; }
+    }
+    ku = best;
+    // Sub-station fraction by projecting onto the segment either side.
+    const k = ((ku % A.N) + A.N) % A.N, k1 = (k + 1) % A.N, kb = (k - 1 + A.N) % A.N;
+    const pr = (a, b) => {
+      const vx = A.x[b] - A.x[a], vy = A.y[b] - A.y[a], l2 = vx * vx + vy * vy;
+      return l2 > 0 ? ((B.x[i] - A.x[a]) * vx + (B.y[i] - A.y[a]) * vy) / l2 : 0;
+    };
+    const f = pr(k, k1);
+    out[i] = ku + (f >= 0 ? Math.min(f, 1) : -Math.min(Math.max(1 - pr(kb, k), 0), 1));
+  }
+  return out;
+}
+
+// Time along A at an unwrapped fractional station index.
+function timeAt(A, u) {
+  const laps = Math.floor(u / A.N), w = u - laps * A.N, k = Math.floor(w), f = w - k;
+  return laps * A.t[A.N] + A.t[k] + f * (A.t[k + 1] - A.t[k]);
+}
+
+function mapRefToEdit(r) {
+  const E = S.line, R = r.line;
+  const onRef = trackMatch(R, E), onEdit = trackMatch(E, R);
+  const near = new Int32Array(E.N), dt = new Float64Array(E.N), sOn = new Float64Array(R.N);
+  for (let i = 0; i < E.N; i++) {
+    near[i] = ((Math.round(onRef[i]) % R.N) + R.N) % R.N;
+    dt[i] = timeAt(R, onRef[i]) - E.t[i];
+  }
+  for (let k = 0; k < R.N; k++) {
+    const u = ((onEdit[k] % E.N) + E.N) % E.N;
+    sOn[k] = u * E.ds;
+  }
+  r.nearOnRef = near; r.dt = dt; r.sOnEdit = sOn;
+}
 
 // ------------------------------------------------------------- interaction
 function nearestStation(x, y) {
@@ -702,68 +1582,250 @@ function nearestStation(x, y) {
   return { i: best, d: Math.sqrt(bd) };
 }
 
-function pickHandle(px, py) {
-  const tol = 10 * view.dpr;
+function pickHandle(cv, px, py) {
+  if (!$('showHandles').checked) return -1;
+  const tol = 10 * dprOf();
+  let best = -1, bd = tol;
   for (let i = 0; i < S.ctrl.length; i++) {
-    if (Math.hypot(view.sx(S.ctrl[i].x) - px, view.sy(S.ctrl[i].y) - py) < tol) return i;
+    const d = Math.hypot(sx(cv, S.ctrl[i].x) - px, sy(cv, S.ctrl[i].y) - py);
+    if (d < bd) { bd = d; best = i; }
   }
-  return -1;
+  return best;
 }
 
 function pointer(e, cv) {
-  const r = cv.getBoundingClientRect(), dpr = devicePixelRatio || 1;
+  const r = cv.getBoundingClientRect(), dpr = dprOf();
   return [(e.clientX - r.left) * dpr, (e.clientY - r.top) * dpr];
 }
 
 function snapshot() {
   S.history.push({ ctrl: S.ctrl.map(p => ({ x: p.x, y: p.y })),
                    pins: Float64Array.from(S.pins) });
-  if (S.history.length > 80) S.history.shift();
+  if (S.history.length > 300) S.history.shift();
 }
 
-mapCv.addEventListener('pointerdown', (e) => {
-  const [px, py] = pointer(e, mapCv);
-  const i = pickHandle(px, py);
-  if (i < 0) return;
-  snapshot();
-  drag = { kind: 'ctrl', i };
-  mapCv.setPointerCapture(e.pointerId);
-});
+// The line's left normal nearest a handle, for normal-only moves.
+function normalAt(p) {
+  const n = nearestStation(p.x, p.y);
+  return { x: -Math.sin(S.line.psi[n.i]), y: Math.cos(S.line.psi[n.i]) };
+}
 
-mapCv.addEventListener('pointermove', (e) => {
-  const [px, py] = pointer(e, mapCv);
-  if (drag && drag.kind === 'ctrl') {
-    const nx = view.wx(px), ny = view.wy(py), n = S.ctrl.length;
-    const a = S.ctrl[(drag.i - 1 + n) % n], b = S.ctrl[(drag.i + 1) % n];
-    // Refuse rather than clamp: a clamped handle slides along an invisible
-    // circle and feels broken. Holding still and saying why does not.
-    if (Math.hypot(nx - a.x, ny - a.y) < MIN_GAP || Math.hypot(nx - b.x, ny - b.y) < MIN_GAP) {
-      toast(`handles must stay ${MIN_GAP} m apart — remove one instead`);
+function describeGeom(line) {
+  const hard = parseFloat($('hardClear').value) || 0, bits = [];
+  if (line.W.kmax[0] > CAR.KLOCK) bits.push(`|κ| ${line.W.kmax[0].toFixed(3)} > lock ${CAR.KLOCK.toFixed(3)}`);
+  if (line.W.foot[0] < hard) bits.push(`body clearance ${line.W.foot[0].toFixed(3)} < ${hard.toFixed(2)} m`);
+  return bits.join(', ');
+}
+
+// Move the handles `ids` to `targets` together. With enforcement on, the
+// geometry may not get worse against the hard caps; a move that would is
+// shortened by bisection to the furthest point that does not, so the handles
+// stop AT the boundary, still in formation.
+function moveGroup(ids, targets) {
+  const n = S.ctrl.length, tgt = new Map(ids.map((id, k) => [id, targets[k]]));
+  for (const i of ids) {
+    const p = tgt.get(i);
+    for (const j of [(i - 1 + n) % n, (i + 1) % n]) {
+      const q = tgt.get(j) || S.ctrl[j];
+      if (j !== i && Math.hypot(p.x - q.x, p.y - q.y) < MIN_GAP) {
+        setStatus(`handles must stay ${MIN_GAP} m apart — remove one instead`);
+        return false;
+      }
+    }
+  }
+  const hard = parseFloat($('hardClear').value) || 0;
+  const prev = ids.map(i => ({ x: S.ctrl[i].x, y: S.ctrl[i].y }));
+  const place = (m) => ids.forEach((i, k) => {
+    S.ctrl[i].x = prev[k].x + m * (targets[k].x - prev[k].x);
+    S.ctrl[i].y = prev[k].y + m * (targets[k].y - prev[k].y);
+  });
+  const before = $('enforce').checked ? geomScore(S.line, hard) : 0;
+  place(1);
+  rebuild();
+  if (!$('enforce').checked || geomScore(S.line, hard) <= before + 1e-9) return true;
+  const why = describeGeom(S.line);
+  // Resolve the stopping point to 1 mm. In a hairpin the lock can bind after a
+  // 2 cm move (measured: |kappa| 1.24 -> 1.72 at +2 cm on icra's tightest
+  // handle), so a fixed handful of halvings of a long drag stops short. Only
+  // the final position needs the reference mapping; skip it while searching.
+  let dist = 0;
+  ids.forEach((i, k) => { dist = Math.max(dist, Math.hypot(targets[k].x - prev[k].x, targets[k].y - prev[k].y)); });
+  const steps = Math.min(16, Math.max(4, Math.ceil(Math.log2(dist / 0.001))));
+  let lo = 0, hi = 1;
+  for (let k = 0; k < steps; k++) {
+    const m = (lo + hi) / 2;
+    place(m);
+    rebuild(false);
+    if (geomScore(S.line, hard) <= before + 1e-9) lo = m; else hi = m;
+  }
+  place(lo);
+  rebuild();
+  setStatus(`stopped at the constraint — further would give ${why || 'worse geometry'}`);
+  return false;
+}
+
+function moveHandle(i, nx, ny) { return moveGroup([i], [{ x: nx, y: ny }]); }
+
+// Translate the whole selection by (dx, dy).
+function nudgeSelection(dx, dy) {
+  const ids = [...S.sel];
+  return moveGroup(ids, ids.map(i => ({ x: S.ctrl[i].x + dx, y: S.ctrl[i].y + dy })));
+}
+
+function selectHandle(i) { setSelection(i >= 0 ? [i] : [], i); }
+
+function setSelection(ids, primary) {
+  S.sel = new Set(ids);
+  S.primary = primary !== undefined && S.sel.has(primary) ? primary : (S.sel.size ? [...S.sel][0] : -1);
+  syncSel();
+}
+
+function selCentroid() {
+  let x = 0, y = 0;
+  for (const i of S.sel) { x += S.ctrl[i].x; y += S.ctrl[i].y; }
+  return { x: x / S.sel.size, y: y / S.sel.size };
+}
+
+function syncSel() {
+  // Indices go stale when handles are added, removed or undone.
+  for (const i of [...S.sel]) if (i >= S.ctrl.length) S.sel.delete(i);
+  if (!S.sel.has(S.primary)) S.primary = S.sel.size ? [...S.sel][0] : -1;
+  $('selBox').style.display = S.sel.size ? 'block' : 'none';
+  if (!S.sel.size) return;
+  const c = selCentroid(), many = S.sel.size > 1;
+  $('selName').textContent = many
+    ? `${S.sel.size} handles selected — x/y is their centroid`
+    : `handle ${S.primary + 1} of ${S.ctrl.length}`;
+  if (document.activeElement !== $('selX')) $('selX').value = c.x.toFixed(4);
+  if (document.activeElement !== $('selY')) $('selY').value = c.y.toFixed(4);
+}
+
+function removeSelected() {
+  const ids = [...S.sel].sort((a, b) => b - a);
+  if (!ids.length) return;
+  if (S.ctrl.length - ids.length < 4) { toast('a closed spline needs at least 4 handles', 'bad'); return; }
+  for (const i of ids) S.ctrl.splice(i, 1);
+  $('nctrl').value = S.ctrl.length;
+  setSelection([]);
+  rebuild(); redraw();
+}
+
+let SPACE = false;               // held: left-drag pans instead of box-selecting
+
+function bindMapPane(cv, editable) {
+  cv.addEventListener('contextmenu', (e) => e.preventDefault());
+  cv.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const [px, py] = pointer(e, cv);
+    zoomAt(cv, px, py, Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015)));
+    redrawViews();
+  }, { passive: false });
+
+  cv.addEventListener('pointerdown', (e) => {
+    const [px, py] = pointer(e, cv);
+    try { cv.setPointerCapture(e.pointerId); } catch (_) { /* synthetic or already-released pointer */ }
+    // Pan: right or middle button, space held, or the view-only right pane.
+    if (e.button !== 0 || SPACE || !editable) {
+      drag = { kind: 'pan', cv, px, py, moved: false };
       return;
     }
-    S.ctrl[drag.i].x = nx; S.ctrl[drag.i].y = ny;
-    rebuild(); redraw();
-    return;
-  }
-  const n = nearestStation(view.wx(px), view.wy(py));
-  S.hover = n.d < 0.6 ? n.i : -1;
-  showReadout();
-  drawMap(); drawProfile();
-});
+    const i = pickHandle(cv, px, py);
+    if (i >= 0 && (e.ctrlKey || e.metaKey)) {
+      const ids = new Set(S.sel);
+      if (ids.has(i)) ids.delete(i); else ids.add(i);
+      setSelection([...ids], i);
+      drag = null; redraw();
+      return;
+    }
+    if (i >= 0) {
+      // Grabbing a handle that is part of the selection moves the whole
+      // selection; grabbing any other handle selects just that one.
+      if (!S.sel.has(i)) setSelection([i], i); else { S.primary = i; syncSel(); }
+      snapshot();
+      const ids = [...S.sel], p = S.ctrl[i];
+      drag = { kind: 'ctrl', i, cv, ids, orig: ids.map(j => ({ x: S.ctrl[j].x, y: S.ctrl[j].y })),
+               x0: p.x, y0: p.y, wx0: wxOf(cv, px), wy0: wyOf(cv, py), normal: normalAt(p), moved: false };
+      return;
+    }
+    drag = { kind: 'box', cv, px0: px, py0: py, px, py, moved: false,
+             base: e.shiftKey ? new Set(S.sel) : new Set() };
+  });
 
-mapCv.addEventListener('pointerup', () => { drag = null; redraw(); });
+  cv.addEventListener('pointermove', (e) => {
+    const [px, py] = pointer(e, cv);
+    if (drag && drag.cv === cv && drag.kind === 'ctrl') {
+      // Relative to where the drag started, so shift can scale the motion
+      // without the handles jumping to the pointer.
+      let dx = wxOf(cv, px) - drag.wx0, dy = wyOf(cv, py) - drag.wy0;
+      if (e.shiftKey) {
+        if (!drag.fine) drag.fine = { dx, dy };
+        dx = drag.fine.dx + (dx - drag.fine.dx) * 0.1; dy = drag.fine.dy + (dy - drag.fine.dy) * 0.1;
+      } else if (drag.fine) {
+        // leaving fine mode: re-anchor so the handles do not jump
+        drag.wx0 = wxOf(cv, px) - (S.ctrl[drag.i].x - drag.x0);
+        drag.wy0 = wyOf(cv, py) - (S.ctrl[drag.i].y - drag.y0);
+        drag.fine = null; return;
+      }
+      if ($('normalLock').checked) {
+        const d = dx * drag.normal.x + dy * drag.normal.y;
+        dx = d * drag.normal.x; dy = d * drag.normal.y;
+      }
+      drag.moved = true;
+      moveGroup(drag.ids, drag.orig.map(o => ({ x: o.x + dx, y: o.y + dy })));
+      syncSel();
+      S.hover = nearestStation(S.ctrl[drag.i].x, S.ctrl[drag.i].y).i;
+      showReadout(cv, px, py);
+      redraw();
+      return;
+    }
+    if (drag && drag.cv === cv && drag.kind === 'pan') {
+      VIEW.cx -= (px - drag.px) / VIEW.ppm; VIEW.cy += (py - drag.py) / VIEW.ppm;
+      if (Math.abs(px - drag.px) + Math.abs(py - drag.py) > 0) drag.moved = true;
+      drag.px = px; drag.py = py;
+      redrawViews();
+      return;
+    }
+    if (drag && drag.cv === cv && drag.kind === 'box') {
+      drag.px = px; drag.py = py;
+      if (Math.abs(px - drag.px0) + Math.abs(py - drag.py0) > 3 * dprOf()) drag.moved = true;
+      if (drag.moved) {
+        const x0 = Math.min(drag.px0, px), x1 = Math.max(drag.px0, px);
+        const y0 = Math.min(drag.py0, py), y1 = Math.max(drag.py0, py);
+        const ids = new Set(drag.base);
+        S.ctrl.forEach((p, k) => {
+          const X = sx(cv, p.x), Y = sy(cv, p.y);
+          if (X >= x0 && X <= x1 && Y >= y0 && Y <= y1) ids.add(k);
+        });
+        setSelection([...ids]);
+      }
+      drawMapA();
+      return;
+    }
+    const n = nearestStation(wxOf(cv, px), wyOf(cv, py));
+    S.hover = n.d < Math.max(0.6, 12 * dprOf() / VIEW.ppm) ? n.i : -1;
+    showReadout(cv, px, py);
+    redrawViews();
+  });
 
-mapCv.addEventListener('dblclick', (e) => {
-  const [px, py] = pointer(e, mapCv);
-  const i = pickHandle(px, py);
-  snapshot();
-  if (i >= 0) {
-    if (S.ctrl.length <= 4) { toast('a closed spline needs at least 4 handles', 'bad'); return; }
-    S.ctrl.splice(i, 1);
-  } else {
+  cv.addEventListener('pointerup', () => {
+    // A click on empty track (no drag) clears the selection, unless shift.
+    if (drag && drag.kind === 'box' && !drag.moved && !drag.base.size) setSelection([]);
+    drag = null; redraw();
+  });
+
+  if (!editable) return;
+  cv.addEventListener('dblclick', (e) => {
+    const [px, py] = pointer(e, cv);
+    const i = pickHandle(cv, px, py);
+    snapshot();
+    if (i >= 0) {
+      setSelection([i], i);
+      removeSelected();
+      return;
+    }
     // Insert into the segment whose midpoint is nearest the click, so the new
     // handle lands where you pointed rather than at the end of the ring.
-    const wx = view.wx(px), wy = view.wy(py);
+    const wx = wxOf(cv, px), wy = wyOf(cv, py);
     let best = 0, bd = 1e9;
     for (let k = 0; k < S.ctrl.length; k++) {
       const a = S.ctrl[k], b = S.ctrl[(k + 1) % S.ctrl.length];
@@ -771,64 +1833,357 @@ mapCv.addEventListener('dblclick', (e) => {
       if (d < bd) { bd = d; best = k; }
     }
     S.ctrl.splice(best + 1, 0, { x: wx, y: wy });
-  }
-  $('nctrl').value = S.ctrl.length;
-  rebuild(); redraw();
-});
+    $('nctrl').value = S.ctrl.length;
+    selectHandle(best + 1);
+    rebuild(); redraw();
+  });
+}
 
-profCv.addEventListener('pointerdown', (e) => {
-  snapshot();
-  drag = { kind: 'pin' };
-  profCv.setPointerCapture(e.pointerId);
-  pinAt(e);
-});
+function profIndex(px) {
+  const s = PG.s0 + (px - PG.padL) / PG.W * (PG.s1 - PG.s0);
+  return Math.max(0, Math.min(S.line.N - 1, Math.round(s / S.line.ds)));
+}
 
-profCv.addEventListener('pointermove', (e) => {
-  if (drag && drag.kind === 'pin') { pinAt(e); return; }
-  const [px] = pointer(e, profCv);
-  const s = (px - P.padL) / P.W * S.line.lap;
-  S.hover = Math.max(0, Math.min(S.line.N - 1, Math.round(s / S.line.ds)));
-  showReadout();
-  drawMap(); drawProfile();
-});
+function bindProfile() {
+  profCv.addEventListener('contextmenu', (e) => e.preventDefault());
+  profCv.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const [px] = pointer(e, profCv);
+    const s = PG.s0 + (px - PG.padL) / PG.W * (PG.s1 - PG.s0);
+    const f = Math.exp(e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015));
+    let s0 = s - (s - PROF.s0) * f, s1 = s + (PROF.s1 - s) * f;
+    if (s1 - s0 > S.line.lap) { s0 = 0; s1 = S.line.lap; }
+    if (s0 < 0) { s1 -= s0; s0 = 0; }
+    if (s1 > S.line.lap) { s0 -= s1 - S.line.lap; s1 = S.line.lap; }
+    PROF.s0 = Math.max(0, s0); PROF.s1 = Math.max(PROF.s0 + 0.5, s1);
+    drawProfile();
+  }, { passive: false });
 
-profCv.addEventListener('pointerup', () => { drag = null; redraw(); });
+  profCv.addEventListener('pointerdown', (e) => {
+    try { profCv.setPointerCapture(e.pointerId); } catch (_) { /* synthetic or already-released pointer */ }
+    const [px, py] = pointer(e, profCv);
+    if (e.button !== 0) { drag = { kind: 'span', px }; return; }
+    if (py > PG.padT + PG.H) { drag = { kind: 'span', px }; return; }   // strip: pan only
+    snapshot();
+    drag = { kind: 'pin' };
+    pinAt(e);
+  });
 
-profCv.addEventListener('dblclick', (e) => {
-  const [px] = pointer(e, profCv);
-  const i = Math.max(0, Math.min(S.line.N - 1,
-                                 Math.round((px - P.padL) / P.W * S.line.lap / S.line.ds)));
-  snapshot();
-  S.pins[i] = Infinity;
-  rebuild(); redraw();
-});
+  profCv.addEventListener('pointermove', (e) => {
+    const [px] = pointer(e, profCv);
+    if (drag && drag.kind === 'pin') { pinAt(e); return; }
+    if (drag && drag.kind === 'span') {
+      const ds = -(px - drag.px) / PG.W * (PROF.s1 - PROF.s0);
+      const w = PROF.s1 - PROF.s0;
+      PROF.s0 = Math.min(Math.max(0, PROF.s0 + ds), S.line.lap - w); PROF.s1 = PROF.s0 + w;
+      drag.px = px; drawProfile(); return;
+    }
+    S.hover = profIndex(px);
+    showReadout();
+    redrawViews();
+  });
+
+  profCv.addEventListener('pointerup', () => { drag = null; redraw(); });
+
+  profCv.addEventListener('dblclick', (e) => {
+    const [px] = pointer(e, profCv);
+    snapshot();
+    S.pins[profIndex(px)] = Infinity;
+    rebuild(); redraw();
+  });
+}
 
 function pinAt(e) {
   const [px, py] = pointer(e, profCv);
-  const L = S.line;
-  const i = Math.max(0, Math.min(L.N - 1, Math.round((px - P.padL) / P.W * L.lap / L.ds)));
-  const dpr = devicePixelRatio || 1;
-  const v = (1 - (py - 12 * dpr) / (profCv.height - 12 * dpr - 26 * dpr)) * P.vmax;
+  const i = profIndex(px);
+  const v = (1 - (py - PG.padT) / PG.H) * PG.vmax;
   S.pins[i] = Math.max(S.limits.v_min, Math.min(v, S.limits.v_max));
   S.hover = i;
   rebuild(); redraw(); showReadout();
 }
 
-function showReadout() {
+function showReadout(cv, px, py) {
   const L = S.line, i = S.hover;
-  if (i < 0) { $('mapread').textContent = ''; $('profread').textContent = ''; return; }
+  let head = '';
+  if (cv && px !== undefined) head = `cursor x ${wxOf(cv, px).toFixed(3)}  y ${wyOf(cv, py).toFixed(3)}\n`;
+  if (i < 0) {
+    $('mapread').textContent = cv === mapCv ? head.trim() : '';
+    $('mapreadB').textContent = cv === mapCvB ? head.trim() : '';
+    $('profread').textContent = '';
+    return;
+  }
   const txt =
-    `s ${L.s[i].toFixed(2)} m   v ${L.v[i].toFixed(2)} m/s\n` +
-    `kappa ${L.kap[i].toFixed(3)} 1/m   ceiling ${Math.min(L.ceil[i], S.limits.v_max).toFixed(2)}\n` +
-    `wall  L ${L.wl[i].toFixed(2)}  R ${L.wr[i].toFixed(2)}   clearance ${L.margin[i].toFixed(3)} m`;
-  $('mapread').textContent = txt;
-  $('profread').textContent = txt;
+    `s ${L.s[i].toFixed(2)} m   v ${L.v[i].toFixed(2)} m/s   ceiling ${Math.min(L.ceil[i], S.limits.v_max).toFixed(2)}\n` +
+    `kappa ${L.kap[i].toFixed(3)} 1/m   steer ${L.steer[i].toFixed(2)} rad/s\n` +
+    `a_x ${L.axT[i].toFixed(2)}   a_lat ${L.ay[i].toFixed(2)} m/s²   ellipse ${(L.gripPhys[i] * 100).toFixed(0)} %\n` +
+    `wall L ${L.wl[i].toFixed(2)} R ${L.wr[i].toFixed(2)}   body clearance ${L.foot[i].toFixed(3)} m`;
+  let refTxt = '';
+  for (const r of S.refs) if (r.visible && r.dt) refTxt += `\n${r.name.slice(0, 28)}  Δt ${r.dt[i] >= 0 ? '+' : ''}${r.dt[i].toFixed(3)} s`;
+  $('mapread').textContent = (cv === mapCv ? head : '') + txt;
+  const r = S.refs[splitIdx];
+  if ($('maps').classList.contains('split') && r && r.nearOnRef) {
+    const k = r.nearOnRef[i], R = r.line;
+    $('mapreadB').textContent = (cv === mapCvB ? head : '') +
+      `s ${R.s[k].toFixed(2)} m   v ${R.v[k].toFixed(2)} m/s\nkappa ${R.kap[k].toFixed(3)}   body clearance ${R.foot[k].toFixed(3)} m\n` +
+      `Δt here ${r.dt[i] >= 0 ? '+' : ''}${r.dt[i].toFixed(3)} s`;
+  }
+  $('profread').textContent = txt + refTxt;
+}
+
+function onKey(e) {
+  const tag = document.activeElement && document.activeElement.tagName;
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undo(); return; }
+  if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+  const k = e.key;
+  if (k === ' ') { e.preventDefault(); if (!SPACE) { SPACE = true; mapCv.style.cursor = 'grab'; } return; }
+  if (k === 'f' || k === 'F') { fitView(); redraw(); return; }
+  if (k === '+' || k === '=') { zoomAt(mapCv, mapCv.width / 2, mapCv.height / 2, 1.4); redrawViews(); return; }
+  if (k === '-' || k === '_') { zoomAt(mapCv, mapCv.width / 2, mapCv.height / 2, 1 / 1.4); redrawViews(); return; }
+  if (k === 'p' || k === 'P') { toggleRace(); return; }
+  if (k === 'n' || k === 'N') { $('normalLock').checked = !$('normalLock').checked; setStatus(`normal-only drag ${$('normalLock').checked ? 'on' : 'off'}`); return; }
+  if (k === 'Escape') { setSelection([]); redraw(); return; }
+  if ((e.ctrlKey || e.metaKey) && (k === 'a' || k === 'A')) {
+    e.preventDefault();
+    setSelection(S.ctrl.map((_, i) => i), S.primary); redraw(); return;
+  }
+  if (k === '[' || k === ']') {
+    const n = S.ctrl.length;
+    selectHandle(S.primary < 0 ? 0 : (S.primary + (k === ']' ? 1 : -1) + n) % n);
+    const p = S.ctrl[S.primary];
+    VIEW.cx = p.x; VIEW.cy = p.y;
+    redraw(); return;
+  }
+  if (!S.sel.size) return;
+  if (k === 'Delete' || k === 'Backspace') { snapshot(); removeSelected(); return; }
+  const step = parseFloat($('nudge').value) * (e.shiftKey ? 10 : 1) * (e.altKey ? 0.1 : 1);
+  let dx = 0, dy = 0;
+  if ($('normalLock').checked && (k === 'ArrowUp' || k === 'ArrowDown')) {
+    // The normal at the primary handle; a group moves rigidly along it.
+    const nrm = normalAt(S.ctrl[S.primary]), sgn = k === 'ArrowUp' ? 1 : -1;
+    dx = nrm.x * step * sgn; dy = nrm.y * step * sgn;
+  } else if (k === 'ArrowLeft') dx = -step;
+  else if (k === 'ArrowRight') dx = step;
+  else if (k === 'ArrowUp') dy = step;
+  else if (k === 'ArrowDown') dy = -step;
+  else return;
+  e.preventDefault();
+  snapshot();
+  nudgeSelection(dx, dy);
+  syncSel();
+  const p = S.ctrl[S.primary];
+  S.hover = nearestStation(p.x, p.y).i;
+  showReadout();
+  redraw();
+}
+
+// ------------------------------------------------------------------ limits
+// [min, max, why-max] per limit. Anything above max is not a planning choice
+// the car can honour.
+function limitCaps() {
+  const F = S.follower;
+  return {
+    a_lat: [0.5, CAR.AY_PEAK,
+            `≤ ${CAR.AY_PEAK.toFixed(2)} tyre peak · robust ${CAR.AY_ASYM.toFixed(2)} · follower caps ${F.steer_a_lat_max}`],
+    a_accel: [0.1, CAR.AX_PEAK, `≤ ${CAR.AX_PEAK.toFixed(2)} tyre peak (0.72 g) · robust ${CAR.AX_ASYM.toFixed(2)}`],
+    a_brake: [0.1, CAR.AX_PEAK, `≤ ${CAR.AX_PEAK.toFixed(2)} tyre peak (0.72 g) · robust ${CAR.AX_ASYM.toFixed(2)}`],
+    v_max: [0.5, CAR.V_TOP, `≤ ${CAR.V_TOP} top speed · follower clips at ${F.v_max}`],
+    v_min: [0.3, Infinity, `≥ 0.3, ≤ v_max · follower v_min ${F.v_min}`],
+    power: [0, Infinity, '0 = off. The 428 Nm motor never limits; drag does'],
+  };
+}
+
+function setLimit(key, raw, quiet) {
+  const caps = limitCaps();
+  let v = parseFloat(raw);
+  if (!isFinite(v)) v = S.limits[key];
+  let [lo, hi] = caps[key];
+  if (key === 'v_min') hi = S.limits.v_max;
+  if (key === 'v_max') lo = Math.max(lo, S.limits.v_min);
+  const clamped = Math.min(Math.max(v, lo), hi);
+  if (clamped !== v && !quiet) toast(`${key} ${v} is not physical here — capped to ${clamped}\n(${caps[key][2]})`, 'bad');
+  S.limits[key] = clamped;
+  $(key).value = +clamped.toFixed(3);
+  annotateCaps();
+}
+
+function annotateCaps() {
+  const caps = limitCaps(), F = S.follower, L = S.limits;
+  for (const key of Object.keys(caps)) {
+    const el = $('cap_' + key);
+    if (!el) continue;
+    el.textContent = caps[key][2];
+    const hit = (key === 'a_lat' && L.a_lat > F.steer_a_lat_max) || (key === 'v_max' && L.v_max > F.v_max) ||
+                (caps[key][1] !== Infinity && L[key] >= caps[key][1] - 1e-9);
+    el.classList.toggle('hit', hit);
+  }
+}
+
+// What the loaded file's own profile asks for, capped to what the car can do.
+function inferLimits() {
+  const o = S.orig;
+  if (!o.fileV) { toast('the loaded file has no v_mps column', 'bad'); return; }
+  const W = o.W;
+  const want = { a_lat: W.aLat[0], a_accel: W.trac[0], a_brake: W.brake[0], v_max: W.vmax[0] };
+  const capped = [];
+  for (const [k, v] of Object.entries(want)) {
+    const before = +v.toFixed(2);
+    setLimit(k, before, true);
+    if (Math.abs(S.limits[k] - before) > 1e-9) capped.push(`${k} ${before} → ${S.limits[k]}`);
+  }
+  rebuild(); redraw();
+  toast(capped.length ? `from the file, but capped:\n${capped.join('\n')}` : 'limits set from the loaded file',
+        capped.length ? 'bad' : 'good');
+}
+
+// ------------------------------------------------------------- references
+async function fetchRows(name) {
+  const res = await fetch('/line/' + encodeURIComponent(name));
+  const out = await res.json();
+  if (!out.ok) throw new Error(out.message);
+  return out.rows;
+}
+
+function addRefLine(name, base, kind) {
+  const colour = REF_COLOURS[S.refs.length % REF_COLOURS.length];
+  const r = { name, base, kind, colour, visible: true,
+              profile: 'replan', line: null };
+  S.refs.push(r);
+  rederiveRefs();
+  if (S.refs.length === 1) splitIdx = 0;
+  redraw();
+  return r;
+}
+
+async function addRefFromFile(name) {
+  try {
+    const rows = await fetchRows(name);
+    if (rows[0].length < 7 || rows.length < 10) throw new Error('not a raceline CSV');
+    const L = S.line;
+    const base = alignTo(lineFromRows(rows), L.x[0], L.y[0], L.psi[0]);
+    const r = addRefLine(name, base, 'file');
+    toast(`${name}: ${base.N} points${base.reversed ? ', reversed to run the same way' : ''}, ` +
+          `${r.line.stats.time.toFixed(3)} s with the current limits`, 'good');
+  } catch (err) {
+    toast(`cannot load ${name}: ${err.message}`, 'bad');
+  }
+}
+
+async function generateRef() {
+  const seedName = $('genSeed').value;
+  const safety = Math.max(0, parseFloat($('genSafety').value) || 0);
+  // Length blends (beta > 0) were measured on this track and lose at every
+  // weight, 0.29-2.1 s, most of them past the steering lock; kept callable.
+  const betas = [0];
+  toast(betas.length > 1 ? `solving ${betas.length} blends…` : 'solving…');
+  await new Promise(r => setTimeout(r, 30));
+  try {
+    let seed;
+    if (seedName === '__edit__') seed = S.line;
+    else seed = alignTo(lineFromRows(await fetchRows(seedName)), S.line.x[0], S.line.y[0], S.line.psi[0]);
+    const t0 = performance.now();
+    const tried = [];
+    let best = null;
+    for (const beta of betas) {
+      const base = alignTo(generateLine(beta, seed, S.grids[S.layer], CAR.HALF_W + safety),
+                           S.line.x[0], S.line.y[0], S.line.psi[0]);
+      base.fileV = null;
+      const probe = deriveLine(Object.assign({}, base), S.grids[S.layer], S.limits,
+                               { pins: null, steerLimit: $('steerLimit').checked });
+      const feasible = !checks(probe).some(c => c.state === 'hard');
+      tried.push(`β ${beta}: ${probe.stats.time.toFixed(3)} s${feasible ? '' : ' ✗'}`);
+      if (feasible && (!best || probe.stats.time < best.time)) best = { beta, base, time: probe.stats.time };
+      await new Promise(r => setTimeout(r, 0));
+    }
+    if (!best) { toast(`no feasible line:\n${tried.join('\n')}`, 'bad'); return; }
+    const label = `${best.beta === 0 ? 'mincurv' : 'blend_b' + best.beta}_s${safety.toFixed(2)}`;
+    const r = addRefLine(label, best.base, 'gen');
+    toast(`${label}: ${r.line.stats.time.toFixed(3)} s, max|κ| ${r.line.stats.kmax.toFixed(3)}, ` +
+          `min body clearance ${r.line.stats.foot.toFixed(3)} m (${(performance.now() - t0).toFixed(0)} ms)` +
+          (tried.length > 1 ? `\n${tried.join('   ')}` : ''), 'good');
+  } catch (err) {
+    toast(`generation failed: ${err.message}`, 'bad');
+  }
+}
+
+function drawRefs() {
+  const E = S.line.stats;
+  if (!S.refs.length) { $('refs').innerHTML = ''; return; }
+  const head = `<tr><td></td><td class="flat">line</td><td class="flat">profile</td>` +
+               `<td class="flat" style="text-align:right">lap s</td><td class="flat" style="text-align:right">vs edit</td><td></td></tr>`;
+  $('refs').innerHTML = head + S.refs.map((r, k) => {
+    const st = r.line.stats, d = st.time - E.time;
+    const bad = checks(r.line).filter(c => c.state === 'hard').map(c => c.name);
+    return `<tr>
+      <td><input type="checkbox" data-a="vis" data-k="${k}" ${r.visible ? 'checked' : ''}></td>
+      <td class="nm" title="${r.name}${bad.length ? '\ninfeasible: ' + bad.join(', ') : ''}">
+        <span class="sw" style="background:${r.colour}"></span> ${r.name}
+        ${bad.length ? '<span class="hard" title="' + bad.join(', ') + '">✗</span>' : ''}</td>
+      <td><select data-a="prof" data-k="${k}" style="width:66px;padding:1px">
+        <option value="replan" ${r.profile === 'replan' ? 'selected' : ''}>replan</option>
+        ${r.base.fileV ? `<option value="file" ${r.profile === 'file' ? 'selected' : ''}>file</option>` : ''}
+      </select></td>
+      <td style="text-align:right">${st.time.toFixed(3)}</td>
+      <td style="text-align:right" class="${d > 0 ? 'down' : 'up'}">${d >= 0 ? '+' : ''}${d.toFixed(3)}</td>
+      <td style="white-space:nowrap">
+        <button class="sm" data-a="split" data-k="${k}" title="show in the right pane">◧</button>
+        <button class="sm" data-a="edit" data-k="${k}" title="edit this line instead">✎</button>
+        <button class="sm" data-a="del" data-k="${k}" title="remove">×</button></td></tr>`;
+  }).join('');
+  $('refs').querySelectorAll('[data-a]').forEach(el => {
+    const k = +el.dataset.k, r = S.refs[k];
+    const act = el.dataset.a;
+    if (act === 'vis') el.addEventListener('change', () => { r.visible = el.checked; redraw(); });
+    if (act === 'prof') el.addEventListener('change', () => { r.profile = el.value; rederiveRefs(); redraw(); });
+    if (act === 'split') el.addEventListener('click', () => { splitIdx = k; setSplit(true); });
+    if (act === 'del') el.addEventListener('click', () => {
+      S.refs.splice(k, 1); splitIdx = Math.min(splitIdx, Math.max(0, S.refs.length - 1)); redraw();
+    });
+    if (act === 'edit') el.addEventListener('click', () => {
+      if (!confirm(`Edit ${r.name} instead? Unsaved changes to the current line are dropped.`)) return;
+      const rows = [];
+      const B = r.base;
+      for (let i = 0; i < B.N; i++) rows.push([B.s[i], B.x[i], B.y[i], B.psi[i], B.kap[i], 0, 0,
+                                               B.fileV ? B.fileV[i] : r.line.v[i]]);
+      loadBase(rows, r.name.endsWith('.csv') ? r.name : r.name + '.csv');
+      redraw();
+    });
+  });
+}
+
+function setSplit(on) {
+  $('maps').classList.toggle('split', on);
+  $('splitBtn').classList.toggle('on', on);
+  requestAnimationFrame(() => { redraw(); });
+}
+
+// ------------------------------------------------------------------- race
+function toggleRace() {
+  RACE.on = !RACE.on;
+  $('raceBtn').textContent = RACE.on ? '❚❚ Pause' : '▶ Race';
+  $('raceBtn').classList.toggle('on', RACE.on);
+  if (RACE.on) { RACE.last = performance.now(); requestAnimationFrame(raceTick); }
+}
+
+function raceTick(now) {
+  if (!RACE.on) return;
+  RACE.T += (now - RACE.last) / 1000 * parseFloat($('raceRate').value);
+  RACE.last = now;
+  const E = S.line, p = carAt(E, RACE.T);
+  let txt = `race t ${RACE.T.toFixed(2)} s   edited lap ${p.lap + 1}  v ${p.v.toFixed(2)} m/s`;
+  for (const r of S.refs) {
+    if (!r.visible || !r.dt) continue;
+    const gap = p.lap * (r.line.t[r.line.N] - E.t[E.N]) + r.dt[p.i];
+    txt += `\n${r.name.slice(0, 26)}  ${Math.abs(gap).toFixed(3)} s ${gap >= 0 ? 'behind' : 'ahead of'} the edited line`;
+  }
+  $('tagA').textContent = txt;
+  $('tagA').style.whiteSpace = 'pre';
+  redrawViews();
+  requestAnimationFrame(raceTick);
 }
 
 // ------------------------------------------------------------------ boot
 // Control points from the loaded line, spaced by arc length but pulled toward
-// curvature: a hairpin gets several handles, a straight gets one. Even spacing
-// puts authority where nothing needs changing and none where it does.
+// curvature: a hairpin gets several handles, a straight gets one.
 function fitControlPoints(line, K) {
   const w = new Float64Array(line.N);
   let total = 0;
@@ -842,103 +2197,138 @@ function fitControlPoints(line, K) {
   return out;
 }
 
-async function boot() {
-  const sess = await (await fetch('/session.json')).json();
-  S.limits = Object.assign({}, sess.limits);
-  for (const key of Object.keys(S.limits)) {
-    const el = $(key);
-    if (!el) continue;
-    el.value = S.limits[key];
-    el.addEventListener('change', () => {
-      S.limits[key] = parseFloat(el.value);
-      // config/pure_pursuit.yaml:77 caps commanded curvature at
-      // steer_a_lat_max/v^2 with steer_a_lat_max = 7.0, and plan() puts the line
-      // exactly on v = sqrt(a_lat/|kappa|) at every binding corner. Planning
-      // above 7.0 therefore places the whole line above the controller's own
-      // cap, and it runs wide everywhere rather than failing visibly.
-      if (key === 'a_lat' && S.limits.a_lat > 7.0) {
-        toast(`a_lat ${S.limits.a_lat} exceeds steer_a_lat_max 7.0 in ` +
-              'pure_pursuit.yaml — the follower will cap the steering and run wide ' +
-              'unless you raise that too', 'bad');
-      }
-      rebuild(); redraw();
-    });
-  }
-
-  for (const m of sess.layers) {
-    const buf = await (await fetch(`/grid/${m.name}.bin`)).arrayBuffer();
-    S.grids[m.name] = Grid(m, new Uint8Array(buf));
-  }
-  // Cast widths against the densest wall description available. For icra that
-  // is track_solid, which reproduces the shipped w_right/w_left EXACTLY;
-  // track_clean leaves unknown cells where a wall is and reads 0.03 m wide.
-  // optimize_raceline.map_base(): track_solid when the track has one, else the
-  // track's default grid. For icra this is what reproduces the shipped
-  // w_right/w_left exactly; track_clean leaves the sealed duct openings free and
-  // reads up to 0.033 m wide through them.
-  const preferred = sess.layers.find(m => m.name === 'track_solid') || sess.layers[0];
-  S.layer = S.castPreferred = preferred.name;
-  $('layer').innerHTML = sess.layers.map(m =>
-    `<option${m.name === S.layer ? ' selected' : ''}>${m.name}</option>`).join('');
-  $('layer').addEventListener('change', () => {
-    S.layer = $('layer').value; fitView(); rebuild(); redraw();
-  });
-
-  const rows = sess.line.rows;
+// Make `rows` the line being edited: the ghost, the handles, the delta column.
+function loadBase(rows, name) {
   S.N = rows.length;
   S.pins = new Float64Array(S.N).fill(Infinity);
-  S.saveName = sess.line.name;
-  $('what').textContent = `${sess.track} / ${sess.line.name} — ${S.N} points`;
-  $('warn').value = 0.10;
-
-  // The loaded line, kept verbatim for the ghost and the delta column.
-  S.orig = {
-    N: S.N, lap: rows[S.N - 1][0] + (rows[1][0] - rows[0][0]), ds: rows[1][0] - rows[0][0],
-    s: Float64Array.from(rows, r => r[0]), x: Float64Array.from(rows, r => r[1]),
-    y: Float64Array.from(rows, r => r[2]), psi: Float64Array.from(rows, r => r[3]),
-    kap: Float64Array.from(rows, r => r[4]), wr: Float64Array.from(rows, r => r[5]),
-    wl: Float64Array.from(rows, r => r[6]),
-    v: Float64Array.from(rows, r => (r.length > 7 ? r[7] : 0)),
-  };
-  S.orig.margin = new Float64Array(S.N);
-  for (let i = 0; i < S.N; i++)
-    S.orig.margin[i] = (S.orig.kap[i] > 0 ? S.orig.wl[i] : S.orig.wr[i]) - HALF_WIDTH;
-  S.origStats = summarise(S.orig);
-
-  // 60 for icra's 542 points. Measured against the shipped line: 45 handles
-  // reconstruct it to 15 mm worst and inflate max|kappa| by 0.054, and the worst
-  // point sits IN the tightest corner; 60 gives 7 mm, +0.005, and the worst
-  // point has moved onto a straight. Against a line whose tightest wall margin
-  // is 0.134 m, 15 mm is 11 % of the safety budget spent before you touch it.
+  S.saveName = name;
+  S.history = [];
+  $('what').textContent = `${S.track} / ${name} — ${S.N} points`;
+  const o = lineFromRows(rows);
+  // The ghost keeps the file's own profile, so the delta column is "what the
+  // file would drive" against "what the edit plans".
+  deriveLine(o, S.grids[S.layer], S.limits, { pins: null, steerLimit: true, fileV: o.fileV || null });
+  S.orig = o;
+  // 45 handles reconstruct icra's line to 15 mm worst; 60 to 7 mm. N/9 keeps
+  // that density for other point counts.
   const K = Math.max(8, Math.round(S.N / 9));
   $('nctrl').value = K;
   S.ctrl = fitControlPoints(S.orig, K);
   S.initial = S.ctrl.map(p => ({ x: p.x, y: p.y }));
-
-  fitView(); rebuild(); redraw();
+  selectHandle(-1);
+  rebuild();
+  rederiveRefs();
   reportFit();
+}
 
+async function boot() {
+  const sess = await (await fetch('/session.json')).json();
+  CAR = deriveCar(sess.vehicle, sess.vehicle_source);
+  S.follower = sess.follower;
+  S.track = sess.track;
+  S.limits = Object.assign({}, sess.limits);
+  buildVehiclePanel(sess);
+
+  for (const key of ['a_lat', 'a_accel', 'a_brake', 'v_max', 'v_min', 'power']) {
+    const el = $(key);
+    setLimit(key, S.limits[key], true);
+    el.addEventListener('change', () => {
+      setLimit(key, el.value);
+      rebuild(); rederiveRefs(); redraw();
+    });
+  }
+  S.limits.drag = CAR.drag;
+  $('drag').value = CAR.drag;
+
+  S.meta = sess.layers;
+  S.raw = {};
+  for (const m of sess.layers) {
+    const buf = await (await fetch(`/grid/${m.name}.bin`)).arrayBuffer();
+    S.raw[m.name] = new Uint8Array(buf);
+  }
+  buildGrids();
+  // optimize_raceline.map_base(): track_solid when the track has one, else the
+  // track's default grid. For icra track_solid is what reproduces the shipped
+  // w_right/w_left exactly; track_clean leaves the sealed duct openings free.
+  const preferred = sess.layers.find(m => m.name === 'track_solid') || sess.layers[0];
+  S.layer = S.castPreferred = preferred.name;
+  $('layer').innerHTML = sess.layers.map(m =>
+    `<option${m.name === S.layer ? ' selected' : ''}>${m.name}</option>`).join('');
+  const regrid = () => {
+    buildGrids();
+    deriveLine(S.orig, S.grids[S.layer], S.limits, { pins: null, steerLimit: true, fileV: S.orig.fileV });
+    rebuild(); rederiveRefs(); redraw();
+  };
+  $('despeck').addEventListener('change', regrid);
+  $('speckCells').addEventListener('change', regrid);
+  $('layer').addEventListener('change', () => {
+    S.layer = $('layer').value;
+    deriveLine(S.orig, S.grids[S.layer], S.limits, { pins: null, steerLimit: true, fileV: S.orig.fileV });
+    rebuild(); rederiveRefs(); redraw();
+  });
+
+  loadBase(sess.line.rows, sess.line.name);
+  fitView();
+  redraw();
+
+  const lines = sess.existing.filter(f => f !== sess.line.name);
+  $('refPick').innerHTML = lines.map(f => `<option${/tum/.test(f) ? '' : ''}>${f}</option>`).join('');
+  const tum = lines.find(f => /tum/.test(f) && !/edit/.test(f));
+  if (tum) $('refPick').value = tum;
+  $('genSeed').innerHTML = (sess.existing.includes('centerline_full.csv')
+    ? '<option value="centerline_full.csv">centreline</option>' : '') +
+    '<option value="__edit__">edited line</option>';
+
+  $('refAdd').addEventListener('click', () => addRefFromFile($('refPick').value));
+  $('genBtn').addEventListener('click', generateRef);
   $('nctrl').addEventListener('change', () => {
-    const n = Math.max(8, parseInt($('nctrl').value, 10) || K);
+    const n = Math.max(8, parseInt($('nctrl').value, 10) || S.ctrl.length);
     snapshot();
     S.ctrl = fitControlPoints(S.orig, n);
+    selectHandle(-1);
     rebuild(); redraw(); reportFit();
   });
-  $('replan').addEventListener('click', () => {
-    snapshot(); S.pins.fill(Infinity); rebuild(); redraw();
-  });
+  $('replan').addEventListener('click', () => { snapshot(); S.pins.fill(Infinity); rebuild(); redraw(); });
+  $('infer').addEventListener('click', inferLimits);
+  $('steerLimit').addEventListener('change', () => { rebuild(); rederiveRefs(); redraw(); });
+  for (const id of ['warn', 'hardClear']) $(id).addEventListener('change', redraw);
+  for (const id of ['colorMode', 'stripMode', 'showOrig', 'showHandles', 'showFoot'])
+    $(id).addEventListener('change', redraw);
   $('reset').addEventListener('click', () => {
     snapshot();
     S.ctrl = S.initial.map(p => ({ x: p.x, y: p.y }));
     S.pins.fill(Infinity);
+    selectHandle(-1);
     rebuild(); redraw(); reportFit();
   });
   $('undo').addEventListener('click', undo);
-  addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undo(); }
-  });
   $('save').addEventListener('click', save);
-  addEventListener('resize', () => { fitView(); redraw(); });
+  $('fit').addEventListener('click', () => { fitView(); redraw(); });
+  $('zoomIn').addEventListener('click', () => { zoomAt(mapCv, mapCv.width / 2, mapCv.height / 2, 1.5); redrawViews(); });
+  $('zoomOut').addEventListener('click', () => { zoomAt(mapCv, mapCv.width / 2, mapCv.height / 2, 1 / 1.5); redrawViews(); });
+  $('splitBtn').addEventListener('click', () => setSplit(!$('maps').classList.contains('split')));
+  $('raceBtn').addEventListener('click', toggleRace);
+  $('raceBtn').addEventListener('dblclick', () => { RACE.T = 0; redrawViews(); });
+  $('vehTab').addEventListener('click', () => $('veh').classList.toggle('open'));
+  for (const id of ['selX', 'selY']) {
+    $(id).addEventListener('change', () => {
+      if (!S.sel.size) return;
+      const c = selCentroid(), x = parseFloat($('selX').value), y = parseFloat($('selY').value);
+      if (!isFinite(x) || !isFinite(y)) { syncSel(); return; }
+      snapshot();
+      nudgeSelection(x - c.x, y - c.y);
+      syncSel(); redraw();
+    });
+  }
+  $('selDel').addEventListener('click', () => { if (S.sel.size) { snapshot(); removeSelected(); } });
+  bindMapPane(mapCv, true);
+  bindMapPane(mapCvB, false);
+  bindProfile();
+  addEventListener('keydown', onKey);
+  addEventListener('keyup', (e) => { if (e.key === ' ') { SPACE = false; mapCv.style.cursor = ''; } });
+  addEventListener('blur', () => { SPACE = false; mapCv.style.cursor = ''; });
+  addEventListener('resize', () => redraw());
+  window.__editorReady = true;
 }
 
 function undo() {
@@ -946,6 +2336,7 @@ function undo() {
   if (!h) { toast('nothing to undo'); return; }
   S.ctrl = h.ctrl; S.pins = h.pins;
   $('nctrl').value = S.ctrl.length;
+  syncSel();
   rebuild(); redraw();
 }
 
@@ -968,45 +2359,92 @@ function reportFit() {
   toast(msg, worst < 0.03 ? 'good' : '');
 }
 
-// Everything that makes a line undriveable in a way the follower will not
-// report. None of it blocks an edit -- you are allowed to drag anywhere -- but
-// it does stand between you and a file you would otherwise only find out about
-// by watching the car understeer into a wall.
+// ---------------------------------------------------------- vehicle drawer
+function buildVehiclePanel(sess) {
+  const v = sess.vehicle, s = sess.vehicle_source, F = sess.follower;
+  const f = (x, d = 4) => Number(x).toFixed(d);
+  const table = (rows) => `<table>${rows.map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join('')}</table>`;
+  const C = deriveCar(v, s);
+  $('veh').innerHTML = `
+    <button class="close sm" id="vehClose">×</button>
+    <h2 style="margin-top:0">Vehicle parameters</h2>
+    <div class="src">RoboRacer, from the <a href="${sess.guide_url}" target="_blank" rel="noopener">competition guide</a> §1.3</div>
+    ${table([
+      ['Car Length', `${f(v.car_length)} m`], ['Car Width', `${f(v.car_width)} m`],
+      ['Wheelbase', `${f(v.wheelbase)} m`], ['Track Width', `${f(v.track_width)} m`],
+      ['Front Overhang', `${f(v.front_overhang)} m`], ['Rear Overhang', `${f(v.rear_overhang)} m`],
+      ['Wheel Radius', `${f(v.wheel_radius)} m`], ['Wheel Width', `${f(v.wheel_width)} m`],
+      ['Total Mass', `${f(v.total_mass, 3)} kg`], ['Sprung Mass', `${f(v.sprung_mass, 3)} kg`],
+      ['Unsprung Mass', `${f(v.unsprung_mass, 3)} kg`],
+      ['Center of Mass', `X: ${f(v.com[0], 5)} m<br>Y: ${f(v.com[1], 5)} m<br>Z: ${f(v.com[2], 5)} m`],
+      ['Suspension Spring', `${v.suspension_spring} N/m`], ['Suspension Damper', `${v.suspension_damper} Ns/m`],
+      ['Longitudinal Tire Limits (Slip, Force)',
+       `Extremum: (${v.long_tire_extremum.join(', ')})<br>Asymptote: (${v.long_tire_asymptote.join(', ')})`],
+      ['Lateral Tire Limits (Slip, Force)',
+       `Extremum: (${v.lat_tire_extremum.map(x => x.toFixed(2)).join(', ')})<br>Asymptote: (${v.lat_tire_asymptote[0].toFixed(2)}, ${v.lat_tire_asymptote[1].toFixed(3)})`],
+    ])}
+    <h2>Driving actuator</h2>
+    ${table([
+      ['Drive Type', v.drive_type], ['Throttle Limits', `[${v.throttle_limits.join(',')}]`],
+      ['Motor Torque', `${v.motor_torque} Nm`], ['Vehicle Top Speed', `${v.top_speed} m/s`],
+    ])}
+    <h2>Steering actuator</h2>
+    ${table([
+      ['Steer Type', v.steer_type], ['Steering Limits', `[${v.steering_limits.join(',')}]`],
+      ['Steering Angle Limits', `[-${v.steer_angle_max},${v.steer_angle_max}] rad`],
+      ['Steering Rate', `${v.steer_rate} rad/s`],
+    ])}
+    <h2>Caps this editor derives and enforces</h2>
+    ${table([
+      ['Steering lock', `κ ≤ tan(${v.steer_angle_max}) / ${v.wheelbase}<br>= ${C.KLOCK.toFixed(3)} 1/m (R ≥ ${(1 / C.KLOCK).toFixed(3)} m)`],
+      ['Lateral tyre peak', `${v.lat_tire_extremum[1]} g = ${C.AY_PEAK.toFixed(2)} m/s²<br>asymptote ${C.AY_ASYM.toFixed(2)}`],
+      ['Longitudinal tyre peak', `${v.long_tire_extremum[1]} g = ${C.AX_PEAK.toFixed(2)} m/s²<br>asymptote ${C.AX_ASYM.toFixed(2)}`],
+      ['Friction ellipse', '(a_x/a_x,peak)² + (a_y/a_y,peak)² ≤ 1'],
+      ['Steering rate', `|dκ/ds| · v · L / (1+(κL)²) ≤ ${v.steer_rate} rad/s`],
+      ['Top speed', `v ≤ ${v.top_speed} m/s`],
+      ['Body footprint', `rear axle on the line;<br>−${f(C.REAR, 3)} … +${f(C.FRONT, 3)} m long, ±${f(C.HALF_W, 3)} m wide`],
+    ])}
+    <h2>Not in the guide</h2>
+    <div class="src">From the simulator's Unity source (raceline/VEHICLE_MODEL.md, multi-track branch)</div>
+    ${table([
+      ['Linear drag', `${s.linear_drag} 1/s &nbsp;(a = −${s.linear_drag}·v)`],
+      ['Angular drag', `${s.angular_drag} 1/s`],
+      ['Idle brake torque', `${s.brake_torque_idle} Nm per wheel at throttle 0`],
+      ['Wheel speed per throttle', `${s.u_per_throttle} m/s`],
+      ['PhysX min slip denominator', `${s.min_long_slip_den} m/s`],
+    ])}
+    <h2>Follower (pure_pursuit.yaml)</h2>
+    ${table([
+      ['v_max', `${F.v_max} m/s — clips the profile`],
+      ['steer_a_lat_max', `${F.steer_a_lat_max} m/s² — caps curvature at a/v²`],
+      ['lookahead_max', `${F.lookahead_max} m`], ['v_min', `${F.v_min} m/s`],
+    ])}`;
+  $('vehClose').addEventListener('click', () => $('veh').classList.remove('open'));
+}
+
+// Hard violations are refused outright -- the server refuses the physically
+// impossible ones anyway, and a file you cannot save is better found here. The
+// rest are the follower's and your margin's, and only ask.
 function saveConcerns() {
-  const st = S.line.stats, c = [];
-  if (st.minClear < 0.02) {
-    c.push(`min clearance ${st.minClear.toFixed(3)} m: below 0.02 the follower's ` +
-           'corner-cut lookahead bound (pure_pursuit.py:964) floors out and stops ' +
-           'protecting the line at all');
-  } else if (st.minClear < 0.10) {
-    c.push(`min clearance ${st.minClear.toFixed(3)} m is under 0.10 (the shipped ` +
-           'line holds 0.134, and the optimizer was run with a 0.15 safety margin)');
-  }
-  if (st.kmax > KAPPA_LOCK) {
-    c.push(`max |kappa| ${st.kmax.toFixed(3)} exceeds the steering lock ` +
-           `${KAPPA_LOCK} 1/m: this corner cannot be driven, and the follower ` +
-           'will simply saturate the steering without saying so');
-  } else if (st.kmax > 0.9 * KAPPA_LOCK) {
-    c.push(`max |kappa| ${st.kmax.toFixed(3)} is over 90% of the steering lock`);
-  }
-  if (st.branch < 2.2) {
-    c.push(`the line passes within ${st.branch.toFixed(2)} m of itself, under ` +
-           "lookahead_max 2.20 -- pure_pursuit's nearest-point search can snap to " +
-           'the wrong part of the lap under a large lateral error');
-  }
+  const rows = checks(S.line);
+  const hard = rows.filter(r => r.state === 'hard').map(r => `${r.name}: ${r.val} (${r.limit}) at s ${S.line.s[r.i].toFixed(2)}`);
+  const soft = rows.filter(r => r.state === 'soft').map(r => `${r.name}: ${r.val} (${r.limit}) at s ${S.line.s[r.i].toFixed(2)}`);
   if (S.layer !== S.castPreferred) {
-    c.push(`widths are cast against ${S.layer}, not ${S.castPreferred}. ` +
-           `${S.castPreferred} is the grid the shipped widths were built from and ` +
-           'reproduces them exactly; another layer disagrees about where the wall is');
+    soft.push(`widths are cast against ${S.layer}, not ${S.castPreferred}, the grid the ` +
+              'shipped widths were built from');
   }
-  return c;
+  return { hard, soft };
 }
 
 async function save() {
-  const concerns = saveConcerns();
-  if (concerns.length &&
-      !confirm('This line has problems the follower will not report:\n\n  \u2022 ' +
-               concerns.join('\n\n  \u2022 ') + '\n\nSave it anyway?')) return;
+  const { hard, soft } = saveConcerns();
+  if (hard.length) {
+    alert('The car cannot drive this line:\n\n  • ' + hard.join('\n  • ') +
+          '\n\nClick the red rows under Physical constraints to find each one.');
+    return;
+  }
+  if (soft.length &&
+      !confirm('This line is drivable but:\n\n  • ' + soft.join('\n\n  • ') + '\n\nSave it anyway?')) return;
   const name = prompt('Save as (a bare filename in this track\'s raceline directory):',
                       S.saveName.replace(/\.csv$/, '_edit.csv'));
   if (!name) return;
@@ -1023,5 +2461,7 @@ async function save() {
   toast(out.ok ? `wrote ${out.message}` : out.message, out.ok ? 'good' : 'bad');
 }
 
-boot().catch(e => toast(`failed to start: ${e}`, 'bad'));
+boot().catch(e => { console.error(e); toast(`failed to start: ${e}`, 'bad'); });
 </script>
+</body>
+</html>

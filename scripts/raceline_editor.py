@@ -17,6 +17,29 @@ through a few dozen draggable control points; the velocity profile is replanned
 from the same forward/backward passes tools/reprofile_raceline.py uses, so what
 comes out is comparable with what that tool produces.
 
+WHAT THE PAGE DOES
+------------------
+    constraints   Velocity limits are refused above the car's physical caps
+                  (tyre peaks, top speed), all derived from VEHICLE_GUIDE below,
+                  which is the competition guide's vehicle table verbatim. The
+                  simulator's linear drag is applied, not optional. A drag may
+                  not push curvature past the steering lock or the body
+                  footprint into a wall; steering rate caps the profile. A
+                  checklist shows every cap against the line, worst point first.
+    vehicle       The guide's parameters in a drawer on the left edge.
+    precision     Wheel zoom and pan, shift-drag for 10x finer moves, arrow-key
+                  nudges down to 1 mm, typed coordinates, normal-only dragging.
+    overlays      The line coloured by clearance, speed, accel/brake, lateral,
+                  friction-ellipse or steering-rate use; the profile's lower
+                  strip plots the same against their limits.
+    benchmark     Any CSV in the raceline directory (the TUM lines, the
+                  centreline, older edits), or a min-curvature line generated
+                  in the page, timed under the SAME limits; split view, a
+                  time-delta trace along the lap, and a race replay.
+    map specks    Isolated blobs of a few non-free cells are freed by default
+                  (track_clean has five; one sits 0.13 m off the start-straight
+                  line and read as a wall). Toggle in the side panel.
+
 WHY THIS IS A WEB PAGE
 ----------------------
 The line optimizer (raceline/optimize_raceline.py, on main and multi-track)
@@ -35,6 +58,12 @@ WHAT IT REFUSES TO DO
 Overwrite. Save always writes a new name, because the shipped ladders are
 reference artefacts and the line you opened has to stay recoverable.
 
+Write a line the car cannot drive: |kappa| past the steering lock, speed past
+the top speed, or lateral/traction/braking demand past the tyre's peak
+(physics_problems). Shipped lines are still LOADED when they break these --
+several brake harder than the tyre allows -- because you may be opening one to
+fix it.
+
 Write a file the car cannot read. Everything the browser sends is re-checked
 here -- eight columns, all numeric, s monotonic, ds uniform, the loop closed
 without a duplicated seam point -- because the alternative is a CSV that fails
@@ -51,7 +80,8 @@ for display -- which also means no PNG encoder here.
 
 SEE ALSO
 --------
-    roboracer_stack/tools/reprofile_raceline.py   the velocity model, ported to JS
+    tools/reprofile_raceline.py (main_track_algorithm)   the velocity model, ported to JS
+    raceline/VEHICLE_MODEL.md (multi-track)       the car, from the simulator source
     roboracer_stack/roboracer_stack/planning/raceline.py   the CSV contract
     roboracer_stack/tools/MAPPING.md              where the grids come from
 """
@@ -88,18 +118,95 @@ HALF_WIDTH = 0.135
 # From tools/clean_map.py:20. The three values a saved occupancy grid holds.
 UNKNOWN, WALL, FREE = 205, 0, 254
 
-# Velocity model defaults, from tools/reprofile_raceline.py:86-96. Kept in the
-# same units and under the same names so a profile planned here and one planned
-# by that tool are the same object.
+GUIDE_URL = 'https://autodrive-ecosystem.github.io/competitions/roboracer-sim-racing-guide-2026/'
+
+# The car, as the competition guide publishes it (section 1.3, fetched
+# 2026-09-17). Values are copied verbatim; the page shows them in its vehicle
+# drawer and derives every physical cap from them, so this table is the ONE
+# place a spec change has to be made.
+VEHICLE_GUIDE = {
+    'car_length': 0.5000,          # m
+    'car_width': 0.2700,           # m
+    'wheelbase': 0.3240,           # m
+    'track_width': 0.2360,         # m
+    'front_overhang': 0.0900,      # m, ahead of the front axle
+    'rear_overhang': 0.0800,       # m, behind the rear axle
+    'wheel_radius': 0.0590,        # m
+    'wheel_width': 0.0450,         # m
+    'total_mass': 3.906,           # kg
+    'sprung_mass': 3.470,          # kg
+    'unsprung_mass': 0.436,        # kg
+    'com': [0.15532, 0.00000, 0.01434],   # m, from the rear axle centre
+    'suspension_spring': 500,      # N/m
+    'suspension_damper': 100,      # Ns/m
+    'long_tire_extremum': [0.15, 0.72],   # (slip, force coefficient)
+    'long_tire_asymptote': [0.25, 0.464],
+    'lat_tire_extremum': [0.01, 1.00],
+    'lat_tire_asymptote': [0.10, 0.500],
+    'drive_type': 'All wheel drive',
+    'throttle_limits': [-1, 1],
+    'motor_torque': 428,           # Nm
+    'top_speed': 22.88,            # m/s
+    'steer_type': 'Ackermann steering',
+    'steering_limits': [-1, 1],
+    'steer_angle_max': 0.5236,     # rad
+    'steer_rate': 3.2,             # rad/s
+}
+
+# NOT in the guide. Read out of the simulator's Unity source by
+# raceline/VEHICLE_MODEL.md (multi-track branch, section 2). Shown separately on
+# the page so nobody mistakes them for published figures.
+VEHICLE_SOURCE = {
+    'linear_drag': 0.273,          # 1/s, Rigidbody.drag: a = -0.273 v
+    'angular_drag': 0.1,           # 1/s
+    'g': 9.81,                     # m/s^2
+    'brake_torque_idle': 428,      # Nm per wheel at throttle exactly 0
+    'u_per_throttle': 25.25,       # m/s of wheel surface speed per unit throttle
+    'min_long_slip_den': 4.0,      # m/s, PhysX minLongSlipDenominator
+}
+
+# Velocity model defaults. Every one of these is a PLANNING choice and sits
+# below a physical cap the page derives from VEHICLE_GUIDE (tyre peaks, top
+# speed); the page refuses values above the cap. Drag is not a choice: it is
+# the simulator's own and is applied as-is.
+#   a_lat 7.0   = steer_a_lat_max in pure_pursuit.yaml; tyre peak is 9.81
+#   a_accel 6.0 / a_brake 5.0 = the fastest clean ICRA rung (VEHICLE_MODEL.md
+#               run 22-23); tyre peak is 0.72 g = 7.06
+#   power 0     = off. The 428 Nm motor never limits; the old 20.5 W/kg was a
+#               stand-in for the drag that is now modelled directly.
 LIMITS = {
-    'a_lat': 7.0,      # m/s^2 lateral. Tyre peak is mu 0.72 * g = 7.06.
-    'a_accel': 4.0,    # m/s^2 longitudinal at zero lateral demand
-    'a_brake': 7.0,    # m/s^2
-    'power': 20.5,     # W/kg, i.e. a_x * v. Binds above a_accel/power = 5.1 m/s.
-    'drag': 0.0,       # 1/s. 0.273 is the simulator's Rigidbody linear drag.
-    'v_max': 8.0,      # matches v_max in config/pure_pursuit.yaml
+    'a_lat': 7.0,
+    'a_accel': 6.0,
+    'a_brake': 5.0,
+    'power': 0.0,
+    'drag': VEHICLE_SOURCE['linear_drag'],
+    'v_max': 8.5,
     'v_min': 1.0,
 }
+
+FOLLOWER_YAML = os.path.join(_STACK, 'config', 'pure_pursuit.yaml')
+
+
+def follower_params():
+    """The few pure_pursuit.yaml values a line has to respect, without PyYAML.
+
+    The follower clips speed at v_max and curvature at steer_a_lat_max/v^2, so a
+    line planned beyond either is driven as something else. Keys missing from
+    the file fall back to the values the file carried on 2026-09-17.
+    """
+    out = {'v_max': 8.5, 'steer_a_lat_max': 7.0, 'lookahead_max': 2.2, 'v_min': 1.0}
+    try:
+        with open(FOLLOWER_YAML) as fh:
+            for raw in fh:
+                key, _, val = raw.split('#')[0].strip().partition(':')
+                if key in out and val.strip():
+                    try:
+                        out[key] = float(val)
+                    except ValueError:
+                        pass
+    except OSError:
+        pass
+    return out
 
 # The CSV's own header, byte-for-byte what optimize_raceline.export_csv writes.
 HEADER = '# s_m,x_m,y_m,psi_rad,kappa_radpm,w_right_m,w_left_m,v_mps'
@@ -239,6 +346,56 @@ def validate(rows):
     return bad
 
 
+def physics_problems(rows, tol=0.03):
+    """What the car cannot do at all, whatever the planning limits say.
+
+    Checked on save only: shipped lines are loaded regardless (several brake
+    harder than the tyre allows), and the page re-plans before it saves, so a
+    line reaching here in violation means the page's caps were bypassed. `tol`
+    absorbs the %.5f rounding and finite differences, never real excess.
+    """
+    g = VEHICLE_SOURCE['g']
+    drag = VEHICLE_SOURCE['linear_drag']
+    k_lock = math.tan(VEHICLE_GUIDE['steer_angle_max']) / VEHICLE_GUIDE['wheelbase']
+    ax_peak = VEHICLE_GUIDE['long_tire_extremum'][1] * g
+    ay_peak = VEHICLE_GUIDE['lat_tire_extremum'][1] * g
+    v_top = VEHICLE_GUIDE['top_speed']
+    n = len(rows)
+    ds = rows[1][0] - rows[0][0]
+    worst = {}
+
+    def note(key, i, val):
+        if key not in worst or val > worst[key][1]:
+            worst[key] = (i, val)
+
+    for i, r in enumerate(rows):
+        j = rows[(i + 1) % n]
+        k, v, vj = abs(r[4]), r[7], j[7]
+        if k > k_lock * (1 + tol):
+            note('kappa', i, k)
+        if v < 0 or v > v_top:
+            note('speed', i, v)
+        if v * v * k > ay_peak * (1 + tol):
+            note('lateral', i, v * v * k)
+        ax = (vj * vj - v * v) / (2 * ds)
+        if ax > 0 and ax + drag * v > ax_peak * (1 + tol):
+            note('traction', i, ax + drag * v)
+        if ax < 0 and -ax - drag * vj > ax_peak * (1 + tol):
+            note('braking', i, -ax - drag * vj)
+    text = {
+        'kappa': lambda i, x: f'|kappa| {x:.3f} 1/m at s {rows[i][0]:.2f} is past the '
+                              f'steering lock {k_lock:.3f} 1/m',
+        'speed': lambda i, x: f'v {x:.2f} m/s at s {rows[i][0]:.2f} is outside [0, {v_top}]',
+        'lateral': lambda i, x: f'lateral {x:.2f} m/s^2 at s {rows[i][0]:.2f} exceeds the '
+                                f'tyre peak {ay_peak:.2f}',
+        'traction': lambda i, x: f'traction {x:.2f} m/s^2 at s {rows[i][0]:.2f} exceeds the '
+                                 f'tyre peak {ax_peak:.2f}',
+        'braking': lambda i, x: f'braking {x:.2f} m/s^2 (tyre share) at s {rows[i][0]:.2f} '
+                                f'exceeds the tyre peak {ax_peak:.2f}',
+    }
+    return [text[key](*worst[key]) for key in text if key in worst]
+
+
 def write_csv(path, rows, comments):
     """Header + %.5f, matching optimize_raceline.export_csv exactly.
 
@@ -351,10 +508,29 @@ class Session:
             'dir': self.dir,
             'existing': sorted(f for f in os.listdir(self.dir) if f.endswith('.csv')),
             'limits': LIMITS,
+            'vehicle': VEHICLE_GUIDE,
+            'vehicle_source': VEHICLE_SOURCE,
+            'guide_url': GUIDE_URL,
+            'follower': follower_params(),
             'half_width': HALF_WIDTH,
             'free': FREE,
             'header': HEADER,
         }
+
+    def other_line(self, name):
+        """Any line in the raceline directory, for comparison. Read fresh each
+        time -- unlike the line being edited, a reference is allowed to change
+        on disk between two looks. Returns (ok, rows-or-message)."""
+        if os.path.basename(name) != name or not name.endswith('.csv'):
+            return False, f'{name!r}: a bare .csv filename in {self.dir}'
+        path = os.path.join(self.dir, name)
+        if not os.path.isfile(path):
+            return False, f'{name} does not exist in {self.dir}'
+        try:
+            _, rows = read_csv(path)
+        except SystemExit as exc:          # read_csv reports by exiting; not here
+            return False, str(exc)
+        return True, rows
 
     def save(self, name, rows):
         """Write a new line. Returns (ok, message)."""
@@ -373,6 +549,10 @@ class Session:
             # two implementations disagree. Refusing is the only safe answer:
             # the alternative is a file that raises inside rclpy on the car.
             return False, 'refusing to write a line the follower cannot use: ' \
+                          + '; '.join(problems)
+        problems = physics_problems(rows)
+        if problems:
+            return False, 'refusing to write a line the car cannot drive: ' \
                           + '; '.join(problems)
         write_csv(dest, rows, [HEADER])
         return True, dest
@@ -403,6 +583,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, self.page, 'text/html; charset=utf-8')
         if path == '/session.json':
             return self._send(200, json.dumps(self.session.payload()),
+                              'application/json')
+        if path.startswith('/line/'):
+            ok, out = self.session.other_line(path[len('/line/'):])
+            return self._send(200 if ok else 400,
+                              json.dumps({'ok': ok, 'rows': out} if ok
+                                         else {'ok': False, 'message': out}),
                               'application/json')
         if path.startswith('/grid/') and path.endswith('.bin'):
             name = path[len('/grid/'):-len('.bin')]

@@ -119,6 +119,18 @@ pure_pursuit:
     # tire's lateral peak more steering means LESS force; at the 6.5 rung the car
     # ran 0.9 m wide at full lock in the S entry. Measured usable maxima 6.4-7.8.
     steer_a_lat_max: 7.0
+    # The profile is planned AT 7.0 too, so in every limit corner the cap above
+    # equalled the path's own curvature: no steering left to correct with, and
+    # once wide the car stayed wide to the exit. Run iros_21: cap binding 53 %
+    # of the time the car was > 0.10 m outside; 0.25 m wide out of both
+    # hairpins below profile speed. Floor the cap at 1.3x the path curvature
+    # within the lookahead (1.3 x 1.30 = 1.69 on usman_1, under the 1.78 lock).
+    steer_cap_path_margin: 0.30
+    # Exit guard: while > exit_guard_from outside the line in a corner, stop
+    # accelerating (fully at exit_guard_full). Accel on exit eats the lateral
+    # grip needed to come back. 0 = off.
+    exit_guard_from: 0.05
+    exit_guard_full: 0.15
 
     # ---- Steering ----
     # From the published competition vehicle spec. delta = atan(kappa*wheelbase),

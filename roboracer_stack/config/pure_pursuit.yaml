@@ -201,7 +201,7 @@ pure_pursuit:
     slip_accel: 0.11
     slip_brake: 0.12
     v_slip_den: 4.0            # PhysX minLongSlipDenominator, default 4 m/s
-    slip_kp: 0.76              # proportional lead on (v_target - v_land) inside the band;
+    slip_kp: 1.0              # proportional lead on (v_target - v_land) inside the band;
                                # 0.76 = 25.25 * throttle_kp, the legacy law's gain. Without
                                # it tire mode tracked the target 0.15 m/s low vs legacy's 0.07.
     cmd_delay_auto: true       # measure the delay online (throttle vs wheel-speed cross-

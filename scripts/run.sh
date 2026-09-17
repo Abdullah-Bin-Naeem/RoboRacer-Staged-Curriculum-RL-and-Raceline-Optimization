@@ -4,6 +4,7 @@
 #     ./scripts/run.sh sim --headless   simulator, no window, auto-connects
 #     ./scripts/run.sh sim              simulator with a window; hit Connect
 #     ./scripts/run.sh racer            our stack -- starts driving on its own
+#                                       (+ RViz when DISPLAY is set; RVIZ=0 to skip)
 #     ./AutoDRIVE\ Simulator.x86_64
 # Order does not matter. The bridge listens on 4567 and blocks until the
 # simulator connects, so the racer container can be up first and waiting.
@@ -29,6 +30,7 @@
 # own `docker run` (README, "How the organizers run it"), which this mirrors.
 set -euo pipefail
 
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${IMAGE:-autodrive_racer}"
 TAG="${TAG:-qualification-1}"
 SIM_TAG="${SIM_TAG:-2026-iros-compete}"
@@ -61,9 +63,35 @@ case "${1:-}" in
     docker rm -f "$NAME" >/dev/null 2>&1 || true
     # No --entrypoint override: the point of the submission is that the default
     # entrypoint brings everything up by itself.
+    #
+    # RViz (a local convenience, not part of the image): when DISPLAY is set,
+    # scripts/amcl.rviz is mounted and rviz2 is started as the container's
+    # command beside the stack; RVIZ=0 skips it. The entrypoint runs that
+    # command after launching the stack, so the image is unchanged. It needs
+    # the host GPU: without it Mesa's GLX cannot create a render window on an
+    # XWayland display ("Invalid parentWindowHandle", rviz2 aborts).
+    view=()
+    cmd=()
+    if [ "${RVIZ:-1}" = "1" ] && [ -n "${DISPLAY:-}" ]; then
+      xhost local:root >/dev/null 2>&1 || true
+      view=(-v /tmp/.X11-unix:/tmp/.X11-unix:rw --env DISPLAY
+            -v "$REPO/scripts/amcl.rviz:/root/amcl.rviz:ro")
+      if command -v nvidia-smi >/dev/null 2>&1; then
+        view+=(--gpus all -e NVIDIA_DRIVER_CAPABILITIES=all)
+      fi
+      # /odom is stamped in 'world', which the stack's TF tree does not have
+      # (bridge.launch.py remaps the devkit's TF off /tf), so RViz drops the
+      # GroundTruth display. The map was built in the simulator's own
+      # coordinates, so map == world: an identity transform, for the viewer only.
+      cmd=(bash -c 'ros2 run tf2_ros static_transform_publisher \
+                      --frame-id map --child-frame-id world >/tmp/world_tf.log 2>&1 &
+                    rviz2 -d /root/amcl.rviz >/tmp/rviz.log 2>&1 &
+                    echo "[run.sh] rviz2 started, log: /tmp/rviz.log"; exec bash')
+    fi
     exec docker run --name "$NAME" --rm -it \
       --network=host --ipc=host \
-      "${IMAGE}:${TAG}"
+      "${view[@]}" \
+      "${IMAGE}:${TAG}" "${cmd[@]}"
     ;;
 
   *) echo "usage: $0 {sim [--headless [BRIDGE_IP]]|racer}" >&2; exit 1 ;;

@@ -164,6 +164,13 @@ def _launch(context, *args, **kwargs):
     dev_lap = 'false' if race_mode else cfg('dev_lap_telemetry')
     bootstrap_seconds = '0.0' if race_mode else cfg('bootstrap_seconds')
     use_tf_pose = 'true' if race_mode else cfg('use_tf_pose')
+    # DIAGNOSTIC ONLY. Steer on the simulator's own pose instead of the
+    # localizer's, so a run separates "the controller cannot follow this line"
+    # from "the estimate is not good enough to follow it". Nothing else changes:
+    # the localizer still runs, so its error is still logged beside a car that
+    # is not using it. Refused in race mode, and the follower prints
+    # restricted.warn() on top of the line printed here.
+    drive_on_truth = (not race_mode) and cfg('drive_on_truth').lower() == 'true'
     # NOT forced. bootstrap_mode:=truth is race-legal: the first lap is a warmup
     # and the timer starts after it, so the one-shot /ips read that seeds the
     # localizer happens inside the permitted window, and localization_bootstrap
@@ -290,8 +297,9 @@ def _launch(context, *args, **kwargs):
     # 6. follower, on a delay so the localizer is publishing before it asks
     follower_args = {
         'path_csv': path_csv,
-        'pose_topic': spec['pose_topic'] if spec else cfg('pose_topic'),
-        'use_tf_pose': use_tf_pose,
+        'pose_topic': (f'{frames.NS}/odom' if drive_on_truth
+                       else (spec['pose_topic'] if spec else cfg('pose_topic'))),
+        'use_tf_pose': 'false' if drive_on_truth else use_tf_pose,
         'dev_lap_telemetry': dev_lap,
         'wait_for_ready': ready_latched,
         'bootstrap_seconds': bootstrap_seconds,
@@ -351,6 +359,11 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'distance_source', default_value='encoder',
             description="dead reckoning distance source, 'encoder' or 'tire'; see dead_reckoning.py"),
+        DeclareLaunchArgument(
+            'drive_on_truth', default_value='false',
+            description='DIAGNOSTIC: steer on the simulator ground-truth pose instead of the '
+                        'localizer. NOT race-legal, refused by mode:=race, and the follower says so '
+                        'in red. Use it to separate controller error from localization error.'),
         DeclareLaunchArgument('chassis', default_value='true'),
         DeclareLaunchArgument('localization', default_value='true'),
         DeclareLaunchArgument('follower', default_value='true'),

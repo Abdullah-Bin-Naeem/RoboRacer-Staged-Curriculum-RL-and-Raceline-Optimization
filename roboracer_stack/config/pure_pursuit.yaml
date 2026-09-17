@@ -146,7 +146,7 @@ pure_pursuit:
                                # v * cmd_delay_s ahead (floor: this). It used to be the
                                # minimum over a 1 m preview, which reached corner speed a
                                # metre early at every entry: 0.55 s a lap, measured.
-    target_lead_s: 0.0        # extra preview for the speed target, on top of the measured
+    target_lead_s: 0.08        # extra preview for the speed target, on top of the measured
                                # delay. The car's deceleration follows the wheel as slip
                                # builds, and at the 7.0 rung the tire is at its limit in R1
                                # and the S entry: arriving at the profile speed runs wide,

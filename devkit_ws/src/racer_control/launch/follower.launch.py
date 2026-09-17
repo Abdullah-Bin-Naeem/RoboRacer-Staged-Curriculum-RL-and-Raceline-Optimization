@@ -43,6 +43,7 @@ from racer_common.frames import NS, TRACK
 TUNABLES = ('lookahead_min', 'lookahead_max', 'lookahead_k', 'lookahead_curv_gain', 'lookahead_sag_frac',
             'lookahead_delay_ref', 'derate_delay_from', 'derate_delay_to', 'derate_a_lat',
             'steer_a_lat_max', 'steer_excess_rad', 'exit_guard_from', 'exit_guard_full',
+            'lqr_k_lat', 'lqr_k_head', 'lqr_k_yaw', 'lqr_max_correction_rad',
             'v_max', 'a_lat_max', 'throttle_max', 'steering_gain',
             'warmup_v_max', 'warmup_dist_m',
             'curvature_preview_m',
@@ -56,7 +57,7 @@ TUNABLES = ('lookahead_min', 'lookahead_max', 'lookahead_k', 'lookahead_curv_gai
             # legacy launch ramp
             'a_long_launch', 'a_long_launch_v')
 # String-valued switches, passed through without the float() cast.
-STR_TUNABLES = ('speed_source', 'throttle_mode', 'steer_excess_ref')
+STR_TUNABLES = ('speed_source', 'throttle_mode', 'steer_excess_ref', 'controller_mode')
 
 
 def _nodes(context, *args, **kwargs):

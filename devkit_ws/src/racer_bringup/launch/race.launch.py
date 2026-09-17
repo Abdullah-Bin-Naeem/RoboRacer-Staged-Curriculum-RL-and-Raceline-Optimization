@@ -86,6 +86,7 @@ from racer_common.frames import TRACK
 TUNABLES = ('lookahead_min', 'lookahead_max', 'lookahead_k', 'lookahead_curv_gain', 'lookahead_sag_frac',
             'lookahead_delay_ref', 'derate_delay_from', 'derate_delay_to', 'derate_a_lat',
             'steer_a_lat_max', 'steer_excess_rad', 'exit_guard_from', 'exit_guard_full',
+            'lqr_k_lat', 'lqr_k_head', 'lqr_k_yaw', 'lqr_max_correction_rad',
             'v_max', 'a_lat_max', 'throttle_max', 'steering_gain',
             'warmup_v_max', 'warmup_dist_m',
             'curvature_preview_m',
@@ -99,7 +100,7 @@ TUNABLES = ('lookahead_min', 'lookahead_max', 'lookahead_k', 'lookahead_curv_gai
             # with the tick (headless sim, faster machine) so the loop is not the limit
             'control_hz',
             'pose_speed_window', 'pose_speed_gain', 'pose_corr_max', 'imu_lever_arm', 'latency_comp_s',
-            'speed_source', 'throttle_mode', 'steer_excess_ref',
+            'speed_source', 'throttle_mode', 'steer_excess_ref', 'controller_mode',
             # legacy launch ramp (throttle_mode:=legacy only)
             'a_long_launch', 'a_long_launch_v')
 
@@ -220,7 +221,9 @@ def _launch(context, *args, **kwargs):
                     'bootstrap_mode': bootstrap_mode,
                     'require_convergence': cfg('require_convergence'),
                     'recover': cfg('recover'),
-                    'recover_use_checkpoints': cfg('recover_use_checkpoints')}
+                    'recover_use_checkpoints': cfg('recover_use_checkpoints'),
+                    'recover_settle_s': cfg('recover_settle_s'),
+                    'recover_creep_s': cfg('recover_creep_s')}
         loc_args['map_yaml' if localizer == 'amcl' else 'map_graph'] = (
             map_yaml if localizer == 'amcl' else map_graph)
         # A/B a localizer parameter set without touching the package's yaml.
@@ -354,6 +357,10 @@ def generate_launch_description():
                               description='re-localize after a wall reset; see localization_bootstrap'),
         DeclareLaunchArgument('recover_use_checkpoints', default_value='true',
                               description='false forces the no-data recovery tier; see localization_bootstrap'),
+        DeclareLaunchArgument('recover_settle_s', default_value='1.0',
+                      description='pause after a reset seed before creep'),
+        DeclareLaunchArgument('recover_creep_s', default_value='1.0',
+                      description='gentle lidar creep duration after recovery'),
         DeclareLaunchArgument('chassis', default_value='true'),
         DeclareLaunchArgument('localization', default_value='true'),
         DeclareLaunchArgument('follower', default_value='true'),

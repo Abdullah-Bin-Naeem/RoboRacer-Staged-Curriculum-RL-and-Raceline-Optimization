@@ -148,6 +148,11 @@ class PurePursuit(Node):
         p('lookahead_k', 0.35)                 # Ld = k * speed, then clamped
         p('lookahead_curv_gain', 0.67)         # Ld /= (1 + gain * max |kappa| within Ld); 0 = off
         p('steer_a_lat_max', 7.0)              # cap |kappa_cmd| at this / v^2 [m/s^2]; 0 = off
+        p('controller_mode', 'pure_pursuit')
+        p('lqr_k_lat', 0.18)
+        p('lqr_k_head', 0.70)
+        p('lqr_k_yaw', 0.035)
+        p('lqr_max_correction_rad', 0.12)
         p('exit_guard_from', 0.0)
         p('exit_guard_full', 0.15)
         # Cap the steering EXCESS over the path's own kinematic steering angle. The
@@ -395,6 +400,13 @@ class PurePursuit(Node):
         self.ld_min, self.ld_max, self.ld_k = g('lookahead_min'), g('lookahead_max'), g('lookahead_k')
         self.ld_curv_gain = float(g('lookahead_curv_gain'))
         self.steer_a_lat_max = float(g('steer_a_lat_max'))
+        self.controller_mode = str(g('controller_mode')).lower()
+        self.lqr_k_lat = float(g('lqr_k_lat'))
+        self.lqr_k_head = float(g('lqr_k_head'))
+        self.lqr_k_yaw = float(g('lqr_k_yaw'))
+        self.lqr_max_correction = float(g('lqr_max_correction_rad'))
+        if self.controller_mode not in ('pure_pursuit', 'hybrid_lqr'):
+            raise RuntimeError(f'controller_mode must be pure_pursuit or hybrid_lqr, not {self.controller_mode!r}')
         self.steer_excess_rad = float(g('steer_excess_rad'))
         self.steer_excess_ref = str(g('steer_excess_ref'))
         self.ld_sag_frac = float(g('lookahead_sag_frac'))
@@ -1152,6 +1164,19 @@ class PurePursuit(Node):
         actual_ld = max(math.hypot(dx, dy), 1e-3)
 
         kappa_cmd = 2.0 * local_y / (actual_ld ** 2)
+        if self.controller_mode == 'hybrid_lqr' and self.speed > 0.8:
+            # Pure pursuit supplies the path-curvature feed-forward term. LQR
+            # only corrects measured lateral/heading/yaw-rate error and is
+            # bounded so stale localization cannot replace the proven fallback.
+            yaw_error = (yaw - self.psi[near] + math.pi) % (2.0 * math.pi) - math.pi
+            yaw_error_rate = self.yaw_rate - self.speed * float(self.kappa[near])
+            delta_lqr = -(self.lqr_k_lat * e_lat
+                          + self.lqr_k_head * yaw_error
+                          + self.lqr_k_yaw * yaw_error_rate)
+            delta_lqr = float(np.clip(delta_lqr,
+                                      -self.lqr_max_correction,
+                                      self.lqr_max_correction))
+            kappa_cmd += math.tan(delta_lqr) / self.wheelbase
         # Never ask the front tires for more lateral acceleration than they can
         # give. The sideways curve peaks at 1.0 g at 0.57 deg of slip and falls
         # to 0.5 g by 5.7 deg (VEHICLE_MODEL.md §3.2), so once the car runs wide

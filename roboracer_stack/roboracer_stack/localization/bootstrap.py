@@ -57,7 +57,7 @@ Anything sent to /initialpose before that is silently DISCARDED -- amcl logs
 returns. The publisher here is VOLATILE, so there is no late-joiner redelivery
 either: the message is simply gone.
 
-Every node in localization.launch.py starts at the same instant, so whether the
+Every node in amcl.launch.py starts at the same instant, so whether the
 seed lands used to be a pure race between the bridge's first /ips message and
 nav2's lifecycle transition -- and the bridge usually won. When the seed was
 lost, AMCL fell back to its `initial_pose` parameter and this node declared
@@ -72,14 +72,40 @@ So the sequence is now:
     3. nudge AMCL into running an update (it is stationary in truth mode, and
        AMCL only resamples once it believes it has moved)
     4. compare the next estimate against what was sent; re-seed if it differs
-    5. only then latch /localization_ready
+    5. score the lidar scan against the map AT that estimate (see below)
+    6. only then latch /localization_ready
 
 If the seed cannot be confirmed, this node REFUSES to hand over rather than
 letting the follower drive on a pose nobody checked. Set
 require_convergence:=false to restore the old hand-over-anyway behaviour.
 
+CHECKING THE SEED AGAINST THE WORLD, NOT AGAINST ITSELF
+-------------------------------------------------------
+In spawn mode there is no truth, so step 4 compares AMCL with the seed it was
+just given. The particles start inside 5 cm / 3 deg of that seed and resampling
+cannot carry them far, so a stale SPAWN_* or a map that does not line up with
+the simulator's frame used to pass step 4 anyway. Step 5 asks the one
+independent witness there is: at the confirmed pose, what fraction of lidar
+beams end within scan_match_tol_m of a wall on the map? A right pose scores
+near 1; a pose 0.3 m or a few degrees out scores far lower (scan_match_min).
+
+AFTER HAND-OVER: THE RESPAWN WATCH
+----------------------------------
+A wall contact respawns the car at the last checkpoint with its velocity
+zeroed. The encoders do not reset, but the IMU heading jumps by more than the
+yaw rate can explain -- the signature pure_pursuit already uses to reset its
+speed estimate. Nothing told AMCL, whose particles stayed at the wall. So this
+node stays subscribed after hand-over and, on that signature, re-seeds AMCL on
+the racing line behind the last estimate, at the nearest stretch whose heading
+matches the new IMU heading, with a covariance stretched along the track over
+that stretch. Race-legal: IMU, the shipped raceline, AMCL's own last estimate.
+A respawn that keeps the heading (mid-straight) is not detectable this way.
+
 THE TWO LOCALIZERS
 ------------------
+Only AMCL ships on this branch; the slam_toolbox column is kept because the
+handshake is written against these parameters, not against AMCL.
+
                       AMCL                        slam_toolbox
   ready_check         lifecycle (get_state)       tf (map->odom appears)
   estimate_topic      /amcl_pose                  /pose
@@ -123,13 +149,15 @@ import tf2_ros
 from geometry_msgs.msg import Point, PoseWithCovarianceStamped
 from lifecycle_msgs.msg import State
 from lifecycle_msgs.srv import GetState
+from nav_msgs.msg import OccupancyGrid
 from rclpy.node import Node
 from rclpy.qos import (QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile,
                        QoSReliabilityPolicy)
 from rclpy.time import Time
 from roboracer_stack.common import restricted
 from roboracer_stack.common.frames import NS as COMMON_NS
-from roboracer_stack.common.frames import SPAWN_X, SPAWN_Y, SPAWN_YAW
+from roboracer_stack.common.frames import (DEFAULT_RACELINE, LIDAR_XYZ, SPAWN_X,
+                                           SPAWN_Y, SPAWN_YAW)
 from sensor_msgs.msg import Imu, JointState, LaserScan
 from std_msgs.msg import Bool, Float32
 from std_srvs.srv import Empty
@@ -150,6 +178,65 @@ def wrap(a):
 def yaw_from_quat_xyzw(q):
     x, y, z, w = q
     return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+
+def near_wall_mask(data, width, height, tol_cells):
+    """Boolean grid, row = y index as in OccupancyGrid: True within tol_cells
+    (a square neighbourhood) of an occupied cell. Box sum by 2-D cumsum."""
+    occ = np.asarray(data, dtype=np.int16).reshape(height, width) >= 65
+    k = max(0, int(tol_cells))
+    c = np.pad(occ.astype(np.int32), ((k + 1, k), (k + 1, k))).cumsum(0).cumsum(1)
+    n = 2 * k + 1
+    box = c[n:, n:] - c[:-n, n:] - c[n:, :-n] + c[:-n, :-n]
+    return box > 0
+
+
+def scan_match_score(mask, resolution, origin_xy, scan, pose, lidar_x,
+                     max_range, stride=4):
+    """Fraction of valid beams, cast from `pose` (x, y, yaw of the base frame),
+    that end on `mask`. None if fewer than 20 beams are usable. Angles follow
+    REP-103 (angle_min + i * increment, counter-clockwise), as AMCL assumes."""
+    x, y, yaw = pose
+    r = np.asarray(scan.ranges, dtype=float)
+    a = scan.angle_min + np.arange(len(r)) * scan.angle_increment
+    r, a = r[::stride], a[::stride]
+    ok = np.isfinite(r) & (r > scan.range_min) & (r < min(scan.range_max, max_range))
+    if ok.sum() < 20:
+        return None
+    lx, ly = x + lidar_x * math.cos(yaw), y + lidar_x * math.sin(yaw)
+    ex = lx + r[ok] * np.cos(yaw + a[ok])
+    ey = ly + r[ok] * np.sin(yaw + a[ok])
+    col = np.floor((ex - origin_xy[0]) / resolution).astype(int)
+    row = np.floor((ey - origin_xy[1]) / resolution).astype(int)
+    h, w = mask.shape
+    inside = (col >= 0) & (col < w) & (row >= 0) & (row < h)
+    hits = int(mask[row[inside], col[inside]].sum())
+    return hits / float(ok.sum())
+
+
+def respawn_seed(xs, ys, psis, step, est_xy, yaw, back_m, max_dyaw):
+    """Where on the racing line did the car respawn?
+
+    Walks back from the point nearest the last estimate for up to back_m and
+    takes the FIRST contiguous run of points whose heading is within max_dyaw
+    of the new IMU heading. Returns (x, y, psi, run_length_m) at the point of
+    that run whose heading matches best -- on a straight every point matches
+    about equally and the run length carries the uncertainty; through a bend
+    the best match is sharp -- or None if no point behind matches.
+    """
+    n = len(xs)
+    i0 = int(np.argmin(np.hypot(xs - est_xy[0], ys - est_xy[1])))
+    run = []
+    for k in range(int(back_m / step) + 1):
+        i = (i0 - k) % n
+        if abs(wrap(psis[i] - yaw)) <= max_dyaw:
+            run.append(i)
+        elif run:
+            break
+    if not run:
+        return None
+    m = min(run, key=lambda i: abs(wrap(psis[i] - yaw)))
+    return float(xs[m]), float(ys[m]), float(psis[m]), len(run) * step
 
 
 class LocalizationBootstrap(Node):
@@ -198,6 +285,20 @@ class LocalizationBootstrap(Node):
         # Refuse to latch /localization_ready unless the pose was actually
         # confirmed. False restores the old "hand over regardless" behaviour.
         p('require_convergence', True)
+        # ---- scan against the map at the confirmed pose (docstring) ----------
+        # Calibrated offline on track_clean by ray-casting the map (LOCALIZER.md).
+        # 0 disables.
+        p('scan_match_min', 0.5)
+        p('scan_match_tol_m', 0.10)
+        p('scan_match_max_range', 6.0)   # far beams amplify a small yaw error
+        p('map_topic', '/map')
+        # ---- respawn watch (docstring) --------------------------------------
+        p('respawn_watch', True)
+        p('respawn_yaw_jump', 0.35)      # rad beyond rate * dt; as pure_pursuit
+        p('respawn_back_m', 6.0)         # how far behind to look for the checkpoint
+        p('respawn_max_dyaw_deg', 15.0)
+        p('respawn_std_cross', 0.30)
+        p('path_csv', DEFAULT_RACELINE)
 
         g = lambda n: self.get_parameter(n).value
         self.throttle = g('throttle')
@@ -226,6 +327,29 @@ class LocalizationBootstrap(Node):
         self.tol_yaw = math.radians(float(g('seed_tolerance_deg')))
         self.max_attempts = int(g('max_seed_attempts'))
         self.require_convergence = bool(g('require_convergence'))
+        self.scan_min = float(g('scan_match_min'))
+        self.scan_tol = float(g('scan_match_tol_m'))
+        self.scan_range = float(g('scan_match_max_range'))
+        self.map_mask = None             # near_wall_mask of the latest /map
+        self.map_res = None
+        self.map_origin = None
+        self._scan_warned = False
+        self.respawn_watch = bool(g('respawn_watch'))
+        self.respawn_jump = float(g('respawn_yaw_jump'))
+        self.respawn_back = float(g('respawn_back_m'))
+        self.respawn_dyaw = math.radians(float(g('respawn_max_dyaw_deg')))
+        self.respawn_std_cross = float(g('respawn_std_cross'))
+        self._imu_prev = None            # (stamp, yaw, rate) for the respawn watch
+        self._respawn_last = -1e9
+        self.respawns = 0
+        self.line = None                 # (x, y, psi, step) of the raceline
+        if self.respawn_watch:
+            try:
+                d = np.loadtxt(str(g('path_csv')), delimiter=',')
+                self.line = (d[:, 1], d[:, 2], d[:, 3], float(d[1, 0] - d[0, 0]))
+            except Exception as exc:                    # noqa: BLE001
+                self.get_logger().warn(
+                    f'respawn watch OFF: cannot read the raceline ({exc})')
         self.truth_pos = None            # ground truth as read; truth mode only
         self.truth_quat = None
         # What _seed() publishes: /ips + /imu in truth mode, the spawn constant
@@ -275,15 +399,17 @@ class LocalizationBootstrap(Node):
         if self.mode == 'truth':
             self._ips_sub = self.create_subscription(
                 Point, f'{NS}/ips', self._cb_ips, QOS)
-            self.create_subscription(Imu, f'{NS}/imu', self._cb_imu, QOS)
         elif self.mode == 'spawn':
             # No /ips subscription exists in this mode, not even a dormant one.
             self.src_pos = (self.spawn[0], self.spawn[1])
-            if self.spawn_imu_yaw:
-                self.create_subscription(Imu, f'{NS}/imu', self._cb_imu, QOS)
-            else:
+            if not self.spawn_imu_yaw:
                 half = 0.5 * self.spawn[2]
                 self.src_quat = (0.0, 0.0, math.sin(half), math.cos(half))
+        # The seed heading (truth, spawn) and the respawn watch (every mode).
+        self.create_subscription(Imu, f'{NS}/imu', self._cb_imu, QOS)
+        if self.scan_min > 0.0:
+            self.create_subscription(OccupancyGrid, str(g('map_topic')),
+                                     self._cb_map, LATCHED)
 
         # TF is needed to notice slam_toolbox coming up (ready_check=tf) and to
         # read the estimate the follower actually drives on (verify_via_tf).
@@ -419,25 +545,87 @@ class LocalizationBootstrap(Node):
 
     def _cb_imu(self, msg):
         q = msg.orientation
-        self.src_quat = (q.x, q.y, q.z, q.w)
+        quat = (q.x, q.y, q.z, q.w)
         if self.mode == 'truth':
-            self.truth_quat = self.src_quat
+            self.src_quat = self.truth_quat = quat
+        elif self.mode == 'spawn' and self.spawn_imu_yaw:
+            self.src_quat = quat
+        self._watch_respawn(msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9,
+                            yaw_from_quat_xyzw(quat), msg.angular_velocity.z)
+
+    def _cb_map(self, msg):
+        info = msg.info
+        self.map_res = float(info.resolution)
+        self.map_origin = (info.origin.position.x, info.origin.position.y)
+        self.map_mask = near_wall_mask(msg.data, info.width, info.height,
+                                       math.ceil(self.scan_tol / self.map_res))
+
+    def _scan_check(self, pose):
+        """(ok, text) for the scan scored against the map at `pose`.
+
+        Passes, loudly, when there is nothing to score with: AMCL cannot be
+        active without the map, so a missing map means this node's own
+        subscription is at fault, and that must not park the car.
+        """
+        if self.scan_min <= 0.0:
+            return True, 'scan check off'
+        score = None
+        if self.map_mask is not None and self.scan is not None:
+            score = scan_match_score(self.map_mask, self.map_res, self.map_origin,
+                                     self.scan, pose, float(LIDAR_XYZ[0]),
+                                     self.scan_range)
+        if score is None:
+            if not self._scan_warned:
+                self._scan_warned = True
+                self.get_logger().warn(
+                    'scan-vs-map check SKIPPED: no map or no usable scan yet')
+            return True, 'scan check skipped'
+        text = (f'{score * 100:.0f}% of beams on a wall within '
+                f'{self.scan_tol * 100:.0f} cm (min {self.scan_min * 100:.0f}%)')
+        return score >= self.scan_min, text
+
+    def _watch_respawn(self, t, yaw, rate):
+        """After hand-over: re-seed AMCL when the heading jumps (docstring)."""
+        prev, self._imu_prev = self._imu_prev, (t, yaw, rate)
+        if (not self.respawn_watch or not self.ready or prev is None
+                or self.line is None or self.est is None):
+            return
+        dt = t - prev[0]
+        if not 0.0 < dt <= 0.3:
+            return          # over a stall the car may really have turned that far
+        jump = wrap(yaw - prev[1] - prev[2] * dt)
+        if abs(jump) <= self.respawn_jump or t - self._respawn_last < 1.0:
+            return
+        self._respawn_last = t
+        self.respawns += 1
+        xs, ys, psis, step = self.line
+        seed = respawn_seed(xs, ys, psis, step, self.est[:2], yaw,
+                            self.respawn_back, self.respawn_dyaw)
+        if seed is None:
+            self.get_logger().error(
+                f'RESPAWN {self.respawns} (heading jumped {math.degrees(jump):+.0f} deg) '
+                f'but no raceline point within {self.respawn_back:.0f} m behind the '
+                f'last estimate heads {math.degrees(yaw):+.0f} deg. AMCL NOT re-seeded.')
+            return
+        sx, sy, psi, run = seed
+        # Uniform over the matching stretch along the track: std = L / sqrt(12).
+        along = max(0.5, run / math.sqrt(12.0))
+        c, s = math.cos(psi), math.sin(psi)
+        va, vc = along ** 2, self.respawn_std_cross ** 2
+        cov = (c * c * va + s * s * vc, c * s * (va - vc), s * s * va + c * c * vc)
+        self._publish_initialpose(sx, sy, yaw, cov, math.radians(5.0))
+        self.get_logger().warn(
+            f'RESPAWN {self.respawns}: heading jumped {math.degrees(jump):+.0f} deg. '
+            f'Re-seeded AMCL at x={sx:+.2f} y={sy:+.2f} yaw={math.degrees(yaw):+.0f} deg, '
+            f'{run:.1f} m of matching line, along std {along:.2f} m.')
 
     def _seed(self):
         """Publish the seed pose to /initialpose and remember what was sent."""
         x, y = self.src_pos
-        qx, qy, qz, qw = self.src_quat
-        m = PoseWithCovarianceStamped()
-        m.header.stamp = self.get_clock().now().to_msg()
-        m.header.frame_id = 'map'
-        m.pose.pose.position.x, m.pose.pose.position.y = x, y
-        (m.pose.pose.orientation.x, m.pose.pose.orientation.y,
-         m.pose.pose.orientation.z, m.pose.pose.orientation.w) = qx, qy, qz, qw
+        yaw = yaw_from_quat_xyzw(self.src_quat)
         # Tight but not zero: the seed is good, the map is not perfect.
-        m.pose.covariance[0] = m.pose.covariance[7] = 0.05 ** 2
-        m.pose.covariance[35] = math.radians(3.0) ** 2
-        self.pub_init.publish(m)
-        yaw = yaw_from_quat_xyzw((qx, qy, qz, qw))
+        self._publish_initialpose(x, y, yaw, (0.05 ** 2, 0.0, 0.05 ** 2),
+                                  math.radians(3.0))
         self.seed_pose = (x, y, yaw)
         self.seeded_at = self.get_clock().now().nanoseconds * 1e-9
         self.attempts += 1
@@ -446,6 +634,19 @@ class LocalizationBootstrap(Node):
             f'yaw={math.degrees(yaw):+.1f} deg -- awaiting confirmation')
         if self.attempts == 1 and self.mode == 'truth':
             self._report_spawn(x, y, yaw)
+
+    def _publish_initialpose(self, x, y, yaw, cov_xy, std_yaw):
+        """cov_xy = (xx, xy, yy); nav2 AMCL reads the full 2x2 block."""
+        m = PoseWithCovarianceStamped()
+        m.header.stamp = self.get_clock().now().to_msg()
+        m.header.frame_id = self.map_frame
+        m.pose.pose.position.x, m.pose.pose.position.y = x, y
+        m.pose.pose.orientation.z = math.sin(0.5 * yaw)
+        m.pose.pose.orientation.w = math.cos(0.5 * yaw)
+        m.pose.covariance[0], m.pose.covariance[1] = cov_xy[0], cov_xy[1]
+        m.pose.covariance[6], m.pose.covariance[7] = cov_xy[1], cov_xy[2]
+        m.pose.covariance[35] = std_yaw ** 2
+        self.pub_init.publish(m)
 
     def _report_spawn(self, x, y, yaw):
         """Print the MEASURED spawn, ready to paste into frames.py.
@@ -672,25 +873,35 @@ class LocalizationBootstrap(Node):
         moving = ' while driving' if abs(self.speed) > 0.3 else ''
         if fresh and self.est_err is not None:
             gap, dyaw = self.est_err, self.est_dyaw
-            if gap <= self.tol_m and dyaw <= self.tol_yaw:
+            scan_ok, scan_text = self._scan_check(self.est)
+            if gap <= self.tol_m and dyaw <= self.tol_yaw and scan_ok:
                 self._finish(
-                    f'seed CONFIRMED on attempt {self.attempts}{moving}: the '
+                    f'{scan_text}. seed CONFIRMED on attempt {self.attempts}{moving}: the '
                     f'estimate is {gap * 100:.1f} cm / {math.degrees(dyaw):.1f} deg from '
                     f'{ref_name} (pos std {std}). Tracking is now lidar + map + dead '
                     'reckoning only.')
                 return
-            reason = (f'the estimate is {gap:.2f} m / {math.degrees(dyaw):.1f} deg from '
-                      f'{ref_name.upper()}, tolerance {self.tol_m:.2f} m / '
-                      f'{math.degrees(self.tol_yaw):.1f} deg '
-                      f'(speed {abs(self.speed):.1f} m/s)')
-        elif fresh and self.mode == 'spawn' and self._converged():
+            if gap <= self.tol_m and dyaw <= self.tol_yaw:
+                reason = (f'the estimate agrees with {ref_name}, but the SCAN DOES NOT '
+                          f'MATCH THE MAP there ({scan_text}): a wrong SPAWN_* or a '
+                          'map that does not line up with the simulator')
+            else:
+                reason = (f'the estimate is {gap:.2f} m / {math.degrees(dyaw):.1f} deg from '
+                          f'{ref_name.upper()}, tolerance {self.tol_m:.2f} m / '
+                          f'{math.degrees(self.tol_yaw):.1f} deg '
+                          f'(speed {abs(self.speed):.1f} m/s)')
+        elif (fresh and self.mode == 'spawn' and self._converged()
+              and self._scan_check(self.est)[0]):
             # Moving, so the seed is no longer a valid reference (see _record);
-            # the filter's own covariance is what is left to go on.
+            # the filter's own covariance and the scan are what is left.
             self._finish(
-                f'seed CONFIRMED on attempt {self.attempts}{moving}: the filter '
+                f'{self._scan_check(self.est)[1]}. seed CONFIRMED on attempt {self.attempts}{moving}: the filter '
                 f'converged (pos std {std}, yaw std {math.degrees(self.yaw_std):.1f} deg). '
                 'Tracking is now lidar + map + dead reckoning only.')
             return
+        elif fresh and self.mode == 'spawn' and self._converged():
+            reason = (f'the filter converged but the SCAN DOES NOT MATCH THE MAP '
+                      f'({self._scan_check(self.est)[1]})')
         elif fresh:
             reason = (f'the filter has not converged while moving (pos std {std})'
                       if self.mode == 'spawn' else f'no {ref_name} reference to score against')

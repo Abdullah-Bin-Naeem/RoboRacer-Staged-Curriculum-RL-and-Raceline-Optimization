@@ -8,59 +8,76 @@ and RESTRICTED at race time, so this node rebuilds an equivalent from the two
 permitted sources:
 
     distance  <- wheel encoders  (cumulative wheel angle, radians)
+                 or the tire observer on the wheel speed (distance_source)
     heading   <- IMU orientation (absolute quaternion, so yaw does NOT drift)
 
 Publishes `odom -> base_frame` on /tf plus a nav_msgs/Odometry. Position drifts,
-because wheel slip makes the encoders overread (measured at up to ~3x under hard
-acceleration in the RL work). Correcting that drift is exactly AMCL's job -- but
-it is also why the motion-model noise in the AMCL config has to be generous.
+because the sim's encoders report the commanded wheel speed rather than the car
+(see common/tire_model.py). Correcting that drift is AMCL's job.
 
 Because IMU yaw is absolute and world-referenced, the `odom` frame here comes out
 aligned with the simulator's world orientation; only its origin differs.
 
-DISTANCE NEVER TOUCHES dt
--------------------------
+ONE STEP PER SIMULATOR FRAME
+----------------------------
+The bridge publishes every topic from one handler per WebSocket frame, stamped
+on receipt, encoders first and IMU after. So a frame is: left encoder, right
+encoder, IMU, lidar, within a millisecond or two. Travel is banked once per
+frame, only when EVERY live encoder has reported it:
+
+  * banking on the first encoder alone moved the car by mean(dl, 0) = half a
+    step, while the extrapolation clock had already advanced to the new frame,
+    so the transform sampled in between lagged by ~ds/2 (0.22 m at 8 m/s).
+  * an encoder that stops publishing is dropped from the mean after
+    encoder_stale_s rather than contributing 0 forever, which halved distance.
+
+The step moves along the MEAN heading of the interval, IMU yaw at the previous
+frame and at this one. The newest heading alone rotates every chord of a corner
+the same way, a systematic drift AMCL's zero-mean noise cannot represent:
+simulated on raceline_a7.0 at 18 Hz, 0.126 m worst per lap against 0.039 m.
+The IMU for a frame lands just after its encoders, so a complete frame waits up
+to imu_wait_s in the timer for it before being banked on an extrapolated yaw.
+
+DISTANCE NEVER TOUCHES A RATE x A DIFFERENT dt
+----------------------------------------------
 Encoder angle is CUMULATIVE, so arc length is `dangle * r` regardless of how
-long the interval was or whether frames were dropped. Integrating instead as
-`(dangle/dt_encoder) * dt_timer` -- a rate multiplied straight back into a
-different interval -- is not an identity, and it was biasing distance two ways:
-
-  * Jensen. The speed from interval k is held across interval k+1, and for
-    jittery intervals E[dt_{k+1}/dt_k] = mu * E[1/dt] > 1, inflating distance by
-    roughly (sigma/mu)^2. The bridge stamps every message with
-    `get_clock().now()` at socket receipt, so dt carries the full WebSocket +
-    Unity frame jitter; at 18 Hz nominal, 15% jitter is ~2% systematic OVERREAD
-    -- larger than the 1.55% wheel-radius bias corrected below, and systematic,
-    which is exactly what AMCL's zero-mean alpha noise cannot represent.
-
-  * Dropped travel. The old dt sanity guard returned AFTER `self._enc[side]` had
-    already been overwritten, so a stale or duplicate frame permanently lost that
-    angle delta -- biasing position SHORT.
-
-So the angle delta is now accumulated directly, and dt survives only where it is
-harmless: computing the reported `twist.linear.x`, which nothing integrates.
+long the interval was or whether frames were dropped. Holding a rate from one
+interval across another (Jensen) inflated distance by ~(sigma/mu)^2, ~2% at
+15% stamp jitter. With distance_source=tire the observer's speed is integrated
+over the SAME stamp interval the wheel speed was measured on, and those
+intervals telescope, so the sum is unbiased.
 """
 
 import math
+from collections import deque
 
-import numpy as np
 import rclpy
 import tf2_ros
 from geometry_msgs.msg import TransformStamped
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
+from roboracer_stack.common.tire_model import TireSpeedObserver
 from sensor_msgs.msg import Imu, JointState
 
 NS = '/autodrive/roboracer_1'
 QOS = QoSProfile(durability=QoSDurabilityPolicy.VOLATILE,
                  reliability=QoSReliabilityPolicy.RELIABLE,
                  history=QoSHistoryPolicy.KEEP_LAST, depth=1)
+SIDES = ('l', 'r')
 
 
 def yaw_from_quat(q):
     return math.atan2(2.0 * (q.w * q.z + q.x * q.y),
                       1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+
+
+def wrap(a):
+    return (a + math.pi) % (2.0 * math.pi) - math.pi
+
+
+def stamp_s(header):
+    return header.stamp.sec + header.stamp.nanosec * 1e-9
 
 
 class DeadReckoning(Node):
@@ -71,83 +88,96 @@ class DeadReckoning(Node):
         p = self.declare_parameter
         # MEASURED 0.0581, not the published 0.0590: path-integration gave
         # 0.05815 and steady-state speed matching 0.05813. The spec value
-        # overreads distance by 1.55%, which is ~0.43 m of phantom travel per
-        # 27.7 m lap -- a SYSTEMATIC bias, which is exactly what AMCL's
-        # zero-mean alpha noise cannot represent. See rl_racer/rl_racer/config.py.
+        # overreads distance by 1.55%, a SYSTEMATIC bias. Measured on the
+        # practice track; the wheel is the same car on the compete track.
         p('wheel_radius', 0.0581)
         p('odom_frame', 'odom')
         p('base_frame', 'roboracer_1')  # devkit's name, so `lidar` still parents to it
         # 200 Hz, not 50. MEASURED: scans land uniformly in the gap between odom
         # transforms, so at 50 Hz (20 ms) 96% of them are stamped AHEAD of the
         # newest one. AMCL must look up odom->base AT the scan timestamp to
-        # build map->odom; a mistimed lookup corrupts that transform while the
-        # published /amcl_pose stays clean. 200 Hz cuts the worst case to 5 ms.
-        #
-        # This is pure RESAMPLING of the integrated pose -- the timer rate no
-        # longer affects how far the car thinks it has travelled.
+        # build map->odom. 200 Hz cuts the worst case to 5 ms. Pure resampling
+        # of the integrated pose: the rate does not change the distance.
         p('publish_rate', 200.0)
         p('publish_tf', True)
-        # Post-date the TF stamp so a consumer asking for "now" always lands
-        # INSIDE the transform window rather than extrapolating past its end.
-        # nav2's own amcl does the same for map->odom, with 0.5 s. The cost is
-        # that the pose reported at stamp t is really the pose from t-tolerance;
-        # 20 ms is small next to the bridge's own WebSocket latency, and far
-        # smaller than the error a dropped scan causes.
+        # Post-date the TF stamp so a consumer asking for "now" lands INSIDE the
+        # transform window rather than extrapolating past its end.
         p('transform_tolerance', 0.02)
         # Encoders overread under slip. <1.0 trims the systematic part; AMCL
         # handles what is left.
         p('distance_scale', 1.0)
+        # 'encoder': arc length from the cumulative wheel angle.
+        # 'tire':    the tire observer's car speed over the same interval, which
+        #            takes the wheelspin at launch and the under-read while
+        #            braking out of the distance. See common/tire_model.py.
+        p('distance_source', 'encoder')
+        p('tire_rise_slope', 3.0)                   # as pure_pursuit.yaml
+        p('v_slip_den', 4.0)
         # Reset detector, in wheel radians. Cumulative angle survives dropped
-        # frames, so the ONLY delta worth rejecting is a discontinuity -- i.e.
-        # the sim resetting the counter. Arithmetic at the measured 24 m/s top
-        # speed and r=0.0581 (wheel rate 413 rad/s):
-        #     one 18 Hz tick        ~23 rad
-        #     a 0.5 s stall        ~206 rad
-        #     a full 27.7 m lap    ~477 rad   <- what a reset-to-zero looks like
-        # 300 sits above any plausible gap and below a lap's accumulation.
-        # A reset also invalidates AMCL's pose, so re-seed the filter too.
+        # frames, so the ONLY delta worth rejecting is a discontinuity -- the
+        # sim resetting the counter. At the 24 m/s top speed (413 rad/s):
+        #     one 18 Hz tick ~23 rad, a 0.5 s stall ~206 rad,
+        #     a full 44 m compete lap ~757 rad.
+        # A wall respawn does NOT reset the counter; bootstrap's respawn watch
+        # handles that from the IMU heading jump.
         p('max_wheel_step', 300.0)
-        # Extrapolate the IMU heading to each transform's stamp with the IMU's own
-        # yaw rate. Otherwise the heading in odom->base lags the scan by up to one
-        # 18 Hz tick: the (post-dated) transform that covers scan k was published
-        # before tick k's messages arrived, so it carries heading k-1. At the
-        # S-curve's 2.7 rad/s that is 8 deg, and AMCL absorbs it by rotating
-        # map->odom -- measured as +-8..14 deg swings of m2o_yaw with 0.5-1.1 m of
-        # cross error at s ~ 20 m on every run, i.e. the wall hits there. Over the
-        # <= 75 ms involved a measured rate is good to ~0.01 rad.
+        # An encoder silent for this long (while the other reports) is dead and
+        # leaves the mean. Well above one frame at the slowest measured 12.8 Hz.
+        p('encoder_stale_s', 0.25)
+        # How long a complete encoder frame waits for its IMU message before it
+        # is banked on the extrapolated heading instead.
+        p('imu_wait_s', 0.02)
+        # Frames the reported/extrapolation speed is averaged over (encoder
+        # source). One frame carries the full receipt-stamp jitter.
+        p('speed_window_frames', 3)
+        # How hard the de-jittered frame clock follows the raw stamps (0..1).
+        p('frame_clock_gain', 0.1)
+        # Carry heading and position forward to each transform's stamp with the
+        # IMU yaw rate and the speed. Otherwise the transform covering scan k
+        # carries frame k-1: measured 8-14 deg map->odom swings at the S-curve
+        # and a 35-40 ms x speed lead of the estimate. Capped at 0.1 s.
         p('extrapolate_yaw', True)
-        # The same for POSITION. The transform that covers scan k carries the
-        # integrated position of frame k-1 as well, so AMCL pairs each scan with
-        # odometry one frame old and pushes map->odom forward by a frame of
-        # travel wherever the walls constrain the along-track direction.
-        # Measured (runs 16-22, 13-18 Hz alike): the estimate LEADS the true
-        # position by 35-40 ms x speed, 0.30 m at 6.5 m/s, and shifting the
-        # truth by 40 ms takes the along error from 0.21 to 0.08 m rms with no
-        # residual offset. Carrying the position forward by the wheel speed to
-        # each stamp removes the mismatch. Capped at 0.1 s like the heading.
         p('extrapolate_pos', True)
 
         g = lambda n: self.get_parameter(n).value
-        self.wheel_r = g('wheel_radius')
+        self.wheel_r = float(g('wheel_radius'))
         self.odom_frame, self.base_frame = g('odom_frame'), g('base_frame')
-        self.publish_tf = g('publish_tf')
-        self.scale = g('distance_scale')
+        self.publish_tf = bool(g('publish_tf'))
+        self.scale = float(g('distance_scale'))
         self.tf_tol = float(g('transform_tolerance'))
         self.max_step = float(g('max_wheel_step'))
+        self.stale_s = float(g('encoder_stale_s'))
+        self.imu_wait = float(g('imu_wait_s'))
         self.extrapolate_yaw = bool(g('extrapolate_yaw'))
         self.extrapolate_pos = bool(g('extrapolate_pos'))
-        self._imu_t = None              # stamp of the heading in self.yaw
-        self._enc_t = None              # stamp of the newest encoder message banked into x, y
+        self.source = str(g('distance_source')).lower()
+        if self.source not in ('encoder', 'tire'):
+            raise RuntimeError(f"distance_source must be 'encoder' or 'tire', not {self.source!r}")
+        self.observer = TireSpeedObserver(g('tire_rise_slope'), g('v_slip_den'))
 
+        # ---- integrated state, valid at self._frame_t ----
         self.x = self.y = 0.0
-        self.yaw = None                 # from IMU; None until the first message
         self.speed = 0.0
-        self.yaw_rate = 0.0
-        self._enc = {}                  # side -> (angle, stamp)
-        self._ds = {}                   # side -> metres of arc awaiting integration
-        self._rate = {}                 # side -> m/s   (reporting only)
-        self._last = None
+        self._frame_t = None            # stamp of the last banked frame
+        self._frame_yaw = None          # IMU yaw (unwrapped) at that stamp
+        self._frame_th = None           # its de-jittered time, see _frame_clock
+        self._fc_t = self._fc_raw = None
+        self._fc_gaps = deque(maxlen=16)
+        self.fc_gain = float(g('frame_clock_gain'))
+        self._odo = 0.0                 # cumulative distance, for the speed window
+        self._odo_hist = deque(maxlen=max(2, int(g('speed_window_frames')) + 1))
+
+        # ---- encoders ----
+        self._enc = {}                  # side -> (angle, stamp) of its newest message
+        self._pend = {}                 # side -> metres not yet banked
+        self._fresh = {}                # side -> reported since the last bank
+        self._pend_t = None             # newest stamp among the pending messages
+        self._dead_warned = set()
         self._resets = 0
+
+        # ---- IMU: (stamp, unwrapped yaw, yaw rate) ----
+        self._imu = deque(maxlen=64)
+        self.yaw_rate = 0.0
 
         self.create_subscription(JointState, f'{NS}/left_encoder',
                                  lambda m: self._cb_enc('l', m), QOS)
@@ -161,139 +191,219 @@ class DeadReckoning(Node):
 
         self.get_logger().info(
             f'dead reckoning: {self.odom_frame} -> {self.base_frame}, '
-            f'wheel r={self.wheel_r} m, scale={self.scale}, '
+            f'distance from {self.source}, wheel r={self.wheel_r} m, scale={self.scale}, '
             f'{g("publish_rate"):.0f} Hz, tf +{self.tf_tol * 1e3:.0f} ms, '
             f'extrapolate yaw={self.extrapolate_yaw} pos={self.extrapolate_pos}')
+
+    # ---- inputs ------------------------------------------------------------
 
     def _cb_enc(self, side, msg):
         """position is cumulative wheel angle in RADIANS (measured, not ticks)."""
         if not msg.position:
             return
-        ang = float(msg.position[0])
-        t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        self._on_encoder(side, float(msg.position[0]), stamp_s(msg.header))
+
+    def _on_encoder(self, side, ang, t):
         prev = self._enc.get(side)
         self._enc[side] = (ang, t)
         if prev is None:
-            self._ds.setdefault(side, 0.0)
             return
-
+        if any(o != side and self._enc[o][1] > prev[1] + self.stale_s for o in self._enc):
+            # Back from silence while the other side kept reporting: its delta
+            # spans frames the other side has already banked alone. Resync
+            # instead of adding them twice. (A stall of BOTH sides is not
+            # covered by anyone, so that delta is kept -- cumulative angle.)
+            return
         dang = ang - prev[0]
-
-        # ---- distance: cumulative, so dt is irrelevant and must stay out ----
         if abs(dang) > self.max_step:
-            # Counter discontinuity, not travel. Skip it; _enc is already
-            # resynced above, so the next delta is measured from the new origin.
+            # Counter discontinuity, not travel. _enc is already resynced, so
+            # the next delta is measured from the new origin.
             self._resets += 1
             self.get_logger().warn(
                 f'{side} encoder jumped {dang:.1f} rad (> {self.max_step:.0f}); '
-                f'treating as a reset, not travel. AMCL needs re-seeding.')
+                'treating as a counter reset, not travel.')
             return
-        self._ds[side] = self._ds.get(side, 0.0) + dang * self.wheel_r
-        self._enc_t = t if self._enc_t is None else max(self._enc_t, t)
-
-        # ---- speed: reported in twist.linear.x, never integrated ----
-        dt = t - prev[1]
-        if dt <= 1e-4 or dt > 0.5:
-            return          # stale or duplicate stamp; a bad dt gives garbage
-        self._rate[side] = dang / dt * self.wheel_r
-        rates = [v for v in self._rate.values() if v is not None]
-        if rates:
-            self.speed = float(np.mean(rates)) * self.scale
+        self._pend[side] = self._pend.get(side, 0.0) + dang * self.wheel_r
+        self._fresh[side] = True
+        self._pend_t = t if self._pend_t is None else max(self._pend_t, t)
 
     def _cb_imu(self, msg):
-        self.yaw = yaw_from_quat(msg.orientation)
-        self.yaw_rate = msg.angular_velocity.z
-        self._imu_t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        self._on_imu(stamp_s(msg.header), yaw_from_quat(msg.orientation),
+                     msg.angular_velocity.z)
 
-    def _yaw_at(self, t):
-        """Heading at time t: the last IMU heading carried forward by its rate.
+    def _on_imu(self, t, yaw, rate):
+        if self._imu:
+            t0, y0, _ = self._imu[-1]
+            if t <= t0:
+                return                  # duplicate or out of order
+            yaw = y0 + wrap(yaw - wrap(y0))
+        self._imu.append((t, yaw, rate))
+        self.yaw_rate = rate
 
-        Capped at 0.1 s so a stalled IMU cannot spin the estimate.
+    # ---- heading -----------------------------------------------------------
+
+    def _yaw_at(self, t, extrapolate=True):
+        """Unwrapped IMU heading at time t: interpolated between samples, or the
+        newest carried forward by its rate (capped at 0.1 s so a stalled IMU
+        cannot spin the estimate). None before the first IMU message."""
+        h = self._imu
+        if not h:
+            return None
+        tn, yn, rn = h[-1]
+        if t >= tn:
+            return yn + (rn * min(t - tn, 0.1) if extrapolate else 0.0)
+        for i in range(len(h) - 1, 0, -1):
+            ta, ya, _ = h[i - 1]
+            tb, yb, _ = h[i]
+            if ta <= t:
+                return ya + (yb - ya) * (t - ta) / (tb - ta)
+        return h[0][1]
+
+    # ---- integration -------------------------------------------------------
+
+    def _frame_complete(self):
+        """Every live encoder has reported since the last bank."""
+        if self._pend_t is None:
+            return False
+        live = [s for s in self._enc if self._pend_t - self._enc[s][1] <= self.stale_s]
+        for s in self._enc:
+            if s not in live and s not in self._dead_warned:
+                self._dead_warned.add(s)
+                self.get_logger().warn(
+                    f'{s} encoder silent for > {self.stale_s:.2f} s; distance from the '
+                    'other side alone until it returns')
+            elif s in live:
+                self._dead_warned.discard(s)
+        return bool(live) and all(self._fresh.get(s, False) for s in live)
+
+    def _maybe_bank(self, now):
+        if not self._frame_complete():
+            return
+        t = self._pend_t
+        imu_in = bool(self._imu) and self._imu[-1][0] >= t
+        if not imu_in and now - t < self.imu_wait:
+            return                      # the frame's IMU is a millisecond behind
+        self._bank(t)
+
+    def _bank(self, t):
+        live = [s for s in self._enc if t - self._enc[s][1] <= self.stale_s]
+        ds_enc = sum(self._pend.get(s, 0.0) for s in live) / max(len(live), 1)
+        for s in list(self._pend):
+            self._pend[s] = 0.0
+            self._fresh[s] = False
+        self._pend_t = None
+
+        yaw1 = self._yaw_at(t)
+        if self._frame_t is None or self._frame_yaw is None or yaw1 is None:
+            # First frame (or no IMU yet): establish the origin, bank nothing.
+            # The car is parked; pre-roll travel is dropped, not guessed.
+            self._frame_t, self._frame_yaw = t, yaw1
+            self._frame_th = self._frame_clock(t)
+            self._odo_hist.append((self._frame_th, self._odo))
+            return
+
+        th = self._frame_clock(t)
+        dt = th - self._frame_th
+        self._frame_th = th
+        if self.source == 'tire' and 0.0 < dt < 0.5:
+            v0 = self.observer.v
+            v1 = self.observer.step(ds_enc / dt, dt)
+            ds = 0.5 * (v0 + v1) * dt
+        else:
+            ds = ds_enc
+        ds *= self.scale
+
+        h = 0.5 * (self._frame_yaw + yaw1)          # unwrapped, so a plain mean
+        self.x += ds * math.cos(h)
+        self.y += ds * math.sin(h)
+        self._odo += ds
+        self._frame_t, self._frame_yaw = t, yaw1
+
+        self._odo_hist.append((th, self._odo))
+        if self.source == 'tire':
+            self.speed = self.observer.v * self.scale
+        else:
+            t0, o0 = self._odo_hist[0]
+            if th - t0 > 1e-3:
+                self.speed = (self._odo - o0) / (th - t0)
+
+    def _frame_clock(self, t):
+        """De-jittered frame time, for RATES only (speed, the tire observer).
+
+        Stamps are receipt times: WebSocket + Unity jitter of ~15 % of a frame.
+        A wheel speed of (distance / stamp interval) carries all of it, and the
+        tire curve is nonlinear, so a noisy u biases the observer: offline, a
+        matched tire model ended a lap 0.03 m out on clean stamps and 0.99 m
+        out on jittered ones. So the frame clock advances by the median period
+        and follows the raw stamp with a small gain; a real irregularity (a
+        stall, a dropped frame) is more than half a period off and snaps.
+        Position extrapolation keeps the raw stamp, which shares the TF clock.
         """
-        if not self.extrapolate_yaw or self._imu_t is None:
-            return self.yaw
-        return self.yaw + self.yaw_rate * max(0.0, min(t - self._imu_t, 0.1))
+        if self._fc_raw is not None:
+            gap = t - self._fc_raw
+            if gap > 0.0:
+                self._fc_gaps.append(gap)
+        self._fc_raw = t
+        if self._fc_t is None or not self._fc_gaps:
+            self._fc_t = t
+            return t
+        period = sorted(self._fc_gaps)[len(self._fc_gaps) // 2]
+        err = t - (self._fc_t + period)
+        if abs(err) > 0.5 * period:
+            self._fc_t = t
+        else:
+            self._fc_t += period + self.fc_gain * err
+        return self._fc_t
 
-    def _pos_at(self, t):
-        """Position at time t: the integrated position carried forward by the
-        wheel speed along the heading, see extrapolate_pos. Capped at 0.1 s so
-        a stalled encoder cannot run the estimate away."""
-        if not self.extrapolate_pos or self._enc_t is None:
-            return self.x, self.y
-        dt = max(0.0, min(t - self._enc_t, 0.1))
-        yaw = self._yaw_at(self._enc_t + 0.5 * dt)
-        return (self.x + self.speed * dt * math.cos(yaw),
-                self.y + self.speed * dt * math.sin(yaw))
+    def _pose_at(self, t):
+        """(x, y, yaw) at time t: the banked frame carried forward by the speed
+        and yaw rate (see extrapolate_*), capped at 0.1 s so a stalled sensor
+        cannot run the estimate away."""
+        yaw = self._yaw_at(t, extrapolate=self.extrapolate_yaw)
+        if not self.extrapolate_pos or self._frame_t is None:
+            return self.x, self.y, yaw
+        dt = max(0.0, min(t - self._frame_t, 0.1))
+        ym = self._yaw_at(self._frame_t + 0.5 * dt)
+        return (self.x + self.speed * dt * math.cos(ym),
+                self.y + self.speed * dt * math.sin(ym), yaw)
 
-    def _consume_ds(self):
-        """Metres travelled since the last tick, averaged over the wheels.
-
-        Both encoders are published inside the same bridge handler, so they
-        normally land together. If a tick happens to fall between them the
-        update is split across two ticks -- mean(dl, 0) then mean(0, dr) -- which
-        still sums to the correct mean(dl, dr); only the yaw used differs, by one
-        5 ms tick.
-        """
-        if not self._ds:
-            return 0.0
-        ds = float(np.mean(list(self._ds.values())))
-        for side in self._ds:
-            self._ds[side] = 0.0
-        return ds * self.scale
+    # ---- output ------------------------------------------------------------
 
     def _tick(self):
-        if self.yaw is None:
-            return
         now = self.get_clock().now()
-        t = now.nanoseconds * 1e-9
-        if self._last is None:
-            self._last = t
-            self._consume_ds()      # drop pre-roll travel rather than banking it
+        self._step(now.nanoseconds * 1e-9)
+
+    def _step(self, t):
+        """Bank a complete frame if one is waiting, then publish at time t."""
+        self._maybe_bank(t)
+        if not self._imu or self._frame_t is None:
             return
-        self._last = t
 
-        # Integrate encoder ARC LENGTH along the IMU heading. No bicycle model
-        # needed: the IMU already gives the true heading each step. No dt either
-        # -- the distance was measured, not inferred from a rate.
-        ds = self._consume_ds()
-        self.x += ds * math.cos(self.yaw)
-        self.y += ds * math.sin(self.yaw)
-
-        stamp = now.to_msg()
-        # TF is post-dated; the Odometry message keeps the true stamp, since
-        # nothing looks that up by time.
-        tf_stamp = (now + rclpy.duration.Duration(
-            seconds=self.tf_tol)).to_msg() if self.tf_tol > 0.0 else stamp
-        # Heading AT the stamp each message carries, not the heading of the last
-        # IMU tick: see extrapolate_yaw. The position integration above keeps the
-        # measured heading, because the encoder distance it moves was measured
-        # in the same bridge tick as that heading.
-        t_tf = t + (self.tf_tol if self.tf_tol > 0.0 else 0.0)
-        half_tf = self._yaw_at(t_tf) / 2.0
-        half_od = self._yaw_at(t) / 2.0
-        x_tf, y_tf = self._pos_at(t_tf)
-        x_od, y_od = self._pos_at(t)
+        t_tf = t + max(self.tf_tol, 0.0)
+        x_tf, y_tf, yaw_tf = self._pose_at(t_tf)
+        x_od, y_od, yaw_od = self._pose_at(t)
 
         if self.publish_tf:
             tf = TransformStamped()
-            tf.header.stamp = tf_stamp
+            tf.header.stamp = rclpy.time.Time(seconds=t_tf).to_msg()
             tf.header.frame_id = self.odom_frame
             tf.child_frame_id = self.base_frame
             tf.transform.translation.x = x_tf
             tf.transform.translation.y = y_tf
-            tf.transform.rotation.z, tf.transform.rotation.w = math.sin(half_tf), math.cos(half_tf)
+            tf.transform.rotation.z = math.sin(0.5 * yaw_tf)
+            tf.transform.rotation.w = math.cos(0.5 * yaw_tf)
             self.tfb.sendTransform(tf)
 
         od = Odometry()
-        od.header.stamp = stamp
+        od.header.stamp = rclpy.time.Time(seconds=t).to_msg()
         od.header.frame_id = self.odom_frame
         od.child_frame_id = self.base_frame
         od.pose.pose.position.x, od.pose.pose.position.y = x_od, y_od
-        od.pose.pose.orientation.z, od.pose.pose.orientation.w = math.sin(half_od), math.cos(half_od)
+        od.pose.pose.orientation.z = math.sin(0.5 * yaw_od)
+        od.pose.pose.orientation.w = math.cos(0.5 * yaw_od)
         od.twist.twist.linear.x = self.speed
         od.twist.twist.angular.z = self.yaw_rate
-        # Position is dead-reckoned and drifts; heading comes from an absolute
-        # sensor. Say so, so AMCL weights them sensibly.
+        # Informational only: nav2 AMCL reads odometry from TF, never this topic.
         od.pose.covariance[0] = od.pose.covariance[7] = 0.05
         od.pose.covariance[35] = 0.01
         od.twist.covariance[0] = 0.02

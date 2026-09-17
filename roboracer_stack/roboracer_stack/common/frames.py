@@ -98,7 +98,7 @@ DEFAULT_MAP_YAML = os.path.join(MAPS_DIR, 'track_clean.yaml')
 # line passes 0.25 m from the wall at its tightest point (the C2 apex, s 14.7).
 # The other rungs (a6.5, the safe one; a7.0_rec, faster but 0.03 m of S-exit
 # clearance) stay on the qualification_1_pure_pursuit branch.
-DEFAULT_RACELINE = os.path.join(RACELINE_DIR, 'raceline_a7.0.csv')
+DEFAULT_RACELINE = os.path.join(RACELINE_DIR, 'raceline_a7.0_edit_10.csv')
 
 # ---- Vehicle ---------------------------------------------------------------
 NS = '/autodrive/roboracer_1'

@@ -52,7 +52,7 @@ amcl:
     laser_model_type: "likelihood_field"
     laser_likelihood_max_dist: 2.0
     laser_min_range: 0.10
-    laser_max_range: 9.50             # matches the mapping run
+    laser_max_range: 9.50             # just inside the sim lidar's 10 m range_max
     max_beams: 180                    # subsampled from the devkit's 1080
     # Weights must sum to 1. z_hit dominates because the sim's lidar is clean;
     # z_rand guards against the unknown infield returning nothing useful.
@@ -65,8 +65,10 @@ amcl:
 
     # ---- Particles ----
     min_particles: 500
-    # Global localization has to cover ~47 m^2 of free space from scratch, which
-    # 2000 particles spreads too thinly. It prunes back down within a few metres.
+    # Global localization has to cover ~66 m^2 of free space (track_clean,
+    # compete track) from scratch, which 2000 particles spreads too thinly. It
+    # prunes back down within a few metres. The respawn re-seed also draws the
+    # full set, spread along the matching stretch of line.
     max_particles: 8000
     pf_err: 0.05
     pf_z: 0.99

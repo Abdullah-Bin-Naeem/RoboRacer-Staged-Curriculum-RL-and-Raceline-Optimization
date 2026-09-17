@@ -12,16 +12,24 @@ Race-legal: encoders, IMU and a constant transform. No ground truth.
 """
 
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from roboracer_stack.common.frames import BASE, LIDAR, LIDAR_XYZ, ODOM
 
 
 def generate_launch_description():
     return LaunchDescription([
+        DeclareLaunchArgument(
+            'dr_distance_source', default_value='encoder',
+            description="'encoder' integrates the wheel angle; 'tire' integrates the "
+                        'tire observer\'s car speed, which removes wheelspin and '
+                        'braking under-read (common/tire_model.py)'),
         Node(
             package='roboracer_stack', executable='dead_reckoning',
             name='dead_reckoning', output='screen', emulate_tty=True,
-            parameters=[{'odom_frame': ODOM, 'base_frame': BASE}],
+            parameters=[{'odom_frame': ODOM, 'base_frame': BASE,
+                         'distance_source': LaunchConfiguration('dr_distance_source')}],
         ),
         # Normally supplied by the devkit's /tf, which bridge.launch.py remaps
         # away so that roboracer_1 does not end up with two parents.

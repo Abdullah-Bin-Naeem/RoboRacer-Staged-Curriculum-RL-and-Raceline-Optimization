@@ -93,6 +93,13 @@ def _launch(context, *args, **kwargs):
     spec = LOCALIZERS.get(localizer)
 
     race_mode = cfg('mode').lower() == 'race'
+    # With no localizer there is no map->base, so the follower's TF lookup fails
+    # and it falls back to pose_topic -- the devkit's ground-truth /odom by
+    # default. That is the ground-truth A/B run (LOCALIZER.md), never a race.
+    if race_mode and spec is None:
+        raise RuntimeError(
+            'mode:=race needs a localizer; localizer:=none steers on pose_topic, '
+            'which is ground truth. Use mode:=dev for the ground-truth A/B run.')
     # In race mode the legal value wins over whatever was passed, so that a
     # stale flag on the command line cannot quietly make the run illegal.
     dev_lap = 'false' if race_mode else cfg('dev_lap_telemetry')
@@ -143,6 +150,7 @@ def _launch(context, *args, **kwargs):
     #    follower's odometry even when localizer:=none.
     actions.append(IncludeLaunchDescription(
         src(loc_share, 'chassis.launch.py'),
+        launch_arguments={'dr_distance_source': cfg('dr_distance_source')}.items(),
         condition=IfCondition(LaunchConfiguration('chassis')),
     ))
 
@@ -157,6 +165,7 @@ def _launch(context, *args, **kwargs):
                     'bootstrap_mode': bootstrap_mode,
                     'require_convergence': cfg('require_convergence')}
         loc_args['map_yaml'] = cfg('map_yaml')
+        loc_args['path_csv'] = cfg('path_csv')
 
         actions.append(IncludeLaunchDescription(
             src(loc_share, spec['launch']),
@@ -203,6 +212,10 @@ def generate_launch_description():
             description="'race' refuses every restricted topic and forces the "
                         "legal settings; 'dev' keeps the conveniences"),
         DeclareLaunchArgument('path_csv', default_value=DEFAULT_RACELINE),
+        DeclareLaunchArgument(
+            'dr_distance_source', default_value='encoder',
+            description="dead reckoning distance: 'encoder' (wheel angle) or 'tire' "
+                        '(tire-observer car speed; removes wheelspin/braking slip)'),
         DeclareLaunchArgument('map_yaml', default_value=DEFAULT_MAP_YAML,
                               description='occupancy grid, AMCL only'),
 

@@ -25,7 +25,8 @@ from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from roboracer_stack.common.frames import DEFAULT_MAP_YAML, SPAWN_X, SPAWN_Y, SPAWN_YAW
+from roboracer_stack.common.frames import (DEFAULT_MAP_YAML, DEFAULT_RACELINE, SPAWN_X,
+                                           SPAWN_Y, SPAWN_YAW)
 
 
 def _nodes(context, *args, **kwargs):
@@ -62,8 +63,9 @@ def _nodes(context, *args, **kwargs):
                          'node_names': ['map_server', 'amcl']}],
         ),
 
-        # Creeps forward on lidar alone until the pose converges, then latches
-        # /localization_ready. Replaces guessing an initial pose.
+        # Seeds AMCL (spawn constant + IMU by default), confirms it against the
+        # seed AND the scan against the map, latches /localization_ready, then
+        # stays up to re-seed AMCL after a wall respawn.
         Node(
             package='roboracer_stack', executable='localization_bootstrap',
             name='localization_bootstrap', output='screen', emulate_tty=True,
@@ -81,6 +83,8 @@ def _nodes(context, *args, **kwargs):
                 'spawn_y': float(cfg('initial_y')),
                 'spawn_yaw': float(cfg('initial_yaw')),
                 'require_convergence': cfg('require_convergence').lower() == 'true',
+                # the respawn watch looks for the checkpoint along this line
+                'path_csv': cfg('path_csv'),
             }],
             condition=IfCondition(LaunchConfiguration('bootstrap')),
         ),
@@ -96,10 +100,11 @@ def generate_launch_description():
             'amcl_params_file',
             default_value=os.path.join(pkg_share, 'config', 'amcl.yaml')),
         DeclareLaunchArgument('map_yaml', default_value=DEFAULT_MAP_YAML),
+        DeclareLaunchArgument('path_csv', default_value=DEFAULT_RACELINE),
         DeclareLaunchArgument(
             'bootstrap', default_value='true',
-            description='drive forward until AMCL converges instead of being '
-                        'given an initial pose'),
+            description='run localization_bootstrap: seed AMCL, confirm it, '
+                        'latch /localization_ready, watch for respawns'),
         DeclareLaunchArgument(
             'bootstrap_mode', default_value='spawn',
             description="'spawn' seeds from the measured spawn constant + IMU "

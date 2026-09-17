@@ -1,0 +1,13 @@
+# Experiment index
+
+One row per run, newest last. Written by `tools/tuning/report.py`; the verdict column is edited by hand.
+
+| id | date | line | overrides | loop cap | timed laps | contacts | best | median | mean | worst | gap | min clear | |e| p90 | verdict |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| [E00](E00_first_run_tum_iqp/report.md) | 2026-09-17 | `raceline_tum_iqp.csv` | `-` | stock | 1 | 1 | 10.309 | 10.309 | 10.309 | 10.309 | 0.707 | 0.050 | 0.228 | FAIL - C1 understeer, wrong profile (not the run_iros_08 one) |
+| [E01](E01_baseline_a70z_stock/report.md) | 2026-09-17 | `raceline_tum_iqp_a7.0z.csv` | `-` | stock | 6 | 2 | 11.214 | 11.434 | 11.410 | 11.621 | 1.464 | 0.025 | 0.194 | INVALID (15 Hz, derated) + C1 contact lap 7: late turn-in from along-track loc error; low-speed respawn missed |
+| [E02](E02_a70z_45hz/report.md) | 2026-09-17 | `raceline_tum_iqp_a7.0z.csv` | `-` | 45 | 0 | 1 | — | — | — | — | — | 0.100 | 0.121 | 45 Hz fixes localization; C1 contact lap 1: encoder jitter -> v_est +0.8 high -> slip band cannot brake |
+| [E03](E03_a70z_45hz_encwin010/report.md) | 2026-09-17 | `raceline_tum_iqp_a7.0z.csv` | `enc_window_s:=0.10` | 45 | 0 | 2 | — | — | — | — | — | 0.035 | 0.414 | Encoder window FIXED braking; C1 exit contact on out-lap: at lock car achieves kappa ~1.0 at 2 m/s vs 1.5 needed (geometry) |
+| [E04](E04_kb11_h45_45hz/report.md) | 2026-09-17 | `raceline_kb11_h45_a45_b45.csv` | `enc_window_s:=0.10 cmd_delay_tick_seed:=1` | 45 | 3 | 3 | 10.442 | 10.481 | 10.485 | 10.533 | 0.304 | 0.035 | 0.107 | INVALID (sim minimized, delay 130 ms); hairpins clean 3 laps 10.44-10.53; contact C2 exit s 13.8 (clearance 0.03-0.10 every lap) |
+| [E05](E05_kb11_h45_45hz_rerun/report.md) | 2026-09-17 | `raceline_kb11_h45_a45_b45.csv` | `enc_window_s:=0.10 cmd_delay_tick_seed:=1` | 45 | 5 | 3 | 10.379 | 10.433 | 10.419 | 10.443 | 0.256 | 0.025 | 0.100 | VALID: 5 laps 10.38-10.44, hairpins clean; contact C2 exit s 14 again = line 0.33 m from wall -> margin zone (E06) |
+| [E06](E06_kb11c2_h45_45hz/report.md) | 2026-09-17 | `raceline_kb11c2_h45_a45_b45.csv` | `enc_window_s:=0.10 cmd_delay_tick_seed:=1` | 45 | 19 | 0 | 10.471 | 10.588 | 10.585 | 10.697 | 0.334 | 0.035 | 0.114 | SAFE FALLBACK: 19 clean laps, 10.47-10.70 (mean 10.59), 0 contacts; stopped by hand |

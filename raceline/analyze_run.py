@@ -166,7 +166,7 @@ def analyze(path, explicit_line, min_speed):
     resets = [j for j in np.flatnonzero((step > np.radians(20)) & (jump > 0.3))]
     resets = [j for n, j in enumerate(resets) if n == 0 or j - resets[n - 1] > 5]
     if resets:
-        rdy = log['ready'] if 'ready' in log.dtype.names else None
+        rdy = log['ready'] if 'ready' in log else None
         rows = []
         for j in resets:
             rec = float('nan'); err_after = float('nan')

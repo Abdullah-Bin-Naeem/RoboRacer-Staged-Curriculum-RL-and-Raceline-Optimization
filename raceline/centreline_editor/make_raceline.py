@@ -44,6 +44,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('map_yaml'); ap.add_argument('-o', '--out'); ap.add_argument('--old', help='previous raceline CSV to overlay')
     ap.add_argument('--plot', action='store_true'); ap.add_argument('--ay', type=float); ap.add_argument('--margin', type=float)
+    ap.add_argument('--kappa-bound', type=float, help='curvature bound for the QP (default PARAMS kappa_bound); '
+                    'the hairpins sit on it, and at steering lock the car turns far less than the geometric 1.78 above ~1.8 m/s')
     ap.add_argument('--spawn', type=float, nargs=3, metavar=('X', 'Y', 'YAW'), default=(0.802, 3.158, -1.5708),
                     help='spawn pose (m, m, rad) — the line is oriented so it runs in the spawn heading')
     ap.add_argument('--margin-zones', default='', help='extra wall margin in lap-distance zones, "s0:s1:extra[:side],..." '
@@ -56,6 +58,7 @@ def main():
     P = dict(PARAMS)
     if a.ay: P['ay_max'] = a.ay
     if a.margin is not None: P['margin'] = a.margin
+    if a.kappa_bound: P['kappa_bound'] = a.kappa_bound
     ds = P['ds']
 
     # ---------- map ----------

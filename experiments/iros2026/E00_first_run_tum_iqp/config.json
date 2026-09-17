@@ -1,0 +1,6 @@
+{"id": "E00", "name": "first run, plain tum_iqp, stock 18 Hz loop", "date": "2026-09-17", "track": "iros2026",
+ "line": "raceline_tum_iqp.csv", "laps": 25, "hz_cap": "stock", "overrides": [],
+ "hypothesis": "Reproduce run_iros_08 (11 clean laps, 10.25-10.5 s) on the line believed to be the one it used.",
+ "prediction": "clean, ~10.3 s",
+ "verdict": "FAILED: contact on lap 3 at the bottom hairpin (C1, s 5.9), understeer at steering lock with localization at 3-6 cm. Target speed there 2.2 m/s: this CSV plans a_lat 7.3 in both hairpins; run_iros_08 in fact followed a hairpin-capped z profile (apex 1.90). Recovery then looped (no checkpoints known for iros2026). Stopped manually.",
+ "verdict_short": "FAIL - C1 understeer, wrong profile (not the run_iros_08 one)"}

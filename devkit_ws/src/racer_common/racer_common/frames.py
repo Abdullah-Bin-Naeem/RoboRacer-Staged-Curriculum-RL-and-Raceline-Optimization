@@ -203,7 +203,13 @@ TRACKS = {
         # ICRA's 7.8 m braking zones cost 0.28 s/lap at 0.08 and this track
         # has a comparable braking zone into the bottom hairpin.
         'follower': {'v_max': '8.0', 'target_lead_s': '0.0'},
-        'checkpoints': [],          # none logged yet; the bootstrap prints any reset it cannot match
+        # Measured from seven resets in experiment E00 (2026-09-17), the first
+        # truth sample after each respawn: repeatable to 3 mm / 0.4 deg. One after
+        # the bottom hairpin (C1, 3 resets), one after the right chevron tip (C2, 4).
+        # More will appear as contacts happen elsewhere; the bootstrap prints them.
+        'checkpoints': [('1.708', '-15.771', '0.265'),     # C1 exit
+                        ('5.047', '-11.498', '1.577'),     # C2 apex
+                        ('3.730', '-9.945', '2.356')],     # C2 exit (E04, E05: contact at s 13.8-14.5)
     },
 }
 

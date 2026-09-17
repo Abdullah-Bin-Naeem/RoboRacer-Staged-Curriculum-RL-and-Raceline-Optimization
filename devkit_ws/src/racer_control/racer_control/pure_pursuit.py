@@ -64,6 +64,7 @@ DEVELOPMENT tool -- for validating a path and a controller offline. Point
 """
 
 import math
+from collections import deque
 
 import numpy as np
 import rclpy
@@ -119,6 +120,16 @@ class PurePursuit(Node):
         p('path_csv', '')
         p('pose_topic', f'{NS}/odom')          # or an AMCL PoseWithCovarianceStamped
         p('control_hz', 20.0)
+        # Adaptive loop (ported from 472d782, Usman, iros_compete_usman), every
+        # switch OFF by default so the ported code is bit-identical to the
+        # validated follower until an experiment turns a piece on. Floats, not
+        # bools, because launch overrides arrive float-cast (as accel_ff does).
+        # control_hz_auto 1: follow the simulator tick (median left-encoder
+        # frame gap) within [control_hz_min, control_hz_max]; a fixed 20 Hz
+        # drops every second frame of a 40-50 Hz evaluation loop.
+        p('control_hz_auto', 0.0)
+        p('control_hz_min', 20.0)
+        p('control_hz_max', 50.0)
         # Pose arrives in /odom's frame, which the devkit calls 'world'.
         p('viz_frame', 'world')
 
@@ -149,6 +160,14 @@ class PurePursuit(Node):
         p('steer_a_lat_max', 7.0)              # cap |kappa_cmd| at this / v^2 [m/s^2]; 0 = off
         p('lookahead_sag_frac', 0.5)           # chord sagitta <= frac * inside margin; 0 = off
         p('lookahead_delay_ref', 0.175)        # k and max scale by cmd_delay / this; 0 = off
+        # Scale law BELOW the reference (a faster loop): scale = (delay/ref)^exp,
+        # clamped to [min_scale, max_scale]. Defaults 1.0 / 0.7 / 1.2 reproduce the
+        # validated linear law exactly. 472d782 proposes 0.5 / 0.62: at 70 ms the
+        # linear law sits on its 0.7 floor (Ld_max 1.54 m), sqrt gives 0.63 (1.39 m).
+        # Above the reference the law stays linear either way.
+        p('lookahead_delay_exp_fast', 1.0)
+        p('lookahead_delay_min_scale', 0.7)
+        p('lookahead_delay_max_scale', 1.2)
         # ---- derating on a slow loop ------------------------------------
         # The profile's lateral limit was proven on a 175 ms round trip. A slower
         # machine (the evaluation box is unknown; this one decayed from 17.3 to
@@ -265,6 +284,31 @@ class PurePursuit(Node):
         p('cmd_delay_auto', True)
         p('cmd_delay_window_s', 6.0)
         p('cmd_delay_update_s', 2.0)
+        # Cross-correlation lag grid. 25 ms is 7 % of a 175 ms round trip but
+        # ~35 % of the ~70 ms at 45 Hz; 472d782 uses 5 ms.
+        # Differentiate the wheel angle over this TIME WINDOW instead of message
+        # to message (ported from 389e561, adil-icra-longitudinal). 0 = the old
+        # per-message behaviour, bit-identical. The bridge stamps are its publish
+        # times, not the simulator's; at 45 Hz with the nodelay shim the per-frame
+        # gap is ~22 ms and its jitter is a large fraction of it, so v_enc swung
+        # 2.8 <-> 5.4 m/s at a steady 3.9 (E02), the tire observer read 0.7-1.0
+        # m/s high through the C1 braking zone, and the slip band, anchored on
+        # that estimate, could not brake: contact at 3.9 m/s against a 1.9 plan.
+        # At ~18 Hz a 0.05 s window spans one message, so it is a no-op there.
+        p('enc_window_s', 0.0)
+        p('cmd_delay_lag_step_s', 0.025)
+        p('cmd_delay_lag_max_s', 0.35)
+        # The round trip is a fixed number of simulator FRAMES (3), so the tick
+        # gives it directly. tick_seed 1: seed the delay from the first full
+        # window of frames instead of walking from cmd_delay_s for ~20 s.
+        # tick_floor 1: never let the effective delay fall below frames/tick,
+        # which reacts to a loop collapse in under a second (the correlator
+        # needs ~10 s). The floor releases when the tick recovers.
+        p('cmd_delay_frames', 3.0)
+        p('cmd_delay_tick_seed', 0.0)
+        p('cmd_delay_tick_floor', 0.0)
+        p('cmd_delay_tick_frames', 16.0)
+        p('cmd_delay_max_s', 0.35)
         # Proportional gain on (v_target - v_land) added to the wheel command inside
         # the band; 0.76 = 25.25 * throttle_kp, the legacy law's effective gain.
         p('slip_kp', 0.76)
@@ -358,6 +402,13 @@ class PurePursuit(Node):
         self.steer_gain = g('steering_gain')
         self.a_lat, self.v_min, self.v_max = g('a_lat_max'), g('v_min'), g('v_max')
         self.hz = float(g('control_hz'))
+        self.hz_auto = float(g('control_hz_auto')) > 0.5
+        self.hz_min = float(g('control_hz_min'))
+        self.hz_max = float(g('control_hz_max'))
+        self._control_timer = None
+        self.ld_delay_exp = float(g('lookahead_delay_exp_fast'))
+        self.ld_scale_min = float(g('lookahead_delay_min_scale'))
+        self.ld_scale_max = float(g('lookahead_delay_max_scale'))
         self.a_long_launch = float(g('a_long_launch'))
         self.a_long_launch_v = float(g('a_long_launch_v'))
         self._v_cmd = 0.0               # rate-limited speed target, m/s
@@ -377,7 +428,23 @@ class PurePursuit(Node):
         if self.speed_source not in ('tire', 'fused', 'encoder'):
             raise RuntimeError(f"speed_source must be 'tire', 'fused' or 'encoder', not {self.speed_source!r}")
         self.tire_m = float(g('tire_rise_slope'))
-        self.cmd_delay = float(g('cmd_delay_s'))
+        # _delay_base is what the correlator estimates (or the fixed value);
+        # self.cmd_delay is the EFFECTIVE delay every consumer reads, recomputed
+        # each cycle as max(base, tick-implied) when the tick floor is on.
+        self._delay_base = float(g('cmd_delay_s'))
+        self.cmd_delay = self._delay_base
+        self.delay_lag_step = float(g('cmd_delay_lag_step_s'))
+        self.enc_window_s = float(g('enc_window_s'))
+        self._enc_win = {}              # side -> [(t, angle)] inside the window
+        self.delay_lag_max = float(g('cmd_delay_lag_max_s'))
+        self.delay_frames = float(g('cmd_delay_frames'))
+        self.delay_tick_seed = float(g('cmd_delay_tick_seed')) > 0.5
+        self.delay_tick_floor = float(g('cmd_delay_tick_floor')) > 0.5
+        self.tick_frames = max(4, int(float(g('cmd_delay_tick_frames'))))
+        self.delay_max = float(g('cmd_delay_max_s'))
+        self.tick_hz = float('nan')     # measured simulator tick
+        self._tick_t = deque()          # last tick_frames+1 frame stamps
+        self._delay_seeded = False
         self.slip_kp = float(g('slip_kp'))
         self.delay_auto = bool(g('cmd_delay_auto'))
         self.delay_win = float(g('cmd_delay_window_s'))
@@ -541,7 +608,9 @@ class PurePursuit(Node):
         self.pub_target = self.create_publisher(Marker, '~/lookahead', 1)
         self.pub_status = self.create_publisher(Float32MultiArray, '~/status', 1)
 
-        self.create_timer(1.0 / g('control_hz'), self._control)
+        self._control_timer = self.create_timer(1.0 / self.hz, self._control)
+        if self.hz_auto:
+            self.create_timer(1.0, self._retune_control_timer)
         self.create_timer(2.0, self._publish_path)
 
     # ---- callbacks -------------------------------------------------------
@@ -587,7 +656,18 @@ class PurePursuit(Node):
         dt = t - prev[1]
         if dt <= 1e-4 or dt > 0.5:
             return   # stale or duplicate frame; a bad dt yields a garbage speed
-        self._enc_rate[side] = (ang - prev[0]) / dt * self.wheel_r
+        if self.enc_window_s > 0.0:
+            # Angle travelled over the window / time it took: both are right
+            # however unevenly the messages were stamped (see enc_window_s).
+            hist = self._enc_win.setdefault(side, [])
+            hist.append((t, ang))
+            while len(hist) > 2 and t - hist[1][0] >= self.enc_window_s:
+                hist.pop(0)
+            self._enc_rate[side] = (ang - hist[0][1]) / max(t - hist[0][0], dt) * self.wheel_r
+        else:
+            self._enc_rate[side] = (ang - prev[0]) / dt * self.wheel_r
+        if side == 'l':
+            self._note_tick(t)
         rates = [v for v in self._enc_rate.values() if v is not None]
         if rates:
             self.v_enc = float(np.mean(rates))
@@ -922,6 +1002,67 @@ class PurePursuit(Node):
         self.u_cmd = u
         return float(np.clip(u / self.u_per_thr, 0.0, self.thr_max))
 
+    def _note_tick(self, t):
+        """One simulator frame arrived (the bridge publishes every topic once per
+        frame, so a left-encoder message IS a frame). Median gap over a count
+        window: one stall does not move it, a sustained collapse does."""
+        if self._tick_t and t <= self._tick_t[-1]:
+            return
+        self._tick_t.append(t)
+        while len(self._tick_t) > self.tick_frames + 1:
+            self._tick_t.popleft()
+        if len(self._tick_t) < 4:
+            return
+        gaps = sorted(b - a for a, b in zip(self._tick_t, list(self._tick_t)[1:]))
+        med = gaps[len(gaps) // 2]
+        if med > 1e-4:
+            self.tick_hz = 1.0 / med
+
+    def _tick_delay(self, now=None):
+        """Round trip implied by the tick (frames / tick), NaN before one is known.
+        With `now`, silence since the last frame counts as the gap when larger,
+        so a freeze is visible while it is still happening."""
+        if self.tick_hz != self.tick_hz or self.tick_hz <= 0.0:
+            return float('nan')
+        gap = 1.0 / self.tick_hz
+        if now is not None and self._tick_t:
+            gap = max(gap, now - self._tick_t[-1])
+        return min(self.delay_frames * gap, self.delay_max)
+
+    def _apply_tick_delay(self, now):
+        """Seed once from a full window (median only), then floor every cycle."""
+        d = self._tick_delay(now)
+        if d != d:
+            return
+        if self.delay_tick_seed and not self._delay_seeded and len(self._tick_t) > self.tick_frames:
+            self._delay_seeded = True
+            self._delay_base = self._tick_delay()
+            self.get_logger().info(
+                f'cmd_delay seeded from a {self.tick_hz:.1f} Hz tick: {self._delay_base * 1e3:.0f} ms '
+                f'({self.delay_frames:.0f} frames), lookahead scale {self._delay_scale(self._delay_base):.2f}')
+        self.cmd_delay = max(self._delay_base, d) if self.delay_tick_floor else self._delay_base
+
+    def _delay_scale(self, delay):
+        """Lookahead scale for a round trip: linear above the reference, (ratio)^exp below."""
+        if self.ld_delay_ref <= 0.0:
+            return 1.0
+        r = delay / self.ld_delay_ref
+        s = r if r >= 1.0 else r ** self.ld_delay_exp
+        return max(self.ld_scale_min, min(self.ld_scale_max, s))
+
+    def _retune_control_timer(self):
+        """Track the tick with the control rate, 10 % deadband, from its own 1 s timer."""
+        if self.tick_hz != self.tick_hz:
+            return
+        target = min(self.hz_max, max(self.hz_min, self.tick_hz))
+        if abs(target - self.hz) <= 0.1 * self.hz:
+            return
+        old, self.hz = self.hz, target
+        if self._control_timer is not None:
+            self.destroy_timer(self._control_timer)
+        self._control_timer = self.create_timer(1.0 / self.hz, self._control)
+        self.get_logger().info(f'control_hz {old:.1f} -> {self.hz:.1f} (tick {self.tick_hz:.1f} Hz)')
+
     def _update_delay(self, now):
         """Cross-correlate published throttle against measured wheel speed.
 
@@ -944,11 +1085,13 @@ class PurePursuit(Node):
         te = np.array([p[0] for p in self._enc_hist]); ve = np.array([p[1] for p in self._enc_hist])
         if ut.std() < 0.3:                          # throttle barely moved: nothing to correlate
             return
-        lags = np.arange(0.0, 0.36, 0.025)
+        lags = np.arange(0.0, self.delay_lag_max + 1e-9, self.delay_lag_step)
         rms = [math.sqrt(np.mean((ve - np.interp(te - lag, tt, ut)) ** 2)) for lag in lags]
         best = float(lags[int(np.argmin(rms))])
         self.delay_meas = best
-        self.cmd_delay += 0.3 * (best - self.cmd_delay)
+        self._delay_base += 0.3 * (best - self._delay_base)
+        if not self.delay_tick_floor:
+            self.cmd_delay = self._delay_base
 
     def _publish_status(self, values):
         m = Float32MultiArray()
@@ -960,6 +1103,8 @@ class PurePursuit(Node):
             return
 
         now = self.get_clock().now().nanoseconds * 1e-9
+        if self.delay_tick_seed or self.delay_tick_floor:
+            self._apply_tick_delay(now)
         pose = self.pose
         if self.use_tf_pose:
             tf_pose = self._pose_from_tf()
@@ -1026,9 +1171,9 @@ class PurePursuit(Node):
         # gave a 2.9 m lookahead whose
         # lateral gain (2/Ld^2) was too soft to catch a 0.1 m drift with 5 deg of
         # heading before a wall 0.33 m away, twice, on the straight after R1.
-        d_scale = 1.0
-        if self.ld_delay_ref > 0.0:
-            d_scale = max(0.7, min(1.2, self.cmd_delay / self.ld_delay_ref))
+        # Below the reference the exponent and floor are parameters (see
+        # lookahead_delay_exp_fast); the defaults are this law unchanged.
+        d_scale = self._delay_scale(self.cmd_delay)
         ld = float(np.clip(self.ld_k * d_scale * abs(self.speed), self.ld_min, self.ld_max * d_scale))
         # Shorten the lookahead where the path AHEAD curves. Pure pursuit aims at
         # the chord to the lookahead point, so on corner entry it cuts inside by

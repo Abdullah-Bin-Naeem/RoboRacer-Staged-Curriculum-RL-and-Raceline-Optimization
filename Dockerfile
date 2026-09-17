@@ -45,6 +45,15 @@ RUN bash -c 'source /opt/ros/humble/setup.bash \
     && cd /home/autodrive_devkit \
     && colcon build --packages-select roboracer_stack'
 
+# The socket shim behind tcp_nodelay:=true (launch/bridge.launch.py resolves it
+# from the package share). Built here, not committed: a binary is compiled for
+# the image it runs in. Preloaded into the bridge process only; the devkit's
+# code is untouched.
+RUN mkdir -p /home/autodrive_devkit/install/roboracer_stack/share/roboracer_stack/tools \
+    && gcc -shared -fPIC -O2 \
+        -o /home/autodrive_devkit/install/roboracer_stack/share/roboracer_stack/tools/libnodelay.so \
+        /home/autodrive_devkit/src/roboracer_stack/tools/nodelay.c -ldl
+
 # DDS settings as image environment rather than shell startup files. Every
 # process in the container inherits them, `docker exec` shells included, which
 # is what lets the organizers run `ros2 topic echo` and `ros2 bag record`

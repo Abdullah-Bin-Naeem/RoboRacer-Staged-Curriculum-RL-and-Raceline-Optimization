@@ -59,6 +59,8 @@ TUNABLES = ('lookahead_min', 'lookahead_max', 'lookahead_k', 'lookahead_curv_gai
             # limits are measured on the car, and a rebuild per attempt is tedious.
             'slip_accel', 'slip_brake', 'u_launch', 'u_per_throttle', 'v_slip_den', 'tire_rise_slope',
             'cmd_delay_s', 'slip_kp', 'target_lead_s',
+            # ported from multi-track: warmup cap, friction-circle band, accel feedforward
+            'warmup_v_max', 'warmup_dist_m', 'slip_circle', 'accel_ff', 'enc_rate_window_s',
             # control loop rate; 20 matches the 17.5 Hz sim tick seen here, raise it
             # with the tick (headless sim, faster machine) so the loop is not the limit
             'control_hz',
@@ -144,6 +146,8 @@ def _launch(context, *args, **kwargs):
     actions.append(IncludeLaunchDescription(
         src(own_share, 'bridge.launch.py'),
         condition=IfCondition(LaunchConfiguration('bridge')),
+        launch_arguments={'tcp_nodelay': cfg('tcp_nodelay'),
+                          'loop_hz_cap': cfg('loop_hz_cap')}.items(),
     ))
 
     # 2. chassis -- odom -> base -> lidar. Needed by every localizer, and by the
@@ -163,9 +167,10 @@ def _launch(context, *args, **kwargs):
                     'initial_yaw': cfg('initial_yaw'),
                     'bootstrap': cfg('bootstrap'),
                     'bootstrap_mode': bootstrap_mode,
-                    'require_convergence': cfg('require_convergence')}
+                    'require_convergence': cfg('require_convergence'),
+                    'recover': cfg('recover'),
+                    'recover_use_checkpoints': cfg('recover_use_checkpoints')}
         loc_args['map_yaml'] = cfg('map_yaml')
-        loc_args['path_csv'] = cfg('path_csv')
 
         actions.append(IncludeLaunchDescription(
             src(loc_share, spec['launch']),
@@ -221,6 +226,14 @@ def generate_launch_description():
 
         # Turn pieces off when running them yourself.
         DeclareLaunchArgument('bridge', default_value='true'),
+        DeclareLaunchArgument('tcp_nodelay', default_value='false',
+                              description='TCP_NODELAY on the bridge websocket via LD_PRELOAD; see bridge.launch.py'),
+        DeclareLaunchArgument('loop_hz_cap', default_value='0',
+                              description='with tcp_nodelay, cap the simulator loop at this many Hz (0 = uncapped)'),
+        DeclareLaunchArgument('recover', default_value='true',
+                              description='re-localize after a wall reset; see localization/bootstrap.py'),
+        DeclareLaunchArgument('recover_use_checkpoints', default_value='true',
+                              description='false forces the no-data recovery tier'),
         DeclareLaunchArgument('chassis', default_value='true'),
         DeclareLaunchArgument('localization', default_value='true'),
         DeclareLaunchArgument('follower', default_value='true'),

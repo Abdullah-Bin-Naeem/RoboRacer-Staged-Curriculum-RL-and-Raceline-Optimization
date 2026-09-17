@@ -7,6 +7,12 @@ that drives the car by itself.
 the LiDAR against a map of the track that ships inside the image. Pure pursuit
 follows a racing line that also ships inside the image. No ground truth is used.
 
+**IROS 2026 (ported from the `multi-track` branch).** Default line
+`raceline_tum_iqp_h7.0_a7.0b.csv`, warmup speed cap, friction-circle slip band
+with acceleration feedforward, and re-localization after a wall reset at
+measured checkpoints; validated there at a 45 Hz loop (run 18: 19 clean laps,
+best 9.45 s). The Porto qualification result below is kept for history.
+
 **Result.** Best lap 6.45 s; more than 500 laps without touching a wall
 (2026-09-12).
 
@@ -93,7 +99,9 @@ Settings for development, all optional, read by the entrypoint from
 | variable | default | effect |
 |---|---|---|
 | `RACER_BOOTSTRAP_MODE` | `spawn` | `truth` reads `/ips` once in the warm-up lap; `global` starts AMCL with no prior |
-| `RACER_CONTROL_HZ` | `40` | follower loop rate |
+| `RACER_CONTROL_HZ` | `20` | follower loop rate (IROS 2026 values were validated at 20) |
+| `RACER_TCP_NODELAY` | `true` | socket shim on the bridge; `false` = stock bridge (~18 Hz loop) |
+| `RACER_LOOP_HZ_CAP` | `45` | with the shim, cap the simulator loop at this rate; `0` = uncapped |
 | `RACER_MODE` | `race` | `dev` turns lap telemetry back on (restricted, development only) |
 | `RACER_AUTOSTART` | `1` | `0` starts the container with nothing running |
 | `RACER_EXTRA_ARGS` | | extra `race.launch.py` arguments, e.g. `"v_max:=7.5"` |

@@ -96,20 +96,29 @@ unset _dds
 #                               topics may be read in the warm-up lap.
 #                       global  AMCL's particle search with no prior at all;
 #                               costs a convergence phase.
-#   control_hz:=40    the follower loop. Runs 29-41 were all measured at 40
-#                     against a headless sim so that the loop is never the
-#                     limiter. Harmless when the sim is slower -- pure_pursuit
-#                     measures its own round trip and derates the speed targets,
-#                     it does not key off this.
+#   control_hz:=20    the follower loop. The IROS 2026 line and follower values
+#                     ported from multi-track were validated at 20 (run 18, 19
+#                     clean laps, best 9.45 s) with the simulator loop at 45 Hz;
+#                     the qualification runs 29-41 used 40.
+#   tcp_nodelay:=true loop_hz_cap:=45
+#                     the socket shim (launch/bridge.launch.py): without it the
+#                     loop is held near 18 Hz by a Nagle/delayed-ACK deadlock on
+#                     loopback on ANY machine; with it the cap paces the loop at
+#                     the organizers' quoted 40-50 Hz, the rate the follower was
+#                     validated at. RACER_TCP_NODELAY=false restores the stock
+#                     bridge; RACER_LOOP_HZ_CAP=0 leaves the loop uncapped.
 #
 # The localizer is nav2 AMCL against maps/track_clean.pgm and the line is
-# raceline_a7.0.csv, the only ones shipped; both are the launch defaults
-# (common/frames.py), so neither is passed here.
+# raceline_tum_iqp_h7.0_a7.0b.csv; both are the launch defaults
+# (common/frames.py), so neither is passed here. Wall-reset recovery
+# (recover:=true) is the launch default too.
 ARGS=(
   "mode:=${RACER_MODE:-race}"
   "bootstrap:=true"
   "bootstrap_mode:=${RACER_BOOTSTRAP_MODE:-spawn}"
-  "control_hz:=${RACER_CONTROL_HZ:-40}"
+  "control_hz:=${RACER_CONTROL_HZ:-20}"
+  "tcp_nodelay:=${RACER_TCP_NODELAY:-true}"
+  "loop_hz_cap:=${RACER_LOOP_HZ_CAP:-45}"
 )
 # Anything else, word-split on purpose: RACER_EXTRA_ARGS="v_max:=7.5 lookahead_k:=0.6"
 # shellcheck disable=SC2206

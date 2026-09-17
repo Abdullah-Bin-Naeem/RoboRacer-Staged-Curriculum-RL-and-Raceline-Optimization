@@ -224,8 +224,12 @@ def _launch(context, *args, **kwargs):
         loc_args['map_yaml' if localizer == 'amcl' else 'map_graph'] = (
             map_yaml if localizer == 'amcl' else map_graph)
         # A/B a localizer parameter set without touching the package's yaml.
-        if localizer == 'amcl' and cfg('amcl_params_file'):
-            loc_args['amcl_params_file'] = cfg('amcl_params_file')
+        # Always pass a real path: launch configurations are inherited by the
+        # include, so an empty value declared here would override amcl.launch.py's
+        # own default and start map_server/amcl with no parameters (they hang).
+        if localizer == 'amcl':
+            loc_args['amcl_params_file'] = (cfg('amcl_params_file')
+                                            or os.path.join(loc_share, 'config', 'amcl.yaml'))
 
         # Warn only when nothing will seed this localizer: no global search AND
         # no one-shot truth seed leaves it on the hardcoded constant, which

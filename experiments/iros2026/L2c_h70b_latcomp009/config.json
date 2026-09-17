@@ -1,0 +1,25 @@
+{
+  "id": "L2c",
+  "name": "h70b_latcomp009",
+  "date": "2026-09-17",
+  "started": "2026-09-17T21:33:48",
+  "track": "iros2026",
+  "line": "raceline_tum_iqp_h7.0_a7.0b.csv",
+  "laps": 25,
+  "max_contacts": 2,
+  "hz_cap": "45",
+  "overrides": [
+    "control_hz:=45",
+    "warmup_v_max:=2.0",
+    "warmup_dist_m:=21.0",
+    "enc_rate_window_s:=0.10",
+    "latency_comp_s:=0.09"
+  ],
+  "hypothesis": "Rerun of L2/L2b after fixing the launch bug that started AMCL without parameters. The estimate lags the car by ~0.18 m at hairpin-1 turn-in (V1); latency_comp_s 0.05 -> 0.09 moves the steering pose ~0.15-0.2 m forward there",
+  "prediction": "hairpin-1 contacts gone or rarer; hairpin worst outward smaller than V1; no new inside cuts; laps 9.5-9.6",
+  "git_branch": "adil_iros",
+  "git_commit": "57ef027",
+  "git_dirty": true,
+  "verdict_short": "REJECTED: out-lap contact at the C2 exit (new for this line) with heading error -10..-12 deg held out of the chevron, loc 1-12 cm",
+  "verdict": "Rejected. AMCL active (launch fix confirmed). Out-lap, right after the warmup released: contact at the C2 exit ((3.85,-9.56)) at 4.85 m/s, e_lat -0.28, localization 1-12 cm, heading error -9..-12 deg held from the chevron apex onward: the 0.09 s propagation made the follower unwind the steering early. This spot never hit at latency_comp 0.05 (T03, V1, L1). latency_comp_s stays 0.05."
+}

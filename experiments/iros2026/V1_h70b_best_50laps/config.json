@@ -1,0 +1,24 @@
+{
+  "id": "V1",
+  "name": "h70b_best_50laps",
+  "date": "2026-09-17",
+  "started": "2026-09-17T21:17:14",
+  "track": "iros2026",
+  "line": "raceline_tum_iqp_h7.0_a7.0b.csv",
+  "laps": 50,
+  "max_contacts": 2,
+  "hz_cap": "45",
+  "overrides": [
+    "control_hz:=45",
+    "warmup_v_max:=2.0",
+    "warmup_dist_m:=21.0",
+    "enc_rate_window_s:=0.10"
+  ],
+  "hypothesis": "Fresh boot, cool laptop: T03 (20 clean laps, mean 9.59) plus the two fixes found since (warmup 2.0 over 21 m: out-lap 8/8 clean; enc_rate_window_s 0.10: no braking-zone speed over-read) passes the 50-lap sub-10 gate when the loop is healthy",
+  "prediction": "0 contacts in 50 laps, mean 9.6-9.7, delay median ~0.10; if a hairpin exit hits, the machine-state explanation for T06-T18 is weakened",
+  "git_branch": "adil_iros",
+  "git_commit": "7da8fc0",
+  "git_dirty": false,
+  "verdict_short": "HEALTHY LOOP (delay 0.095): 7 laps 9.54-9.60; contact lap 8 at the s-40 bend (right wall, 0.35 m line clearance) at 5.0 m/s, e_lat -0.19; hairpins fine",
+  "verdict": "Fresh boot, loop healthy (delay median 0.095). Out-lap clean, 7 timed laps 9.603 9.602 9.567 9.591 9.541 9.564 9.588. Lap 8: contact at the bend before hairpin 2 ((3.74, 2.38), s 39.5-40) at 4.97 m/s, e_lat -0.19 (right), localization 7-11 cm, heading error +6 deg: the line's 0.35 m right-wall spot (T11, T16). The hairpins were clean at this loop health, which supports the machine-decay reading of T15-T18. GPU 86 C / ACPI 91 C after 3 min (PC had shut itself off once). Next: the same profile on the geometry with the s-40 margin (V2)."
+}

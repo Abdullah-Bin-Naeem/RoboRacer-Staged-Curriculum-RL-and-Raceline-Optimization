@@ -42,8 +42,9 @@ from racer_common.frames import NS, TRACK
 # names through. A name listed there but not here is dropped silently.
 TUNABLES = ('lookahead_min', 'lookahead_max', 'lookahead_k', 'lookahead_curv_gain', 'lookahead_sag_frac',
             'lookahead_delay_ref', 'derate_delay_from', 'derate_delay_to', 'derate_a_lat',
-            'steer_a_lat_max',
+            'steer_a_lat_max', 'steer_excess_rad',
             'v_max', 'a_lat_max', 'throttle_max', 'steering_gain',
+            'warmup_v_max', 'warmup_dist_m',
             'curvature_preview_m',
             # slip throttle and fused speed (see pure_pursuit.py docstring)
             'slip_accel', 'slip_brake', 'u_launch', 'u_per_throttle', 'v_slip_den', 'tire_rise_slope',
@@ -55,7 +56,7 @@ TUNABLES = ('lookahead_min', 'lookahead_max', 'lookahead_k', 'lookahead_curv_gai
             # legacy launch ramp
             'a_long_launch', 'a_long_launch_v')
 # String-valued switches, passed through without the float() cast.
-STR_TUNABLES = ('speed_source', 'throttle_mode')
+STR_TUNABLES = ('speed_source', 'throttle_mode', 'steer_excess_ref')
 
 
 def _nodes(context, *args, **kwargs):

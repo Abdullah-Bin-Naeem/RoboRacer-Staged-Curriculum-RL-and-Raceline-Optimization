@@ -85,8 +85,9 @@ from racer_common.frames import TRACK
 # does not declare is dropped silently on the way through.
 TUNABLES = ('lookahead_min', 'lookahead_max', 'lookahead_k', 'lookahead_curv_gain', 'lookahead_sag_frac',
             'lookahead_delay_ref', 'derate_delay_from', 'derate_delay_to', 'derate_a_lat',
-            'steer_a_lat_max',
+            'steer_a_lat_max', 'steer_excess_rad',
             'v_max', 'a_lat_max', 'throttle_max', 'steering_gain',
+            'warmup_v_max', 'warmup_dist_m',
             'curvature_preview_m',
             # Slip throttle and fused speed estimate (pure_pursuit.py docstring).
             # Tunable from the command line for the same reason as the rest:
@@ -98,7 +99,7 @@ TUNABLES = ('lookahead_min', 'lookahead_max', 'lookahead_k', 'lookahead_curv_gai
             # with the tick (headless sim, faster machine) so the loop is not the limit
             'control_hz',
             'pose_speed_window', 'pose_speed_gain', 'pose_corr_max', 'imu_lever_arm', 'latency_comp_s',
-            'speed_source', 'throttle_mode',
+            'speed_source', 'throttle_mode', 'steer_excess_ref',
             # legacy launch ramp (throttle_mode:=legacy only)
             'a_long_launch', 'a_long_launch_v')
 

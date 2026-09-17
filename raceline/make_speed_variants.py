@@ -24,7 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from optimize_raceline import (DEFAULT_TRACK, PHYS, ProfileLimits, TrackMap,  # noqa: E402
-                               export_csv, load_xy, map_base, score_line, velocity_profile)
+                               enforce_long, export_csv, load_xy, map_base, score_line, velocity_profile)
 
 
 def main():
@@ -32,7 +32,11 @@ def main():
     p.add_argument("csv", type=Path, help="line to re-profile (s,x,y,... layout; only x,y are used)")
     p.add_argument("--ladder", default="4.0,4.5,4.9", help="a_lat rungs [m/s^2]")
     p.add_argument("--a-long", type=float, default=PHYS.a_long_robust0)
-    p.add_argument("--v-max", type=float, default=8.0)
+    p.add_argument("--v-max", type=float, default=10.0,
+                   help="speed ceiling; measured 2026-09: the car is still accelerating at 9.5 m/s, the straight is the limit")
+    p.add_argument("--a-brake", type=float, default=None,
+                   help="braking budget [m/s^2] when it differs from --a-long; measured 2026-09 with throttle 0 (wheel lock): "
+                        "5.5 + 0.3 v, so 5.5 is conservative at every speed")
     p.add_argument("--track", default=DEFAULT_TRACK,
                    help="track whose map to score against (maps/<track>/track_solid if present, else track_clean)")
     p.add_argument("--map", type=Path, default=None, help="map base path, no extension; overrides --track")
@@ -54,17 +58,28 @@ def main():
 
     print(f"\n{'a_lat':>6}{'lap':>9}{'v max':>7}   file")
     for rung in [float(v) for v in a.ladder.split(",")]:
-        lim = ProfileLimits(a_lat=rung, a_long=a.a_long, v_max=a.v_max)
+        # with a separate brake budget the base profile is solved at the LARGER of the two (a sweep can only
+        # lower speeds), then the accel side is brought back down to --a-long by enforce_long
+        a_base = max(a.a_long, a.a_brake) if a.a_brake is not None else a.a_long
+        lim = ProfileLimits(a_lat=rung, a_long=a_base, v_max=a.v_max)
         mu = None
         if zones:
             s_line = np.concatenate([[0.0], np.cumsum(base["el"])[:-1]])
             mu = np.ones(len(s_line))
             for s0, s1, a_zone in zones:
-                mu[(s_line >= s0) & (s_line <= s1)] = a_zone / rung
+                # s0 > s1 wraps past the start line (40:2 covers s 40..lap and 0..2); the
+                # plain and-mask was empty there, so the hairpin-2 zone never applied (runs 12-16)
+                inz = ((s_line >= s0) & (s_line <= s1)) if s0 <= s1 else ((s_line >= s0) | (s_line <= s1))
+                mu[inz] = a_zone / rung
         vx, ax, t = velocity_profile(base["kappa"], base["el"], lim, mu=mu)
-        suffix = "z" if zones else ""
+        if a.a_brake is not None and abs(a.a_brake - a.a_long) > 1e-9:
+            # same as optimize_raceline: backward sweep with the separate brake budget, then re-derive ax and t
+            vx = enforce_long(vx, base["el"], a.a_long, a.a_brake)
+            ax = np.gradient(vx ** 2) / (2.0 * np.maximum(base["el"], 1e-6))
+            t = float(np.sum(2.0 * base["el"] / (vx + np.roll(vx, -1))))
+        suffix = ("z" if zones else "") + ("b" if a.a_brake is not None else "")
         out = export_csv(a.csv.with_name(f"{a.csv.stem}_a{rung:.1f}{suffix}.csv"), dict(base, vx=vx, ax=ax, t=t), tm)
-        print(f"{rung:6.1f}{t:8.3f}s{vx.max():7.2f}   {out.name}" + (f"   lat {a.lat_zones}" if zones else ""))
+        print(f"{rung:6.1f}{t:8.3f}s{vx.max():7.2f}   {out.name}" + (f"   lat {a.lat_zones}" if zones else "") + (f"   brake {a.a_brake}" if a.a_brake is not None else ""))
 
     print("\nGeometry is identical across all of them; only the speed profile changes.")
     print("Run them in order. The first one the car cannot hold gives you the real grip limit.")

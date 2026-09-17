@@ -191,7 +191,19 @@ the shared half of the two localizers was copy-pasted into both.
   `cmd_delay_auto`), because in this sim the
   encoders report the throttle command, not the car, and the command reaches
   the wheel one bridge round trip late (`raceline/VEHICLE_MODEL.md` §3.1, §3.6).
-  `encoder` / `legacy` keep the old law for A/B; `fused` (IMU + pose) is kept
+  It also carries a **warmup speed cap** (`warmup_v_max`, `warmup_dist_m`, off
+unless the track's registry row sets it): the speed target is held down over
+the first N metres of driving, measured from the encoders. The first lap is a
+warmup and the timer starts after it, so this costs no race time. It exists
+because the encoders report the throttle command, so dead reckoning over-reads
+distance by 2-5 % while the wheel slips, and a long straight gives AMCL almost
+no along-track correction, its walls being parallel to the error. On IROS 2026,
+whose spawn is at the top of a 16 m straight, a run started from the spawn
+carried +0.43 to +1.01 m of along-track error into the hairpin-1 braking point
+(runs 3, 13, 14 -- 14 then hit); the same stack started mid-track, so the filter
+meets a corner first, stayed under 0.10 m and reached +0.32 m on that straight
+later in the run (run 18). Release where the profile is already slower than the
+cap, or the lift is a speed step. `encoder` / `legacy` keep the old law for A/B; `fused` (IMU + pose) is kept
   for reference and does not work here, see §5.3. It publishes `~/status` every tick; `log_localization` records it as
   `pp_*` columns and `raceline/analyze_run.py run.csv` turns a log into lap
   times, tracking error, corner bias, weave, estimator error and encoder ratio.
@@ -351,7 +363,9 @@ integrating from the old pose, AMCL's particles no longer explained the scan and
 the follower drove blind (runs 14 and 24). Now the bootstrap stays alive after
 the first handover and watches two legal signatures, the encoder speed
 collapsing to zero in one sample and an IMU heading step the yaw rate cannot
-explain. On either it drops `/localization_ready` (the follower stops and
+explain (10 deg; on IROS 2026 at 45 Hz the encoder did not collapse through
+either reset of run 14, it kept reading the command, so the heading step is
+the only signature there). On either it drops `/localization_ready` (the follower stops and
 publishes nothing), re-seeds AMCL at the **checkpoint behind the last trusted
 pose** with the IMU heading, confirms the estimate against the seed, creeps for
 a second on lidar so the filter tightens on motion, and latches ready again;
@@ -366,6 +380,23 @@ rejects a copied IMU quaternion whose norm is off by 1e-4, which the bridge's
 rounded components produce intermittently ("malformed" re-seeds, run 24). The
 logger records `ready`, and `analyze_run.py` reports resets, time to
 re-confirmation and the error afterwards.
+
+Two things about that recovery are worth keeping in mind, both learned the
+expensive way on IROS 2026. The centreline extractor does not orient the ring,
+so on some tracks its `s` runs AGAINST the lap (Porto and ICRA run with it,
+IROS against); the bootstrap reverses it against the spawn heading, and
+reversing the values without the order left the lap length at 0 and killed the
+node with a ZeroDivisionError on the first reset of every run -- run 20, nine
+resets, none recovered, and `ready` never dropped because nothing was left
+alive to publish it. And the simulator always resets BACKWARD to a checkpoint
+already passed, but a car cutting inside a tight corner PROJECTS onto the
+centreline short of the progress it has made, by -1.04 to +1.50 m over the six
+logged contacts, so `BACK_SLOP_M` lets a checkpoint sit up to 1.20 m 'ahead'
+and still count as behind (the window that fits all six is 1.05-1.35).
+`racer_localization/tools/check_recovery_prior.py` runs that selection against
+the real centreline and every logged reset, calling the node's own helper --
+the earlier check re-implemented the arithmetic and passed while the node
+crashed. Run it after touching the centreline or the checkpoint list.
 
 `mode:=race` deliberately does **not** force `bootstrap_mode:=global` any more.
 It used to, and that was a bug rather than caution: slam_toolbox has no global
@@ -416,9 +447,16 @@ mode on a reply sent right after a receive, and a Python-level re-arm after
 `emit` lands before the actual write and does nothing (measured, 19.4 Hz). It
 stays OFF by default: every follower constant was tuned at a 175 ms command
 delay, and the first run with it on (run 24, hand-edited line) measured a far
-shorter delay and hit, so the follower has to be re-validated at the fast
-loop before racing with it; the organizers say the evaluation machine runs
-40-50 Hz, so that validation is due regardless. `loop_hz_cap:=45` (with
+shorter delay and hit. Validated at `loop_hz_cap:=45` on IROS 2026
+(2026-09-17, runs 14-16): the follower needs no retuning there, but the
+encoder rate did (`enc_rate_window_s`, see pure_pursuit.py): a per-sample
+rate at 22 ms scattered 2x and the tire observer ran 0.4 m/s low, 0.55 s a
+lap (run 15); with the rate spanning 50 ms, run 16 did 8 clean laps at
+9.95-10.00 against 10.00 at 18 Hz with tracking p90 0.12 m against 0.19.
+Two follower changes tried at the fast loop were worse and are off:
+`steer_excess_rad` (a slip-angle limiter; it throttles turn-in and the car
+runs 0.3 m wide out of the hairpins) and `lookahead_min:=0.6`. The
+organizers say the evaluation machine runs 40-50 Hz. `loop_hz_cap:=45` (with
 `tcp_nodelay:=true`) paces the bridge's replies so the loop runs at that rate
 here; the simulator only emits in reply, so the cap holds the whole loop. The
 devkit is untouched; it is the process's environment. The `.so` must exist in the container (`gcc -shared

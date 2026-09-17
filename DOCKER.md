@@ -40,3 +40,21 @@ which is why the tree lives at `/root/Documents/roboracer` in the container.
 
 Only one bridge may own port 4567 (`--network=host`): stop any other racer
 container first (`run.sh` removes its own previous one).
+
+## The loop really runs at the cap in here (2026-09-18)
+
+`tcp_nodelay:=true` preloads `tools/libnodelay.so`, whose path comes from
+`frames.REPO` = `~/Documents/roboracer`. That directory does not exist on the
+development laptop (the checkout has a different name), so on the host the
+preload pointed at a missing file and did nothing: every logged run before this
+measured a command delay of 0.107 s, about 28 Hz. The image builds the shim and
+puts the tree where `frames.REPO` expects it, so in the container the cap binds
+-- `loop_hz_cap:=45` measures 0.066 s, exactly 3 frames at 45 Hz.
+
+That is the organizers' rate and the intended behaviour, but it is NOT the rate
+the current lines and follower constants were tuned at. When a run in here
+behaves differently from a logged host run, check `pp_delay` in the CSV first:
+
+    python3 raceline/analyze_run.py runs_docker/<run>.csv --path raceline/iros2026/<line>.csv
+
+`loop_hz_cap:=28` reproduces the old delay if you need the comparison.

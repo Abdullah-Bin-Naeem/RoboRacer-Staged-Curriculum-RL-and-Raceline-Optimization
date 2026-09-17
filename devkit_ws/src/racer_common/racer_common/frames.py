@@ -217,12 +217,13 @@ TRACKS = {
         # 1 (0.369 m), which is why that apex was always the tight spot.
         # The previous line is kept as raceline_tum_iqp_h7.0_a7.0b.csv.
         #
-        # Current default 2026-09-18: rl_mt_max_a7.0b_edit2.csv, the hand-edited
-        # rl_mt_max line (line_editor, .edit.json beside it). Its profile runs
-        # to 9.51 m/s, so it needs v_max 9.5 below -- at the previous 8.5 the
-        # follower clips the straight and the line is not the one driven.
-        # rl_mt_b0.15_a7.0b.csv (run mtb15) stays as the fallback.
-        'raceline': 'rl_mt_max_a7.0b_edit2.csv',
+        # rl_mt_max_a7.0b_edit2.csv (the hand-edited rl_mt_max line, profile to
+        # 9.51 m/s) was the default briefly on 2026-09-18 and is NOT: against
+        # run mtb15's zero resets it logged 10 (run_edit_1) and 5 (run_edit_2)
+        # /localization_ready drops, tracking p90 0.435 / 0.262 m against
+        # 0.145. Drive it deliberately instead:
+        #   path_csv:=raceline/iros2026/rl_mt_max_a7.0b_edit2.csv v_max:=9.5
+        'raceline': 'rl_mt_b0.15_a7.0b.csv',
         'margin_zones': '',
         'lat_zones': '',
         # Porto/ICRA follower values as the starting point. target_lead_s 0.0:
@@ -243,10 +244,10 @@ TRACKS = {
         # +0.74 m/s, the profile having recovered to 4.85 by there). The
         # first lap is a warmup and the timer starts after it: this is free,
         # and costs about 1.3 s of that untimed lap.
-        # v_max 9.5 (2026-09-18) is the ceiling the current default line was
-        # driven at; it is the line's own profile that sets the speed, and the
-        # profile peaks at 9.51. Drop it back to 8.5 with the previous line.
-        'follower': {'v_max': '9.5', 'target_lead_s': '0.0',
+        # v_max 8.5 is this line's own ceiling; pass v_max:=9.5 with the
+        # rl_mt_max lines, whose profile runs to 9.51 and which the follower
+        # would otherwise clip on the straight.
+        'follower': {'v_max': '8.5', 'target_lead_s': '0.0',
                      'slip_circle': '0.12', 'accel_ff': '1.0',
                      'warmup_v_max': '4.0', 'warmup_dist_m': '19.0'},
         # Reset poses seen in logged runs 1-14 (2026-09-16/17), ordered along

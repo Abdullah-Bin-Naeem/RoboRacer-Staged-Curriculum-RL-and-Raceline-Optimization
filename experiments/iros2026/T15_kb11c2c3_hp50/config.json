@@ -1,0 +1,24 @@
+{
+  "id": "T15",
+  "name": "kb11c2c3_hp50",
+  "date": "2026-09-17",
+  "started": "2026-09-17T20:27:42",
+  "track": "iros2026",
+  "line": "raceline_kb11c2c3_hp50_a50_b55_v85.csv",
+  "laps": 25,
+  "max_contacts": 2,
+  "hz_cap": "45",
+  "overrides": [
+    "control_hz:=45",
+    "warmup_v_max:=2.0",
+    "warmup_dist_m:=21.0",
+    "enc_rate_window_s:=0.10"
+  ],
+  "hypothesis": "T14 (kappa-1.1 hairpins held) with the line moved from 0.36 to 0.48 m off the upper-chevron lane's right wall where T14 hit at 6 m/s, C2 exit kept at 0.58: nothing left at the geometric edge",
+  "prediction": "0 contacts in 25 laps; mean 10.1-10.3; hairpins 0 % lock",
+  "git_branch": "adil_iros",
+  "git_commit": "ad5490c",
+  "git_dirty": false,
+  "verdict_short": "1 timed lap 10.30; hairpin-1 exit contact at steering lock (0.99), 0.48 wide, 2.2-2.5 m/s: kappa 1.1 at 5.0 m/s^2 is over the limit too",
+  "verdict": "One timed lap 10.302. Lap 2, hairpin 1 exit: steering at lock (0.99) at s 19.3, e_lat -0.48, speed 2.20-2.48 (plan 2.39-2.66), localization 7 cm, achieved kappa 0.65-0.79 against 0.92-0.70: over the limit at 5.0 m/s^2 even on kappa 1.1. The only hairpin setting clean on this laptop so far is 4.5 (E05/E06, 0 % lock over 24 laps). Next: same line, hairpins 4.5 (T16)."
+}

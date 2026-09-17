@@ -25,8 +25,7 @@ from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from roboracer_stack.common.frames import (DEFAULT_MAP_YAML, DEFAULT_RACELINE, SPAWN_X,
-                                           SPAWN_Y, SPAWN_YAW)
+from roboracer_stack.common.frames import DEFAULT_MAP_YAML, SPAWN_X, SPAWN_Y, SPAWN_YAW
 
 
 def _nodes(context, *args, **kwargs):
@@ -65,7 +64,7 @@ def _nodes(context, *args, **kwargs):
 
         # Seeds AMCL (spawn constant + IMU by default), confirms it against the
         # seed AND the scan against the map, latches /localization_ready, then
-        # stays up to re-seed AMCL after a wall respawn.
+        # stays up to re-localize after a wall reset (checkpoint re-seed).
         Node(
             package='roboracer_stack', executable='localization_bootstrap',
             name='localization_bootstrap', output='screen', emulate_tty=True,
@@ -83,8 +82,8 @@ def _nodes(context, *args, **kwargs):
                 'spawn_y': float(cfg('initial_y')),
                 'spawn_yaw': float(cfg('initial_yaw')),
                 'require_convergence': cfg('require_convergence').lower() == 'true',
-                # the respawn watch looks for the checkpoint along this line
-                'path_csv': cfg('path_csv'),
+                'recover': cfg('recover').lower() == 'true',
+                'recover_use_checkpoints': cfg('recover_use_checkpoints').lower() == 'true',
             }],
             condition=IfCondition(LaunchConfiguration('bootstrap')),
         ),
@@ -100,11 +99,14 @@ def generate_launch_description():
             'amcl_params_file',
             default_value=os.path.join(pkg_share, 'config', 'amcl.yaml')),
         DeclareLaunchArgument('map_yaml', default_value=DEFAULT_MAP_YAML),
-        DeclareLaunchArgument('path_csv', default_value=DEFAULT_RACELINE),
+        DeclareLaunchArgument('recover', default_value='true',
+                              description='re-localize after a wall reset'),
+        DeclareLaunchArgument('recover_use_checkpoints', default_value='true',
+                              description='false forces the no-data recovery tier'),
         DeclareLaunchArgument(
             'bootstrap', default_value='true',
             description='run localization_bootstrap: seed AMCL, confirm it, '
-                        'latch /localization_ready, watch for respawns'),
+                        'latch /localization_ready, recover from wall resets'),
         DeclareLaunchArgument(
             'bootstrap_mode', default_value='spawn',
             description="'spawn' seeds from the measured spawn constant + IMU "

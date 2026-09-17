@@ -89,17 +89,24 @@ independent witness there is: at the confirmed pose, what fraction of lidar
 beams end within scan_match_tol_m of a wall on the map? A right pose scores
 near 1; a pose 0.3 m or a few degrees out scores far lower (scan_match_min).
 
-AFTER HAND-OVER: THE RESPAWN WATCH
-----------------------------------
-A wall contact respawns the car at the last checkpoint with its velocity
-zeroed. The encoders do not reset, but the IMU heading jumps by more than the
-yaw rate can explain -- the signature pure_pursuit already uses to reset its
-speed estimate. Nothing told AMCL, whose particles stayed at the wall. So this
-node stays subscribed after hand-over and, on that signature, re-seeds AMCL on
-the racing line behind the last estimate, at the nearest stretch whose heading
-matches the new IMU heading, with a covariance stretched along the track over
-that stretch. Race-legal: IMU, the shipped raceline, AMCL's own last estimate.
-A respawn that keeps the heading (mid-straight) is not detectable this way.
+AFTER HAND-OVER: RECOVERY FROM A WALL RESET (ported from multi-track)
+--------------------------------------------------------------------
+A wall contact resets the car to the last checkpoint with its velocity zeroed;
+the rules add 10 s and say localization "will have to be robust against this
+re-setting action". Nothing tells AMCL, whose particles stay at the wall, so
+this node stays alive after hand-over and watches two legal signatures: an IMU
+heading step the yaw rate cannot explain (reset_yaw_step_deg), and the encoder
+speed collapsing in one sample. On either it drops /localization_ready (the
+follower stops and publishes nothing), re-seeds AMCL at the MEASURED checkpoint
+behind the last trusted pose (common/frames.CHECKPOINTS, ordered along the lap
+by the centreline's arc length) with the IMU heading, confirms the estimate
+against that seed -- plus AMCL's own covariance and the scan check -- creeps
+for a second on lidar so the filter tightens on motion, and latches ready
+again. A seed that is not adopted falls back to the global search; if that
+times out too it resumes on the current estimate rather than park for the rest
+of the race. With no checkpoint behind the car it seeds the last pose moved
+back along its heading, wide. tools/localizer_tests/check_recovery_prior.py
+runs the checkpoint selection against every logged reset.
 
 THE TWO LOCALIZERS
 ------------------
@@ -156,8 +163,8 @@ from rclpy.qos import (QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile,
 from rclpy.time import Time
 from roboracer_stack.common import restricted
 from roboracer_stack.common.frames import NS as COMMON_NS
-from roboracer_stack.common.frames import (DEFAULT_RACELINE, LIDAR_XYZ, SPAWN_X,
-                                           SPAWN_Y, SPAWN_YAW)
+from roboracer_stack.common.frames import (CENTRELINE_CSV, CHECKPOINTS, LIDAR_XYZ,
+                                           SPAWN_X, SPAWN_Y, SPAWN_YAW)
 from sensor_msgs.msg import Imu, JointState, LaserScan
 from std_msgs.msg import Bool, Float32
 from std_srvs.srv import Empty
@@ -214,29 +221,61 @@ def scan_match_score(mask, resolution, origin_xy, scan, pose, lidar_x,
     return hits / float(ok.sum())
 
 
-def respawn_seed(xs, ys, psis, step, est_xy, yaw, back_m, max_dyaw):
-    """Where on the racing line did the car respawn?
+# How far "ahead" of the car a checkpoint may sit and still count as behind it.
+# The simulator always resets BACKWARD to a checkpoint already passed, but the
+# pose at the contact is projected onto the centreline to order it, and a car
+# cutting inside a tight corner projects SHORT of the progress it has really
+# made. Measured over the six contacts logged on IROS 2026 (runs 14, 19, 20)
+# the projection error runs -1.04 to +1.50 m, and every value in 1.05-1.35
+# picks the checkpoint the simulator actually used for all six; below 1.05 the
+# two hairpin-1 contacts pick the checkpoint 3 m too far back, above 1.35 the
+# contact after hairpin 1 picks the one ahead. 1.20 is the middle of that
+# window. tools/localizer_tests/check_recovery_prior.py is the check. Picking
+# wrong is not fatal: the seed then fails its tolerance and the global search
+# takes over.
+BACK_SLOP_M = 1.20
 
-    Walks back from the point nearest the last estimate for up to back_m and
-    takes the FIRST contiguous run of points whose heading is within max_dyaw
-    of the new IMU heading. Returns (x, y, psi, run_length_m) at the point of
-    that run whose heading matches best -- on a straight every point matches
-    about equally and the run length carries the uncertainty; through a bend
-    the best match is sharp -- or None if no point behind matches.
+
+def pick_back(s_last, cs, lap, slop=BACK_SLOP_M):
+    """Arc length from a checkpoint to the car along the lap, or None.
+
+    None means the centreline was unusable (a lap length of 0), which is worth
+    saying rather than dividing by: doing that killed this node on the first
+    reset of every run (multi-track, IROS run 20, 9 resets, none recovered).
     """
-    n = len(xs)
-    i0 = int(np.argmin(np.hypot(xs - est_xy[0], ys - est_xy[1])))
-    run = []
-    for k in range(int(back_m / step) + 1):
-        i = (i0 - k) % n
-        if abs(wrap(psis[i] - yaw)) <= max_dyaw:
-            run.append(i)
-        elif run:
-            break
-    if not run:
+    if not lap > 0.0:
         return None
-    m = min(run, key=lambda i: abs(wrap(psis[i] - yaw)))
-    return float(xs[m]), float(ys[m]), float(psis[m]), len(run) * step
+    return (s_last - cs + slop) % lap - slop
+
+
+def load_centreline(path, spawn):
+    """(s, x, y) of the centreline with s running WITH the lap, or None.
+
+    The extractor does not orient the ring: on IROS 2026 the file's s DECREASES
+    along the lap. "Behind the car" is (s_last - cs), so a reversed file picks
+    the checkpoint AHEAD. Oriented against the spawn heading: if the tangent at
+    the spawn opposes it, the values AND the order are reversed together.
+    Mirroring the values alone leaves s descending, s[-1] = 0 and every lap
+    length taken from it 0 (the ZeroDivisionError of multi-track run 20).
+    Returns (s, x, y, reversed).
+    """
+    import os
+    if not os.path.exists(path):
+        return None
+    try:
+        c = np.genfromtxt(path, delimiter=',', comments='#')
+        s, x, y = c[:, 0], c[:, 1], c[:, 2]
+    except Exception:                                    # noqa: BLE001
+        return None
+    rev = False
+    sx, sy, syaw = (float(v) for v in spawn)
+    j = int(np.argmin((x - sx) ** 2 + (y - sy) ** 2))
+    k = (j + 3) % len(s)
+    if math.cos(math.atan2(y[k] - y[j], x[k] - x[j]) - syaw) < 0.0:
+        s = (s[-1] - s)[::-1]
+        x, y = x[::-1], y[::-1]
+        rev = True
+    return s, x, y, rev
 
 
 class LocalizationBootstrap(Node):
@@ -292,13 +331,27 @@ class LocalizationBootstrap(Node):
         p('scan_match_tol_m', 0.10)
         p('scan_match_max_range', 6.0)   # far beams amplify a small yaw error
         p('map_topic', '/map')
-        # ---- respawn watch (docstring) --------------------------------------
-        p('respawn_watch', True)
-        p('respawn_yaw_jump', 0.35)      # rad beyond rate * dt; as pure_pursuit
-        p('respawn_back_m', 6.0)         # how far behind to look for the checkpoint
-        p('respawn_max_dyaw_deg', 15.0)
-        p('respawn_std_cross', 0.30)
-        p('path_csv', DEFAULT_RACELINE)
+        # ---- recovery after a wall contact (docstring, _tick_recover) --------
+        # Legal inputs only: encoders (speed collapse), IMU (heading step), lidar
+        # (creep), our own estimate, /initialpose and AMCL's services.
+        p('recover', True)
+        p('recover_settle_s', 1.0)          # settle after a recovery seed (initial seed uses settle_s)
+        p('recover_tolerance_m', 0.40)      # a checkpoint prior is good to ~0.1 m; AMCL may land near it
+        p('recover_max_attempts', 3)        # then the global search
+        p('recover_global_timeout_s', 15.0)
+        p('recover_creep_s', 1.0)           # roll gently after confirmation so AMCL tightens on motion
+        p('reset_yaw_step_deg', 10.0)       # an IMU heading step this size in one tick, after the
+        # yaw-rate term, is a reset. 20 missed a 12 deg reset at 45 Hz (IROS run 14):
+        # the residual after subtracting rate*dt is under 2 deg at any tick, the encoder
+        # did NOT collapse through either reset in that run (it reads the command), so
+        # the heading step is the only signature that fires there.
+        p('reset_speed_from', 1.0)          # encoder speed collapsing from >= this ...
+        p('reset_speed_to', 0.3)            # ... to <= this between two samples is a reset
+        p('recover_use_checkpoints', True)  # False forces the no-data tier, to test it
+        p('recover_local_back_m', 0.9)      # no-data tier: seed this far back along the last pose (mean of 9 resets)
+        p('recover_local_std_m', 1.0)       # ... with this much position uncertainty (resets spread 0.15-2.8 m)
+        p('recover_std_ok_m', 0.30)         # a recovery seed counts as adopted only if AMCL's own pos std is under this
+        p('centreline_csv', CENTRELINE_CSV)
 
         g = lambda n: self.get_parameter(n).value
         self.throttle = g('throttle')
@@ -334,22 +387,39 @@ class LocalizationBootstrap(Node):
         self.map_res = None
         self.map_origin = None
         self._scan_warned = False
-        self.respawn_watch = bool(g('respawn_watch'))
-        self.respawn_jump = float(g('respawn_yaw_jump'))
-        self.respawn_back = float(g('respawn_back_m'))
-        self.respawn_dyaw = math.radians(float(g('respawn_max_dyaw_deg')))
-        self.respawn_std_cross = float(g('respawn_std_cross'))
-        self._imu_prev = None            # (stamp, yaw, rate) for the respawn watch
-        self._respawn_last = -1e9
-        self.respawns = 0
-        self.line = None                 # (x, y, psi, step) of the raceline
-        if self.respawn_watch:
-            try:
-                d = np.loadtxt(str(g('path_csv')), delimiter=',')
-                self.line = (d[:, 1], d[:, 2], d[:, 3], float(d[1, 0] - d[0, 0]))
-            except Exception as exc:                    # noqa: BLE001
-                self.get_logger().warn(
-                    f'respawn watch OFF: cannot read the raceline ({exc})')
+        self.recover = bool(g('recover'))
+        self.recover_settle = float(g('recover_settle_s'))
+        self.recover_tol = float(g('recover_tolerance_m'))
+        self.recover_attempts = int(g('recover_max_attempts'))
+        self.recover_global_timeout = float(g('recover_global_timeout_s'))
+        self.recover_creep = float(g('recover_creep_s'))
+        self.reset_yaw_step = math.radians(float(g('reset_yaw_step_deg')))
+        self.reset_v_from, self.reset_v_to = float(g('reset_speed_from')), float(g('reset_speed_to'))
+        self.recover_use_cps = bool(g('recover_use_checkpoints'))
+        self.recover_back = float(g('recover_local_back_m'))
+        self.recover_local_std = float(g('recover_local_std_m'))
+        self.recover_std_ok = float(g('recover_std_ok_m'))
+        self.checkpoints = [tuple(float(v) for v in cp) for cp in CHECKPOINTS]
+        # The centreline orders the lap: "the checkpoint behind the car" is the
+        # one with the smallest arc length back from the car's, wrapping at the
+        # lap. A heading test alone is ambiguous where lanes run parallel.
+        cl = load_centreline(str(g('centreline_csv')), self.spawn)
+        self._cl = cl[:3] if cl is not None else None
+        if cl is not None and cl[3]:
+            self.get_logger().info('centreline runs against the lap; arc length reversed for checkpoint ordering')
+        self._cp_s = ([self._s_of(cx, cy) for cx, cy, _ in self.checkpoints]
+                      if self._cl is not None else None)
+        self.seed_std_m, self.seed_std_deg = 0.05, 3.0      # the initial seed; recovery widens them
+        self.rec_state = 'off'           # off | watch | flagged | seed | global | creep
+        self.last_good = None            # (x, y, yaw) last estimate recorded while trusted
+        self._reset_flag = None          # wall time of the last detected reset
+        self._rec_t0 = None              # when this recovery began
+        self._creep_t0 = None
+        self.recoveries = 0
+        self._imu_quat = None            # latest IMU orientation: the recovery heading
+        self._imu_yaw = None
+        self._imu_t = None
+        self._speed_prev = 0.0
         self.truth_pos = None            # ground truth as read; truth mode only
         self.truth_quat = None
         # What _seed() publishes: /ips + /imu in truth mode, the spawn constant
@@ -405,7 +475,7 @@ class LocalizationBootstrap(Node):
             if not self.spawn_imu_yaw:
                 half = 0.5 * self.spawn[2]
                 self.src_quat = (0.0, 0.0, math.sin(half), math.cos(half))
-        # The seed heading (truth, spawn) and the respawn watch (every mode).
+        # The seed heading (truth, spawn) and the reset watch (every mode).
         self.create_subscription(Imu, f'{NS}/imu', self._cb_imu, QOS)
         if self.scan_min > 0.0:
             self.create_subscription(OccupancyGrid, str(g('map_topic')),
@@ -550,8 +620,18 @@ class LocalizationBootstrap(Node):
             self.src_quat = self.truth_quat = quat
         elif self.mode == 'spawn' and self.spawn_imu_yaw:
             self.src_quat = quat
-        self._watch_respawn(msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9,
-                            yaw_from_quat_xyzw(quat), msg.angular_velocity.z)
+        self._imu_quat = quat
+        # Reset signature 1: a heading step the measured yaw rate cannot explain
+        # (3.2 rad/s of steering is 10 deg in a 55 ms tick; a reset is 20-80).
+        t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        if t <= 0.0:
+            t = self.get_clock().now().nanoseconds * 1e-9
+        yaw = yaw_from_quat_xyzw(quat)
+        if self._imu_yaw is not None and self._imu_t is not None:
+            step = wrap(yaw - self._imu_yaw) - float(msg.angular_velocity.z) * max(0.0, min(t - self._imu_t, 0.3))
+            if abs(step) > self.reset_yaw_step:
+                self._flag_reset(f'heading stepped {math.degrees(step):+.0f} deg in one tick')
+        self._imu_yaw, self._imu_t = yaw, t
 
     def _cb_map(self, msg):
         info = msg.info
@@ -584,55 +664,21 @@ class LocalizationBootstrap(Node):
                 f'{self.scan_tol * 100:.0f} cm (min {self.scan_min * 100:.0f}%)')
         return score >= self.scan_min, text
 
-    def _watch_respawn(self, t, yaw, rate):
-        """After hand-over: re-seed AMCL when the heading jumps (docstring)."""
-        prev, self._imu_prev = self._imu_prev, (t, yaw, rate)
-        if (not self.respawn_watch or not self.ready or prev is None
-                or self.line is None or self.est is None):
-            return
-        dt = t - prev[0]
-        if not 0.0 < dt <= 0.3:
-            return          # over a stall the car may really have turned that far
-        jump = wrap(yaw - prev[1] - prev[2] * dt)
-        if abs(jump) <= self.respawn_jump or t - self._respawn_last < 1.0:
-            return
-        self._respawn_last = t
-        self.respawns += 1
-        xs, ys, psis, step = self.line
-        seed = respawn_seed(xs, ys, psis, step, self.est[:2], yaw,
-                            self.respawn_back, self.respawn_dyaw)
-        if seed is None:
-            self.get_logger().error(
-                f'RESPAWN {self.respawns} (heading jumped {math.degrees(jump):+.0f} deg) '
-                f'but no raceline point within {self.respawn_back:.0f} m behind the '
-                f'last estimate heads {math.degrees(yaw):+.0f} deg. AMCL NOT re-seeded.')
-            return
-        sx, sy, psi, run = seed
-        # Uniform over the matching stretch along the track: std = L / sqrt(12).
-        along = max(0.5, run / math.sqrt(12.0))
-        c, s = math.cos(psi), math.sin(psi)
-        va, vc = along ** 2, self.respawn_std_cross ** 2
-        cov = (c * c * va + s * s * vc, c * s * (va - vc), s * s * va + c * c * vc)
-        self._publish_initialpose(sx, sy, yaw, cov, math.radians(5.0))
-        self.get_logger().warn(
-            f'RESPAWN {self.respawns}: heading jumped {math.degrees(jump):+.0f} deg. '
-            f'Re-seeded AMCL at x={sx:+.2f} y={sy:+.2f} yaw={math.degrees(yaw):+.0f} deg, '
-            f'{run:.1f} m of matching line, along std {along:.2f} m.')
-
     def _seed(self):
         """Publish the seed pose to /initialpose and remember what was sent."""
         x, y = self.src_pos
         yaw = yaw_from_quat_xyzw(self.src_quat)
-        # Tight but not zero: the seed is good, the map is not perfect.
-        self._publish_initialpose(x, y, yaw, (0.05 ** 2, 0.0, 0.05 ** 2),
-                                  math.radians(3.0))
+        # Tight but not zero: the seed is good, the map is not perfect. Recovery
+        # widens these to the prior's uncertainty.
+        self._publish_initialpose(x, y, yaw, (self.seed_std_m ** 2, 0.0, self.seed_std_m ** 2),
+                                  math.radians(self.seed_std_deg))
         self.seed_pose = (x, y, yaw)
         self.seeded_at = self.get_clock().now().nanoseconds * 1e-9
         self.attempts += 1
         self.get_logger().info(
             f'seed {self.attempts}/{self.max_attempts}: x={x:+.3f} y={y:+.3f} '
             f'yaw={math.degrees(yaw):+.1f} deg -- awaiting confirmation')
-        if self.attempts == 1 and self.mode == 'truth':
+        if self.attempts == 1 and self.mode == 'truth' and self.rec_state == 'off':
             self._report_spawn(x, y, yaw)
 
     def _publish_initialpose(self, x, y, yaw, cov_xy, std_yaw):
@@ -731,11 +777,14 @@ class LocalizationBootstrap(Node):
         self.est = (x, y, yaw)
         self.est_t = self.get_clock().now().nanoseconds * 1e-9
         ref = None
-        if self.mode == 'truth':
+        if self.rec_state == 'watch':
+            self.last_good = (x, y, yaw)         # frozen the instant a reset is flagged
+        if self.mode == 'truth' and self.rec_state == 'off':
             if self.truth_pos is not None and self.truth_quat is not None:
                 ref = (*self.truth_pos, yaw_from_quat_xyzw(self.truth_quat))
         elif self.seed_pose is not None and abs(self.speed) < 0.3:
-            # No truth to score against in spawn mode: the seed itself is the
+            # No truth to score against in spawn mode (or ever, after the /ips
+            # read is released, during a recovery): the seed itself is the
             # reference, which is only meaningful while the car is parked --
             # the normal case, since the follower waits on this node.
             ref = self.seed_pose
@@ -760,7 +809,11 @@ class LocalizationBootstrap(Node):
         self._rate[side] = (ang - prev[0]) / dt * self.wheel_r
         rates = [v for v in self._rate.values() if v is not None]
         if rates:
-            self.speed = float(np.mean(rates))
+            prev, self.speed = self._speed_prev, float(np.mean(rates))
+            self._speed_prev = self.speed
+            # Reset signature 2: the simulator zeroes the velocity in one step.
+            if prev >= self.reset_v_from and abs(self.speed) <= self.reset_v_to:
+                self._flag_reset(f'encoder speed collapsed {prev:.1f} -> {abs(self.speed):.1f} m/s in one sample')
 
     # ---- behaviour -------------------------------------------------------
 
@@ -822,9 +875,11 @@ class LocalizationBootstrap(Node):
                 and self.yaw_std <= self.yaw_target)
 
     def _tick(self):
-        if self.finished:
-            return
         now = self.get_clock().now().nanoseconds * 1e-9
+        if self.finished:
+            if self.recover and self.rec_state != 'off':
+                self._tick_recover(now)
+            return
         if self._last is not None:
             self.distance += abs(self.speed) * (now - self._last)
         self._last = now
@@ -874,14 +929,17 @@ class LocalizationBootstrap(Node):
         if fresh and self.est_err is not None:
             gap, dyaw = self.est_err, self.est_dyaw
             scan_ok, scan_text = self._scan_check(self.est)
-            if gap <= self.tol_m and dyaw <= self.tol_yaw and scan_ok:
+            if gap <= self.tol_m and dyaw <= self.tol_yaw and scan_ok and self._recover_ok():
                 self._finish(
                     f'{scan_text}. seed CONFIRMED on attempt {self.attempts}{moving}: the '
                     f'estimate is {gap * 100:.1f} cm / {math.degrees(dyaw):.1f} deg from '
                     f'{ref_name} (pos std {std}). Tracking is now lidar + map + dead '
                     'reckoning only.')
                 return
-            if gap <= self.tol_m and dyaw <= self.tol_yaw:
+            if gap <= self.tol_m and dyaw <= self.tol_yaw and scan_ok:
+                reason = (f'the estimate agrees with {ref_name} but has not converged '
+                          f'(pos std {std}, need <= {self.recover_std_ok:.2f} m)')
+            elif gap <= self.tol_m and dyaw <= self.tol_yaw:
                 reason = (f'the estimate agrees with {ref_name}, but the SCAN DOES NOT '
                           f'MATCH THE MAP there ({scan_text}): a wrong SPAWN_* or a '
                           'map that does not line up with the simulator')
@@ -953,6 +1011,146 @@ class LocalizationBootstrap(Node):
         if self.scan is not None:
             self._drive()
 
+    # ---- recovery after a wall contact -----------------------------------
+
+    def _s_of(self, x, y):
+        s, cx, cy = self._cl
+        return float(s[int(np.argmin((cx - x) ** 2 + (cy - y) ** 2))])
+
+    def _lap_length(self):
+        """Lap length from the centreline, whichever way its s runs."""
+        return float(np.max(self._cl[0])) if self._cl is not None else 0.0
+
+    def _flag_reset(self, why):
+        if not self.recover or self.rec_state in ('off', 'flagged', 'seed', 'global'):
+            return
+        self._reset_flag = self.get_clock().now().nanoseconds * 1e-9
+        self.rec_state = 'flagged'           # freezes last_good; _tick_recover takes it from here
+        self.get_logger().warn(f'RESET detected: {why}')
+
+    def _recovery_prior(self):
+        """Where the car most likely is now: the known checkpoint behind the
+        last trusted pose, else that pose moved back along the track. Heading
+        always from the IMU, which is absolute and legal."""
+        lg = self.last_good
+        yaw = (yaw_from_quat_xyzw(self._imu_quat) if self._imu_quat is not None
+               else (lg[2] if lg else 0.0))
+        if lg is None:
+            return None
+        best = None
+        if not self.recover_use_cps:
+            pass                                              # forced to the no-data tier
+        elif self._cl is not None and self._cp_s:
+            lap = self._lap_length()
+            s_last = self._s_of(lg[0], lg[1])
+            for (cx, cy, _), cs in zip(self.checkpoints, self._cp_s):
+                back = pick_back(s_last, cs, lap)
+                if back is None:
+                    continue                                  # unusable centreline
+                if back <= 25.0 and (best is None or back < best[0]):
+                    best = (back, cx, cy)
+        else:
+            for cx, cy, cyaw in self.checkpoints:             # no centreline: heading test
+                dx, dy = lg[0] - cx, lg[1] - cy
+                dist = math.hypot(dx, dy)
+                ahead = dx * math.cos(cyaw) + dy * math.sin(cyaw)
+                if 0.0 <= ahead <= 25.0 and dist <= 25.0 and (best is None or dist < best[0]):
+                    best = (dist, cx, cy)
+        if best is not None:
+            return (best[1], best[2], yaw, 0.15, 5.0, self.recover_tol,
+                    f'checkpoint {best[0]:.1f} m behind the last pose along the track')
+        # No data for this stretch: the reset is somewhere 0.15-2.8 m behind the
+        # contact. Seed the mean, spread the particles over the range, and accept
+        # wherever AMCL converges within it (tolerance 3 m, plus the pos-std check
+        # in _recover_ok) instead of demanding it land on the seed.
+        x = lg[0] - self.recover_back * math.cos(lg[2])
+        y = lg[1] - self.recover_back * math.sin(lg[2])
+        return (x, y, yaw, self.recover_local_std, 15.0, 3.0,
+                f'no known checkpoint behind the last pose; {self.recover_back:.1f} m back along it, wide')
+
+    def _recover_ok(self):
+        """Extra acceptance for a RECOVERY seed: AMCL must also have converged."""
+        if self.rec_state != 'seed':
+            return True
+        return self.pos_std is not None and self.pos_std <= self.recover_std_ok
+
+    def _tick_recover(self, now):
+        if self.rec_state == 'watch':
+            return
+        if self.rec_state == 'flagged':
+            prior = self._recovery_prior()
+            self._rec_t0 = now
+            self.recoveries += 1
+            self._announce(False)
+            self._send(0.0, 0.0)
+            if prior is None:
+                self.get_logger().error('reset before any trusted pose; searching the whole map')
+                self._recover_global('no prior available')
+                return
+            x, y, yaw, std_m, std_deg, tol_m, why = prior
+            # A planar quaternion from the yaw: nav2 rejects a copied IMU
+            # quaternion whose norm is off by 1e-4 ("malformed", multi-track run 24).
+            self.src_pos = (x, y)
+            self.src_quat = (0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0))
+            self.seed_std_m, self.seed_std_deg = std_m, std_deg
+            self.tol_m, self.settle_s, self.max_attempts = tol_m, self.recover_settle, self.recover_attempts
+            self.seeded_at, self.attempts, self.est_err, self.est_dyaw = None, 0, None, None
+            self.rec_state = 'seed'
+            self.get_logger().warn(
+                f'recovery #{self.recoveries}: follower held; prior ({x:+.2f}, {y:+.2f}, '
+                f'{math.degrees(yaw):+.0f} deg) -- {why}')
+            return
+        if self.rec_state == 'seed':
+            # spawn mode's IMU callback keeps refreshing src_quat; the car is
+            # parked, so that is the same heading the prior was built from.
+            self._tick_seeded(now)            # seed -> confirm -> _finish/_fail, intercepted below
+            return
+        if self.rec_state == 'global':
+            self._tick_global(now)
+            return
+        if self.rec_state == 'creep':
+            if self._reset_flag is not None and self._reset_flag > self._creep_t0:
+                self.rec_state = 'flagged'    # hit again while creeping: start over
+                return
+            if now - self._creep_t0 < self.recover_creep and self.scan is not None:
+                self._drive()
+                return
+            self._send(0.0, 0.0)
+            self.rec_state = 'watch'
+            self._announce(True)
+            self.get_logger().info(
+                f'recovery #{self.recoveries} complete in {now - self._rec_t0:.1f} s; follower resumes')
+
+    def _recover_confirmed(self, message):
+        now = self.get_clock().now().nanoseconds * 1e-9
+        self.get_logger().info(f'recovery: {message}')
+        self.rec_state, self._creep_t0, self.distance = 'creep', now, 0.0
+        if self.est is not None:
+            self.last_good = self.est
+            # Where the car actually was after the reset: a checkpoint. On a new
+            # track this is how the table gets filled -- paste into frames.CHECKPOINTS.
+            x, y, yaw = self.est
+            self.get_logger().info(
+                f"CHECKPOINT CANDIDATE (converged after reset): ('{x:.3f}', '{y:.3f}', '{yaw:.3f}')")
+
+    def _recover_global(self, message):
+        now = self.get_clock().now().nanoseconds * 1e-9
+        self.get_logger().warn(f'recovery: prior not adopted ({message}); searching the whole map')
+        if self.last_good is not None:
+            self.get_logger().warn(
+                f'UNMATCHED RESET near ({self.last_good[0]:+.2f}, {self.last_good[1]:+.2f}): if the car '
+                'is at a checkpoint not in frames.CHECKPOINTS, add it')
+        self.rec_state, self.t0, self.scattered, self.distance = 'global', now, False, 0.0
+        self.timeout = self.recover_global_timeout
+
+    def _recover_giveup(self, message):
+        self.get_logger().error(
+            f'recovery: global search failed too ({message}); resuming on the current estimate, '
+            'which AMCL may still correct while driving. Parked forever loses the race for certain.')
+        self._send(0.0, 0.0)
+        self.rec_state = 'watch'
+        self._announce(True)
+
     def _release_truth(self):
         """Destroy the /ips subscription. Idempotent.
 
@@ -968,6 +1166,9 @@ class LocalizationBootstrap(Node):
         restricted.released(self, [f'{COMMON_NS}/ips'])
 
     def _finish(self, message):
+        if self.rec_state in ('seed', 'global'):
+            self._recover_confirmed(message)
+            return
         self.finished = True
         self.ready = True
         self._send(0.0, 0.0)
@@ -975,9 +1176,22 @@ class LocalizationBootstrap(Node):
         self._announce(True)
         self.get_logger().info(message)
         self.get_logger().info('/localization_ready = true, follower may take over')
+        if self.recover:
+            self.last_good = self.seed_pose or self.est
+            self.rec_state = 'watch'
+            self.get_logger().info(
+                f'recovery armed: watching encoders + IMU for a reset; '
+                f'{len(self.checkpoints)} checkpoint(s) known'
+                + ('' if self._cl is not None else ', NO centreline (heading test only)'))
 
     def _fail(self, message):
         """Give up. By default do NOT let the follower drive on this pose."""
+        if self.rec_state == 'seed':
+            self._recover_global(message)
+            return
+        if self.rec_state == 'global':
+            self._recover_giveup(message)
+            return
         self.finished = True
         self._send(0.0, 0.0)
         self._release_truth()
@@ -995,6 +1209,8 @@ class LocalizationBootstrap(Node):
 
     def _report(self):
         if self.finished:
+            if self.rec_state in ('seed', 'global', 'creep'):
+                self.get_logger().info(f'recovery #{self.recoveries}: {self.rec_state}, attempt {self.attempts}')
             return
         if not self.localizer_up:
             waited = self.get_clock().now().nanoseconds * 1e-9 - self.t0

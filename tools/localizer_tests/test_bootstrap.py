@@ -2,8 +2,9 @@
 
     python3 test_bootstrap.py maps/track_clean.pgm raceline/raceline_a7.0.csv
 
-Covers scan-vs-map score calibration,
-respawn seed search, and the node's confirm / refuse / respawn flow."""
+Covers scan-vs-map score calibration, the recovery prior against every logged
+IROS 2026 reset (the node's own pick_back / load_centreline), and the node's
+confirm / refuse / reset-recovery flow."""
 import math, sys
 import numpy as np
 import rclpy
@@ -116,24 +117,29 @@ print('  at the spawn only: true', round(B.scan_match_score(mask, RES, ORIGIN, s
       ' along 0.5:', round(B.scan_match_score(mask, RES, ORIGIN, sp, (spawn[0], spawn[1] - 0.5, spawn[2]), 0.2733, 6.0), 2),
       ' yaw 5:', round(B.scan_match_score(mask, RES, ORIGIN, sp, (spawn[0], spawn[1], spawn[2] + math.radians(5)), 0.2733, 6.0), 2))
 
-# ---------------- 2. respawn seed ----------------
-xs, ys, psis, step = LINE[:, 1], LINE[:, 2], LINE[:, 3], LINE[1, 0] - LINE[0, 0]
-errs, misses = [], 0
-for crash in range(0, len(LINE), 7):
-    for back in (1.0, 2.0, 3.0):
-        chk = int(crash - round(back / step)) % len(LINE)
-        est = (xs[crash], ys[crash])
-        seed = B.respawn_seed(xs, ys, psis, step, est, psis[chk], 6.0, math.radians(15))
-        if seed is None:
-            misses += 1; continue
-        sx, sy, spsi, run = seed
-        along_std = max(0.5, run / math.sqrt(12))
-        d = math.hypot(sx - xs[chk], sy - ys[chk])
-        errs.append(d / along_std)
-errs = np.array(errs)
-print(f'\nrespawn seed: {len(errs)} cases, {misses} with no match; distance to the true checkpoint '
-      f'in units of the seeded along-track std: median {np.median(errs):.2f}, p95 {np.percentile(errs, 95):.2f}, '
-      f'within 2 std {np.mean(errs <= 2) * 100:.0f}%')
+# ---------------- 2. recovery prior ----------------
+# Every contact seen in a logged multi-track run, and the checkpoint the
+# simulator actually reset the car to (runs 14, 19, 20). Same cases as
+# check_recovery_prior.py, run through the node's own helpers.
+from roboracer_stack.common import frames as F
+CASES = [((1.11, -14.66), (0.718, -15.575)), ((2.38, -15.64), (1.713, -15.770)),
+         ((1.05, -14.52), (0.716, -15.574)), ((3.70, -12.26), (3.018, -13.624)),
+         ((5.52, -11.49), (5.047, -11.480)), ((0.52, 3.89), (0.800, 3.653))]
+cl = B.load_centreline(F.CENTRELINE_CSV, (F.SPAWN_X, F.SPAWN_Y, F.SPAWN_YAW))
+assert cl is not None, F.CENTRELINE_CSV
+cs, cx, cy, rev = cl
+lap = float(np.max(cs))
+s_of = lambda px, py: float(cs[int(np.argmin((cx - px) ** 2 + (cy - py) ** 2))])
+cps = [tuple(float(v) for v in c) for c in F.CHECKPOINTS]
+bad = 0
+for contact, expect in CASES:
+    sl = s_of(*contact)
+    backs = [(B.pick_back(sl, s_of(x, y), lap), x, y) for x, y, _ in cps]
+    back, px, py = min((b for b in backs if b[0] is not None and b[0] <= 25.0), key=lambda b: b[0])
+    ok = math.hypot(px - expect[0], py - expect[1]) < 0.05
+    bad += not ok
+    print(f'  contact {contact}: picked ({px:.3f}, {py:.3f}) {back:.2f} m back -- {"ok" if ok else "WRONG"}')
+print(f'\nrecovery prior: lap {lap:.2f} m (centreline reversed={rev}), {len(CASES) - bad}/{len(CASES)} resets pick the right checkpoint')
 
 # ---------------- 3. node flow ----------------
 rclpy.init()
@@ -145,7 +151,7 @@ class Clock:
 
 
 def make_node(extra=None):
-    params = [Parameter('mode', value='spawn'), Parameter('path_csv', value=RACELINE),
+    params = [Parameter('mode', value='spawn'),
               Parameter('max_seed_attempts', value=2)] + [Parameter(k, value=v) for k, v in (extra or {}).items()]
     orig = rclpy.node.Node.__init__
     B.Node.__init__ = lambda self, name, **kw: orig(self, name, parameter_overrides=params, **kw)
@@ -198,24 +204,30 @@ print('\nnode flow (spawn mode, AMCL adopts the seed exactly):')
 n, clk = flow(ORIGIN, 'map aligned        ')
 flow((ORIGIN[0] + 0.30, ORIGIN[1]), 'map shifted 0.30 m ')
 
-# respawn: car was at raceline index 150, respawns 2 m behind with that heading
-back_n = int(round(2.0 / step))
-i_crash = next(i for i in range(len(LINE)) if abs(B.wrap(psis[i] - psis[i - back_n])) > 0.8)
-i_chk = (i_crash - back_n) % len(LINE)
-detected_on_line = sum(abs(B.wrap(psis[i] - psis[i - back_n])) > 0.35 + 0.1 for i in range(len(LINE))) / len(LINE)
-print(f'  fraction of the lap where a respawn 2 m back changes heading enough to detect: {detected_on_line * 100:.0f}%')
-n.sent.clear()
+# reset: car at the hairpin-1 apex contact of run 14, reset to the exit checkpoint
+contact, chk = (2.38, -15.64, 0.30), (1.713, -15.770, 0.268)
+print('\nreset recovery (spawn mode node from above, checkpoint adopted exactly):')
 t = clk.t
-n._cb_pose(amcl(xs[i_crash], ys[i_crash], psis[i_crash]))
-n._cb_imu(imu(psis[i_crash], t, 0.0))
-n._cb_imu(imu(psis[i_crash] + 0.05, t + 0.055, 0.0))           # normal: no respawn
-n._cb_imu(imu(psis[i_chk], t + 0.110, 0.0))                     # jump
+n.sent.clear()
+n._cb_pose(amcl(*contact))                                    # the trusted pose before the hit
+n._cb_imu(imu(contact[2], t, 0.0)); n._cb_imu(imu(contact[2] + 0.02, t + 0.022, 0.0))
+n._cb_imu(imu(1.2, t + 0.044, 0.0))                           # heading step: the reset
+n._cb_scan(scan_msg(raycast(GRID, ORIGIN, (chk[0], chk[1], 1.2))))
+flagged = n.rec_state
+ready_dropped = False
+n.pub_ready.publish = lambda m, n=n: globals().__setitem__('ready_dropped', ready_dropped or not m.data)
+for _ in range(60):
+    n._tick(); clk.t += 0.1
+    if n.rec_state == 'seed' and n.seeded_at is not None and clk.t - n.seeded_at > 0.3:
+        n._cb_pose(amcl(*n.seed_pose))
+    if n.rec_state == 'watch' and n.recoveries:
+        break
 if n.sent:
-    m = n.sent[-1]; c = m.pose.covariance
+    m = n.sent[0]
     sx, sy = m.pose.pose.position.x, m.pose.pose.position.y
-    print(f'  respawn: heading {math.degrees(psis[i_crash]):+.0f} -> {math.degrees(psis[i_chk]):+.0f} deg, '
-          f'seeded {math.hypot(sx - xs[i_chk], sy - ys[i_chk]):.2f} m from the true checkpoint, '
-          f'cov xx {c[0]:.2f} xy {c[1]:.2f} yy {c[7]:.2f}, sends={len(n.sent)}')
+    print(f'  flagged={flagged} ready dropped={ready_dropped} seeded at ({sx:.3f}, {sy:.3f}), '
+          f'{math.hypot(sx - chk[0], sy - chk[1]):.3f} m from the true checkpoint; '
+          f'state now {n.rec_state}, recoveries {n.recoveries}')
 else:
-    print(f'  respawn: NOT detected (heading {math.degrees(psis[i_crash]):+.0f} -> {math.degrees(psis[i_chk]):+.0f} deg)')
+    print(f'  reset NOT recovered: state {n.rec_state}')
 rclpy.shutdown()

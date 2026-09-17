@@ -213,6 +213,8 @@ def main(exp_dir):
     # ---- contacts: the simulator's counter first, the log's respawn signature second
     contacts_tel = int(max((int(float(r['collisions'])) for r in tel), default=0))
     i_contact = first_contact_index(log, tel)
+    if tel and contacts_tel == 0:
+        i_contact = None          # the simulator counted none: a jump after the run (the next reset) is not a contact
     t_contact = float(t[i_contact]) if i_contact is not None else None
 
     # ---- laps: s-wrap segments, timed laps = all but the out-lap, before the first contact
@@ -274,7 +276,7 @@ def main(exp_dir):
         lap_worst=round(float(lt.max()), 3) if len(lt) else None,
         laps_under_10=int(np.sum(lt < 10.0)) if len(lt) else 0,
         gap_to_profile_s=round(float(np.median(lt) - line['profile_lap']), 3) if len(lt) else None,
-        contacts=max(contacts_tel, 1 if i_contact is not None else 0),
+        contacts=contacts_tel if tel else (1 if i_contact is not None else 0),
         first_contact_t=round(t_contact, 1) if t_contact is not None else None,
         first_contact_s=round(float(s_line[i_contact - 1]), 2) if i_contact else None,
         e_lat_abs=stat(np.abs(e_lat), mk), outward=stat(outward, mk),

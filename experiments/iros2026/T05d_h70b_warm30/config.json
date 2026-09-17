@@ -1,0 +1,22 @@
+{
+  "id": "T05d",
+  "name": "h70b_warm30",
+  "date": "2026-09-17",
+  "started": "2026-09-17T20:02:02",
+  "track": "iros2026",
+  "line": "raceline_tum_iqp_h7.0_a7.0b.csv",
+  "laps": 2,
+  "max_contacts": 1,
+  "hz_cap": "45",
+  "overrides": [
+    "control_hz:=45",
+    "warmup_v_max:=3.0",
+    "warmup_dist_m:=19.5"
+  ],
+  "hypothesis": "Out-lap robustness: warmup_v_max 3.0 over 19.5 m (was 4.0 over 19) gives AMCL more scans per metre through hairpin 1, so the +0.6 m along-track start-straight error is corrected before turn-in; control_hz 45 as T03",
+  "prediction": "0 contacts on the out-lap in 4 of 4 repeats; hairpin-1 entry along error |.| < 0.3 m",
+  "git_branch": "adil_iros",
+  "git_commit": "fc34cdb",
+  "git_dirty": false,
+  "verdict_short": "ACCEPTED (with a b c d): out-lap clean 4/4 at warmup 3.0 over 19.5 m (was 2/4 at 4.0); hp1 along err within +-0.30"
+}

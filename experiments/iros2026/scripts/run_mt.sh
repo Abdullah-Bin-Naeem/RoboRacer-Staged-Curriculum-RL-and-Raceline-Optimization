@@ -18,7 +18,7 @@ exec ros2 launch racer_bringup race.launch.py \
   path_csv:=/root/Documents/roboracer/raceline/iros2026/$LINE \
   log_csv:=/root/Documents/roboracer/logs/$NAME.csv \
   distance_source:=$DIST \
-  control_hz:=45 warmup_v_max:=2.0 warmup_dist_m:=21.0 enc_rate_window_s:=${ENC_WIN:-0.10} \
+  control_hz:=45 warmup_v_max:=2.0 warmup_dist_m:=21.0 enc_rate_window_s:=${ENC_WIN:-0.05} \
   amcl_params_file:=/root/Documents/roboracer/experiments/iros2026/params/amcl_beams360.yaml \
   exit_guard_from:=0.0 exit_guard_full:=0.0 \
   controller_mode:=hybrid_lqr lqr_k_lat:=0.03 lqr_k_head:=0.05 lqr_k_yaw:=0.0 \

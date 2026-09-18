@@ -3,8 +3,9 @@
   <name>racer_localization</name>
   <version>0.1.0</version>
   <description>Localization for the AutoDRIVE RoboRacer: encoder+IMU dead
-  reckoning, and two interchangeable map-relative localizers (nav2 AMCL against
-  an occupancy grid, slam_toolbox against a serialized pose graph) behind the
+  reckoning, and three interchangeable map-relative localizers (nav2 AMCL
+  against an occupancy grid, slam_toolbox against a serialized pose graph, and
+  localization_v2: segmented scan-to-map matching against the grid) behind the
   same frames and the same error instrument.</description>
   <maintainer email="abdullahbinnaeempro@gmail.com">Abdullah Bin Naeem</maintainer>
   <license>BSD</license>

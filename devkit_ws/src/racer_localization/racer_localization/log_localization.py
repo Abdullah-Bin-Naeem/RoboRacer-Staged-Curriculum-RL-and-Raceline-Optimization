@@ -97,6 +97,10 @@ except ImportError:                                     # run outside the ws
     MAPS_DIR = os.path.join(os.path.expanduser('~'),
                             'Documents/roboracer/devkit_ws/src/'
                             'racer_mapping/maps')
+try:
+    from racer_localization.v2_status import STATUS_FIELDS as V2_FIELDS
+except ImportError:                                     # run as a bare script
+    from v2_status import STATUS_FIELDS as V2_FIELDS   # noqa: F401
 
 NS = '/autodrive/roboracer_1'
 QOS = QoSProfile(durability=QoSDurabilityPolicy.VOLATILE,
@@ -124,6 +128,12 @@ COLUMNS = [
 PP_FIELDS = ('v_est', 'v_enc', 'v_pose', 'v_target', 'u_cmd', 'throttle', 'steering',
              'ld', 'e_lat', 'e_head', 'kappa', 's', 'slip', 'a_imu', 'delay')
 COLUMNS += ['pp_' + f for f in PP_FIELDS]
+
+# localization_v2, when it runs (as the localizer or as v2_shadow beside
+# AMCL): its own estimate against the same truth, so one file carries the A/B,
+# plus its /localization_v2/status payload. NaN when it is not running.
+COLUMNS += ['v2_x', 'v2_y', 'v2_err_along', 'v2_err_cross', 'v2_err_dist']
+COLUMNS += ['v2_' + f for f in V2_FIELDS]
 
 # The lidar sits this far forward of the rear axle. From the bridge's own TF
 # broadcast, and identical to the static transform chassis.launch.py publishes.
@@ -171,14 +181,26 @@ class Logger(Node):
         p('map', '')
         p('track', '')
         p('wheel_radius', 0.0581)       # MEASURED; see dead_reckoning.py
+        # Save EVERY scan (not every CSV row) with its stamp, odom->base at that
+        # stamp, the truth pose and the live map->odom, to this .npz. That is
+        # the dataset tools/replay_localization_v2.py runs a localizer over
+        # offline: at 45 Hz and 1081 beams it is ~200 KB/s, held in memory and
+        # written on shutdown. Empty disables.
+        p('scan_dump', '')
         g = lambda n: self.get_parameter(n).value   # noqa: E731
         path = path if path is not None else str(g('out'))
         rate = rate if rate is not None else float(g('rate'))
         seconds = seconds if seconds is not None else float(g('seconds'))
         self.wheel_r = float(g('wheel_radius'))
+        self.dump_path = str(g('scan_dump'))
+        self._dump = {'t': [], 'stamp': [], 'ranges': [], 'o2b': [], 'true': [],
+                      'm2o': [], 'speed': [], 'ready': []} if self.dump_path else None
+        self._dump_meta = None
 
         self.path = path
         self.seconds = seconds
+        self.v2_pose = None          # latest /localization_v2/pose (x, y)
+        self.v2 = None               # latest /localization_v2/status payload
 
         # ---- the map, as a distance-to-nearest-wall field --------------
         # Scoring a scan is then one array lookup per beam: project each
@@ -187,6 +209,7 @@ class Logger(Node):
         if not base:
             from racer_common import frames
             base = frames.map_yaml(str(g('track')) or None)[:-len('.yaml')]
+        self.map_base = base
         meta = yaml.safe_load(open(base + '.yaml'))
         img = read_pgm(base + '.pgm')
         self.res = meta['resolution']
@@ -227,6 +250,11 @@ class Logger(Node):
                                  lambda m: self._cb_enc('r', m), QOS)
         # Not restricted: the follower's own state. Absent when it is not running.
         self.create_subscription(Float32MultiArray, '/pure_pursuit/status', self._cb_pp, QOS)
+        # Not restricted: localization_v2's own output, present when it runs.
+        self.create_subscription(Float32MultiArray, '/localization_v2/status', self._cb_v2, QOS)
+        from geometry_msgs.msg import PoseWithCovarianceStamped
+        self.create_subscription(PoseWithCovarianceStamped, '/localization_v2/pose',
+                                 self._cb_v2_pose, QOS)
         self.create_subscription(Bool, '/localization_ready', self._cb_ready, QoSProfile(
             durability=QoSDurabilityPolicy.TRANSIENT_LOCAL, reliability=QoSReliabilityPolicy.RELIABLE,
             history=QoSHistoryPolicy.KEEP_LAST, depth=1))
@@ -261,12 +289,36 @@ class Logger(Node):
 
     def _cb_scan(self, msg):
         self.scan = msg
+        if self._dump is None or self.ips is None or self.yaw is None:
+            return
+        stamp = Time.from_msg(msg.header.stamp)
+        o2b = self._lookup('odom', 'roboracer_1', stamp)
+        m2o = self._lookup('map', 'odom')
+        if self._dump_meta is None:
+            self._dump_meta = dict(angle_min=msg.angle_min, angle_increment=msg.angle_increment,
+                                   range_min=msg.range_min, range_max=msg.range_max,
+                                   n=len(msg.ranges))
+        d = self._dump
+        d['t'].append(self.get_clock().now().nanoseconds * 1e-9)
+        d['stamp'].append(stamp.nanoseconds * 1e-9)
+        d['ranges'].append(np.asarray(msg.ranges, dtype=np.float32))
+        d['o2b'].append(o2b if o2b is not None else (np.nan,) * 3)
+        d['true'].append((self.ips[0], self.ips[1], self.yaw))
+        d['m2o'].append(m2o if m2o is not None else (np.nan,) * 3)
+        d['speed'].append(self.speed)
+        d['ready'].append(self.ready_flag)
 
     def _cb_ready(self, msg):
         self.ready_flag = 1 if msg.data else 0
 
     def _cb_pp(self, msg):
         self.pp = list(msg.data)
+
+    def _cb_v2(self, msg):
+        self.v2 = list(msg.data)
+
+    def _cb_v2_pose(self, msg):
+        self.v2_pose = (msg.pose.pose.position.x, msg.pose.pose.position.y)
 
     def _cb_enc(self, side, msg):
         """Cumulative wheel ANGLE in radians -- see dead_reckoning.py.
@@ -421,6 +473,17 @@ class Logger(Node):
         ratio = (fit_e / fit_t) if (fit_t and fit_t == fit_t and fit_t > 1e-6
                                     and fit_e == fit_e) else float('nan')
 
+        # localization_v2's estimate against the same truth, same decomposition.
+        nan = float('nan')
+        if self.v2_pose is not None:
+            vx, vy = self.v2_pose[0] - tx, self.v2_pose[1] - ty
+            v2_cols = [self.v2_pose[0], self.v2_pose[1],
+                       vx * c + vy * s, -vx * s + vy * c, math.hypot(vx, vy)]
+        else:
+            v2_cols = [nan] * 5
+        v2_cols += (self.v2 if self.v2 is not None and len(self.v2) == len(V2_FIELDS)
+                    else [nan] * len(V2_FIELDS))
+
         self.csv.writerow([
             f'{t:.3f}', f'{self.dist:.3f}',
             f'{tx:.4f}', f'{ty:.4f}', f'{math.degrees(self.yaw):.3f}',
@@ -433,7 +496,8 @@ class Logger(Node):
             f'{fit_t:.4f}', f'{fit_e:.4f}', f'{ratio:.4f}',
             f'{self.ready_flag:d}',
         ] + [f'{v:.4f}' for v in (self.pp if self.pp is not None and len(self.pp) == len(PP_FIELDS)
-                                  else [float('nan')] * len(PP_FIELDS))])
+                                  else [float('nan')] * len(PP_FIELDS))]
+          + [f'{v:.4f}' for v in v2_cols])
         self.rows += 1
         if self.rows % 100 == 0:
             self.fh.flush()         # so the file is useful before Ctrl-C
@@ -457,6 +521,21 @@ class Logger(Node):
         except Exception:                                # noqa: BLE001
             pass
         print(f'\n  wrote {self.rows} rows to {os.path.abspath(self.path)}')
+        if self._dump is not None and self._dump['ranges']:
+            d = self._dump
+            meta = self._dump_meta or {}
+            np.savez_compressed(
+                self.dump_path,
+                t=np.array(d['t']), stamp=np.array(d['stamp']),
+                ranges=np.stack(d['ranges']),
+                o2b=np.array(d['o2b'], dtype=float), true=np.array(d['true'], dtype=float),
+                m2o=np.array(d['m2o'], dtype=float), speed=np.array(d['speed']),
+                ready=np.array(d['ready'], dtype=np.int8),
+                angle_min=meta.get('angle_min', -2.35619), angle_increment=meta.get('angle_increment', 0.004363323),
+                range_min=meta.get('range_min', 0.06), range_max=meta.get('range_max', 10.0),
+                map_yaml=os.path.abspath(self.map_base + '.yaml'))
+            print(f'  wrote {len(d["ranges"])} scans to {os.path.abspath(self.dump_path)} '
+                  f'(replay: tools/replay_localization_v2.py)')
         if self.rows:
             print(f'  peak position error {self.peak:.3f} m, '
                   f'peak heading error {self.peak_yaw:.2f} deg')

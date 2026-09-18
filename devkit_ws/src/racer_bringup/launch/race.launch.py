@@ -120,6 +120,9 @@ LOCALIZERS = {
         # Particles can be scattered across the map with no prior, which is the
         # race-legal way to start.
         has_global=True,
+        # Which map asset the launch file takes, and under which argument name
+        # a parameter yaml reaches it (empty string = none).
+        map_arg='map_yaml', params_arg='amcl_params_file',
     ),
     'slam': dict(
         launch='slam.launch.py',
@@ -133,8 +136,24 @@ LOCALIZERS = {
         # But it has NO global search to fall back on, so mode:=race starts it
         # on racer_common.frames.SPAWN_* and nothing else.
         has_global=False,
+        map_arg='map_graph', params_arg='',
+    ),
+    'v2': dict(
+        launch='v2.launch.py',
+        # Segmented scan-to-map matching (localization_v2.py). Publishes its
+        # estimate every scan on this topic, with the posterior covariance.
+        pose_topic='/localization_v2/pose',
+        has_ready=True,
+        # A 2-D exhaustive search at the IMU's heading backs
+        # /reinitialize_global_localization, so bootstrap_mode:=global works.
+        has_global=True,
+        map_arg='map_yaml', params_arg='v2_params_file',
     ),
 }
+
+
+# The package yaml each params_arg falls back to when the argument is empty.
+PARAMS_DEFAULT = {'amcl_params_file': 'amcl.yaml', 'v2_params_file': 'localization_v2.yaml'}
 
 
 def _launch(context, *args, **kwargs):
@@ -157,6 +176,14 @@ def _launch(context, *args, **kwargs):
             f"localizer:={localizer} is not one of "
             f"{sorted(LOCALIZERS) + ['none']}")
     spec = LOCALIZERS.get(localizer)
+    # v2_shadow:=true runs localization_v2 BESIDE the chosen localizer, which
+    # keeps map->odom; v2 publishes only its pose and status, and the logger
+    # records both against truth. The A/B on identical live data. Meaningless
+    # with localizer:=v2 itself, and refused there rather than silently doubled.
+    v2_shadow = cfg('v2_shadow').lower() == 'true'
+    if v2_shadow and localizer == 'v2':
+        raise RuntimeError('v2_shadow:=true needs another localizer to shadow; '
+                           'use localizer:=amcl (or slam) with it')
 
     race_mode = cfg('mode').lower() == 'race'
     # In race mode the legal value wins over whatever was passed, so that a
@@ -234,15 +261,16 @@ def _launch(context, *args, **kwargs):
                     'recover_use_checkpoints': cfg('recover_use_checkpoints'),
                     'recover_settle_s': cfg('recover_settle_s'),
                     'recover_creep_s': cfg('recover_creep_s')}
-        loc_args['map_yaml' if localizer == 'amcl' else 'map_graph'] = (
-            map_yaml if localizer == 'amcl' else map_graph)
+        loc_args[spec['map_arg']] = map_yaml if spec['map_arg'] == 'map_yaml' else map_graph
         # A/B a localizer parameter set without touching the package's yaml.
         # Always pass a real path: launch configurations are inherited by the
-        # include, so an empty value declared here would override amcl.launch.py's
-        # own default and start map_server/amcl with no parameters (they hang).
-        if localizer == 'amcl':
-            loc_args['amcl_params_file'] = (cfg('amcl_params_file')
-                                            or os.path.join(loc_share, 'config', 'amcl.yaml'))
+        # include, so an empty value declared here would override the included
+        # file's own default and start the node with no parameters (AMCL and
+        # map_server hang on that).
+        if spec['params_arg']:
+            loc_args[spec['params_arg']] = (cfg(spec['params_arg'])
+                                            or os.path.join(loc_share, 'config',
+                                                            PARAMS_DEFAULT[spec['params_arg']]))
 
         # Warn only when nothing will seed this localizer: no global search AND
         # no one-shot truth seed leaves it on the hardcoded constant, which
@@ -264,6 +292,23 @@ def _launch(context, *args, **kwargs):
             launch_arguments=loc_args.items(),
             condition=IfCondition(LaunchConfiguration('localization')),
         ))
+
+        # 3b. the shadow: localization_v2 with no TF and no bootstrap of its
+        #     own (the owner's bootstrap seeds /initialpose, which v2 also reads).
+        if v2_shadow:
+            actions.append(LogInfo(msg='[race] v2_shadow: localization_v2 runs beside '
+                                       f'{localizer} without publishing TF; compare '
+                                       'v2_* against err_* in the log'))
+            actions.append(IncludeLaunchDescription(
+                src(loc_share, 'v2.launch.py'),
+                launch_arguments={
+                    'track': track, 'map_yaml': map_yaml, 'shadow': 'true',
+                    'bootstrap': 'false', 'rviz': 'false',
+                    'v2_params_file': (cfg('v2_params_file')
+                                       or os.path.join(loc_share, 'config', PARAMS_DEFAULT['v2_params_file'])),
+                }.items(),
+                condition=IfCondition(LaunchConfiguration('localization')),
+            ))
 
     # /localization_ready is latched by the bootstrap node, so it appears only
     # when a localizer that HAS one is running AND the bootstrap is enabled.
@@ -290,6 +335,7 @@ def _launch(context, *args, **kwargs):
             'wall_margin': cfg('wall_margin'),
             'log_csv': cfg('log_csv'),
             'log_rate': cfg('log_rate'),
+            'scan_dump': cfg('scan_dump'),
             'track': track,
         }.items(),
         condition=IfCondition(measure_error),
@@ -336,7 +382,17 @@ def generate_launch_description():
     args = [
         DeclareLaunchArgument(
             'localizer', default_value='amcl',
-            description="which map->odom source: 'amcl', 'slam', or 'none'"),
+            description="which map->odom source: 'amcl', 'slam', 'v2', or 'none'"),
+        DeclareLaunchArgument(
+            'v2_shadow', default_value='false',
+            description='also run localization_v2 without TF beside the chosen '
+                        'localizer, so the log carries both estimates against truth'),
+        DeclareLaunchArgument('v2_params_file', default_value='',
+                              description='localization_v2 yaml (empty = the package default)'),
+        DeclareLaunchArgument(
+            'scan_dump', default_value='',
+            description='with log_csv, also save every logged scan to this .npz '
+                        'for tools/replay_localization_v2.py; empty disables. dev mode only'),
         DeclareLaunchArgument(
             'mode', default_value='dev',
             description="'race' refuses every restricted topic and forces the "

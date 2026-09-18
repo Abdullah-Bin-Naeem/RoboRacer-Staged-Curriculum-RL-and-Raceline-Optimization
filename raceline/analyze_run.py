@@ -202,6 +202,51 @@ def analyze(path, explicit_line, min_speed):
     print(f"\nlocalization: error mean {ed.mean():.3f}  p90 {pct(ed, 90):.3f}  max {ed.max():.3f} m   "
           f"cross mean {np.abs(ec).mean():.3f} m   m2o yaw std {np.nanstd(log['m2o_yaw_deg'][mov]):.2f} deg   "
           f"encoder/true distance {enc_ratio:.3f}")
+    if 'err_along' in log:
+        ea = log['err_along'][mov]
+        print(f"localization along/cross (+ = ahead / left): along mean {ea.mean():+.3f}  |p90| {pct(np.abs(ea), 90):.3f}  "
+              f"max {np.abs(ea).max():.3f} m   cross |p90| {pct(np.abs(ec), 90):.3f} m")
+
+    # ---- localization_v2, when it ran (as the localizer or as v2_shadow) ----
+    # Same truth, same decomposition, one file: err_* is the localizer that
+    # owned map->odom, v2_* is localization_v2. The per-mode split is the
+    # design's own claim under test: nothing along-track on STRAIGHT_BLIND.
+    if 'v2_err_along' in log and np.isfinite(log['v2_err_along'][mov]).any():
+        V2_MODES = ('STRAIGHT_BLIND', 'APPROACH', 'CORNER', 'TRANSIT')
+        V2_REJ = ('ok', 'matcher', 'clearance', 'no_odom', 'not_seeded', 'guard')
+        va, vc, vd = (log['v2_err_along'][mov], log['v2_err_cross'][mov], log['v2_err_dist'][mov])
+        fin = np.isfinite(va)
+        va, vc, vd = va[fin], vc[fin], vd[fin]
+        print(f"\nlocalization_v2:   error mean {vd.mean():.3f}  p90 {pct(vd, 90):.3f}  max {vd.max():.3f} m   "
+              f"along mean {va.mean():+.3f} |p90| {pct(np.abs(va), 90):.3f} max {np.abs(va).max():.3f}   "
+              f"cross |p90| {pct(np.abs(vc), 90):.3f} m")
+        if 'v2_mode' in log:
+            md = log['v2_mode'][mov][fin]
+            ea_all = log['err_along'][mov][fin] if 'err_along' in log else None
+            for i, name in enumerate(V2_MODES):
+                k = md == i
+                if k.sum() < 5:
+                    continue
+                line_ = (f"  {name:14s} n {k.sum():5d}   v2 along |p90| {pct(np.abs(va[k]), 90):.3f} mean {va[k].mean():+.3f}"
+                         f"   cross |p90| {pct(np.abs(vc[k]), 90):.3f}")
+                if ea_all is not None:
+                    line_ += f"   | owner along |p90| {pct(np.abs(ea_all[k]), 90):.3f} mean {ea_all[k].mean():+.3f}"
+                print(line_)
+            # How far each correction WALKED along-track where nothing observes
+            # along-track. The owner's is m2o; v2's is the applied step.
+            blind = np.flatnonzero(mov)[fin][md == 0]
+            if len(blind) > 5 and 'm2o_x' in log:
+                yaw = np.deg2rad(log['true_yaw_deg'])
+                dmx = np.diff(log['m2o_x']); dmy = np.diff(log['m2o_y'])
+                j = blind[blind < len(dmx)]
+                own = np.abs(dmx[j] * np.cos(yaw[j]) + dmy[j] * np.sin(yaw[j])).sum()
+                v2w = np.abs(log['v2_dx_appl'][j] * np.cos(yaw[j]) + log['v2_dy_appl'][j] * np.sin(yaw[j])).sum()
+                print(f"  along-track walk of the correction on STRAIGHT_BLIND: owner {own:.2f} m   v2 {v2w:.2f} m")
+        if 'v2_reject' in log:
+            rj = log['v2_reject'][mov][fin].astype(int)
+            counts = {V2_REJ[i]: int((rj == i).sum()) for i in range(len(V2_REJ)) if (rj == i).any()}
+            print(f"  v2 scans: {counts}   compute ms p90 {pct(log['v2_compute_ms'][mov][fin], 90):.2f}   "
+                  f"yaw_hint std {np.nanstd(log['v2_yaw_hint_deg'][mov][fin]):.2f} deg (the invariant; ~0)")
 
     # ---- tracking --------------------------------------------------------
     corner, straight = np.abs(kap) > 0.4, np.abs(kap) < 0.15

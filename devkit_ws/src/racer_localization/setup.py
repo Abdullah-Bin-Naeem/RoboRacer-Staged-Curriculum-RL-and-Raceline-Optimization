@@ -18,7 +18,8 @@ setup(
     zip_safe=True,
     maintainer='Abdullah Bin Naeem',
     maintainer_email='abdullahbinnaeempro@gmail.com',
-    description='Dead reckoning plus AMCL / slam_toolbox localization for the RoboRacer',
+    description='Dead reckoning plus AMCL / slam_toolbox / segmented scan-to-map (v2) '
+                'localization for the RoboRacer',
     license='BSD',
     entry_points={
         'console_scripts': [
@@ -26,6 +27,7 @@ setup(
             'localization_bootstrap = racer_localization.localization_bootstrap:main',
             'localization_error = racer_localization.localization_error:main',
             'log_localization = racer_localization.log_localization:main',
+            'localization_v2 = racer_localization.localization_v2:main',
         ],
     },
 )

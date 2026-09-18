@@ -73,6 +73,8 @@ first, in every workflow.
 # classical stack — bridge (TF remapped) + chassis + localizer + pure pursuit
 ros2 launch racer_bringup race.launch.py                      # AMCL
 ros2 launch racer_bringup race.launch.py localizer:=slam      # slam_toolbox
+ros2 launch racer_bringup race.launch.py localizer:=v2        # segmented scan-to-map (localization_v2)
+ros2 launch racer_bringup race.launch.py v2_shadow:=true      # AMCL owns TF, v2 logged beside it
 ros2 launch racer_bringup race.launch.py mode:=race           # nothing restricted
 ros2 launch racer_bringup race.launch.py bridge:=false lookahead_k:=0.70
 
@@ -89,7 +91,8 @@ starts `bridge` + `chassis` + the localizer named by `localizer:=` + `follower`,
 plus `instruments` and one RViz. Each is launchable alone, and each piece can be
 switched off (`bridge:=`, `chassis:=`, `localization:=`, `follower:=`).
 `localizer:=` picks `amcl` (nav2 against the track's `track_clean.pgm`), `slam`
-(slam_toolbox against its `track_sm` pose graph), or `none`.
+(slam_toolbox against its `track_sm` pose graph), `v2` (`localization_v2`,
+segmented scan-to-map against the same grid; see **Localizer v2**), or `none`.
 `track:=` picks which track's map, raceline and spawn to use; see **Tracks**.
 `mode:=race` forces every legal setting at once and omits `instruments`
 entirely; `mode:=dev` (default) keeps the development conveniences and every
@@ -178,10 +181,65 @@ the shared half of the two localizers was copy-pasted into both.
   Everything else imports from here instead of repeating literals.
 - `racer_localization/` — `dead_reckoning` (encoders + IMU → `odom→roboracer_1`,
   heading and position carried forward to each stamp, `VEHICLE_MODEL.md` §5.4),
-  `localization_bootstrap`, `localization_error`, and the two interchangeable
-  localizers. `chassis.launch.py` is the half both share; `amcl.launch.py` and
-  `slam.launch.py` contain *only* their localizer; `instruments.launch.py` holds
-  every node that reads a restricted topic, so legality is one inclusion.
+  `localization_bootstrap`, `localization_error`, and the three interchangeable
+  localizers. `chassis.launch.py` is the half they share; `amcl.launch.py`,
+  `slam.launch.py` and `v2.launch.py` contain *only* their localizer;
+  `instruments.launch.py` holds every node that reads a restricted topic, so
+  legality is one inclusion.
+
+  **Localizer v2** (`localization_v2.py`, estimator `v2_filter.py`, matcher
+  `scan_matcher.py`; only the node needs ROS). Built 2026-09-19. **Measured on
+  the car: 19 clean laps over two machines, mean 8.93 s on the race line, zero
+  contacts** — AMCL's lap time with better error and 20× smoother corrections
+  (against AMCL on identical scans: along p90 0.301 vs 0.334, cross 0.027 vs
+  0.042, worst per-sample correction step **21 mm vs 460 mm**). See
+  `raceline/FINDINGS.md` §12 for the runs and every bug found getting there.
+
+  Why it exists: AMCL's cross-track error is 1.6 cm, already the geometric
+  floor, but its along-track error is p90 0.32–0.51 m, built on the long
+  straight where the scan carries **zero** along-track information (a 0.30 m
+  offset changes the scan cost by 1.3 mm against a 5.5 mm noise floor), and it
+  jumps `map→odom` by up to 0.46 m in one sample there against a 0.09–0.13 m
+  wall margin. It also wandered `map→odom` yaw by hundreds of degrees on a
+  transform that is structurally zero (dead_reckoning carries the IMU's
+  absolute quaternion; `log_localization`'s `m2o_yaw_deg` is the invariant).
+
+  v2 solves **translation only** per scan by Gauss–Newton on the grid's signed
+  distance field, **clamps each axis of the innovation** against the filter's
+  own sigma (never drops it), fuses the 2×2 information matrix, and estimates
+  an **odometry scale-error state** — unobservable on the straight, observable
+  at every corner that pins the along axis — which it spends across the blind
+  stretch. Dead reckoning over-reads 2.0–3.4 %, worth 0.3–0.5 m over the 16 m
+  straight; the state halves the along error and is bounded at the measured
+  3.0 % because it otherwise runs to whatever bound it is given.
+
+  `tools/segment_track.py --track <t> [--bench]` computes
+  `raceline/<t>/segments.csv` from the map and benches the matcher. The table
+  is a **label**, not a controller: both of its levers (per-mode gain, per-mode
+  rate limit) were measured to be stale proxies for what the live information
+  matrix already knows, and each caused a crash before being removed. It earns
+  its place through `analyze_run.py`'s per-mode breakdown, which is how those
+  bugs were found. `blind_along_info` is the real floor.
+
+  Interfaces are AMCL-shaped (`/initialpose`, the two `Empty` services — global
+  search is a 2-D sweep at the IMU yaw — `/map` from the node), so the
+  bootstrap and reset recovery work unchanged; recovery was confirmed live.
+  It starts on the track's registered spawn as a fallback prior, as
+  slam_toolbox does: publishing `map→odom` only once seeded **deadlocks** the
+  bootstrap, whose `ready_check:=tf` waits for that transform before seeding.
+
+  `v2_shadow:=true` runs it beside AMCL without TF, `log_localization` writes
+  `v2_*` columns, and `scan_dump:=x.npz` records every scan so
+  `tools/replay_localization_v2.py x.npz [--set k=v]` re-runs the SAME filter
+  offline in seconds — tune there, not in the sim.
+  (`tools/synth_v2_dataset.py` makes a sim-free dataset.)
+
+  Traps, all found the expensive way: the matcher's information is a beam
+  count, so `beam_sigma_m` must turn it into 1/m² before it meets `P⁻¹`; a
+  fixed whole-step gate rejects a perfect match whose *unobservable* component
+  is large and takes the good component with it; and the distance transform
+  must be signed to the wall **face**, not zero at occupied cell centres.
+
 - `racer_control/` — `pure_pursuit`, `calibrate_steering`. Control only; the
   name is now true. `pure_pursuit` estimates the car's speed by running the
   sim's own tire curve on the measured wheel speed (`speed_source: tire`, a
@@ -215,7 +273,7 @@ cap, or the lift is a speed step. `encoder` / `legacy` keep the old law for A/B;
 - `racer_bringup/` — `race.launch.py`, `bridge.launch.py`, the RViz configs.
   The composition root, and the only package that depends on the others.
 
-TF tree under localization: `map →(amcl) odom →(dead_reckoning) roboracer_1
+TF tree under localization: `map →(amcl | slam | v2) odom →(dead_reckoning) roboracer_1
 →(static) lidar`. The devkit broadcasts `world→roboracer_1` from the IPS; if
 that stays on `/tf`, `roboracer_1` gets two parents and the tree breaks — hence
 the remap to `/tf_ground_truth`.

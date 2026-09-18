@@ -414,3 +414,189 @@ with `warmup_dist_m:=28` so lap 1 accelerates after the right-wall zone. That
 run also exposed a recovery bug: after two contacts the re-seed picked the
 wrong checkpoint (estimate 12 m and 27 m off) and the run never came back.
 One contact should cost 10 s, not the session.
+
+## 12. Where AMCL's error actually comes from, and localizer v2 (2026-09-19)
+
+Measured on the three logged docker runs (`runs_docker/m16.csv`, `base.csv`,
+`tb10_on_amcl.csv`; 45 Hz, slip dead reckoning, 360-beam AMCL) and on the map
+itself. Plain statements, each with the number behind it.
+
+**Cross-track is solved.** AMCL's cross-track error is 0.016 m mean, p90
+0.03-0.045. The map's geometry (raycast along the centreline, Gauss-Newton
+information of a likelihood-field fit) allows 1.5-2.2 cm: AMCL is at the floor.
+
+**Along-track is the whole problem.** Along-track p90 0.32-0.51 m, max 0.75;
++0.22..+0.34 m mean on the straight (estimate ahead), within +-0.09 everywhere
+else.
+
+CORRECTION (2026-09-19, after shadow run 1). An earlier draft of this section
+said slip dead reckoning was "exact, 1.0000 of the true distance". That was a
+botched measurement: it compared `dist_m` against ground truth, and `dist_m`
+in log_localization IS the ground-truth distance, so it was a self-comparison.
+The honest numbers are `enc/true` 1.016 and a dead-reckoned path 1.028 -- the
+odometry over-reads about 2 %, which over the 16 m blind straight is +0.3 to
++0.5 m. Dead reckoning does NOT carry that straight accurately, and no
+localizer can fix it there, because nothing observes along-track. What can be
+fixed is how the estimate BEHAVES while carrying it.
+
+**The straight is blind, for any algorithm.** Centreline s 26.7-35.9 has
+along-track information 0.0-2.6 against 370-450 cross-track: parallel walls
+and a 270 deg FOV that sees nothing fore or aft. Hairpin 1's end wall pins
+the estimate only over the last ~2 m (s 25.8 -> 24.9: 22 -> 344), not at
+lidar range. No scan matcher, no beam count, no particle count changes this.
+
+**AMCL injects the along error on that blind stretch.** Its map->odom
+correction walked 3.8 m (m16) and 10.9 m (base) cumulatively along-track
+there, in per-sample steps p90 0.07-0.10 m and max 0.14-0.19 m -- against a
+0.09-0.13 m wall margin -- on an axis the scan cannot observe. A particle
+filter cannot hold still where the sensor model has no gradient: alpha3
+spreads the cloud along the corridor and resampling picks a member. L1
+(alpha3 0.10 -> 0.25) got noisier for exactly this reason. `fit_est` runs
+1.5-2x `fit_true`: a better-fitting pose exists that the filter misses.
+
+**AMCL spends a yaw it does not have.** dead_reckoning carries the IMU's
+absolute quaternion, so map->odom yaw is structurally 0. AMCL estimated it
+anyway and wandered it 88-587 deg cumulatively per run; corr(err_yaw,
+m2o_yaw) = 0.85, and removing it takes the follower's heading error from
+0.81 to 0.43 deg std.
+
+**Localizer v2** (`localizer:=v2`, `racer_localization/localization_v2.py`):
+solve translation only, per scan, by Gauss-Newton on the grid's signed
+distance field; fuse the 2x2 information matrix in the car frame, clamped per
+axis against the filter's own sigma; rate-limit the published correction per
+segment. Segments come from `tools/segment_track.py`, computed from the map.
+
+**What shadow run 1 changed in that design** (57 s beside AMCL on identical
+scans, replayed offline in seconds with `tools/replay_localization_v2.py`):
+
+1. *The per-segment along GAIN is gone.* Forcing it to 0 on the blind straight
+   was the original rule and it is measurably worse: replayed at gain
+   0 / 0.3 / 1.0 the run gives along p90 0.429 / 0.331 / 0.316 (AMCL 0.334).
+   The information-form fuse already weights by observability -- where
+   along_info is ~0 the correction is ~0 whatever the gain says -- so the
+   hand-set gain was redundant with the matrix and only threw away the real
+   information the duct-gap beams carry. The parameter stays, defaulted to 1.0
+   everywhere. `blind_along_info` remains the floor for a truly blind scan.
+   The segment table's real job is the per-mode RATE LIMIT.
+2. *A fixed whole-step gate cannot work.* `max_step_m` 0.35 rejected matches
+   with inliers 1.00 and residual 0.007 because their ALONG component was
+   large -- the component the design was about to discard -- and killed the
+   CROSS correction with them. The error grew, so the next step was bigger, so
+   it was rejected harder: cross went 0.06 -> 0.43 m through hairpin 1 while
+   every scan fitted perfectly. Now each axis is CLAMPED against
+   `gate_sigma * sigma + gate_floor`, never dropped, so a large error slows the
+   correction and can never lock it out. 242 rejections -> 2.
+3. *The covariance needs a floor.* Independent-beam information drove the
+   posterior sigma_cross to 0.002 m, past any real map/extrinsic/timing error,
+   which made the gate above nonsense. Nothing now claims better than the cell.
+4. *"Cumulative walk" was the wrong metric* -- it penalises tracking a real
+   drift smoothly, which is correct behaviour. What threatens a 0.09-0.13 m
+   wall margin is the per-SAMPLE jump.
+
+Result on that run, offline, against AMCL on the same scans:
+
+| | v2 | AMCL |
+|---|---|---|
+| along p90 | **0.301 m** | 0.334 |
+| cross p90 | **0.027 m** | 0.042 |
+| worst per-sample correction step | **21 mm** | **460 mm** |
+| corner along p90 | **0.048 m** | 0.063 |
+
+The 20x smoothness is the point: AMCL moves the pose up to 0.46 m in one
+sample against a 0.09-0.13 m margin; v2 never exceeds 0.021 m.
+### What localizer v2 did on the car (2026-09-19)
+
+Every run below on iros2026, 43-45 Hz loop (the cap works; a `1/median(dt)`
+reading of the scan interval says 56 Hz and is wrong -- the distribution is
+bimodal, one frame and two, so the rate is scans/second).
+
+| run | localizer | line | laps | contacts |
+|---|---|---|---|---|
+| `lv_race_2` | **v2** | `b05b15w05_ell_L65_B50_v9.0` | **9 clean, 8.90-9.00, mean 8.93** | 0 |
+| `lv_slow_dist` | **v2** (2 machines) | same | **10 clean, ~8.9** | 0 |
+| `gt_dist` | ground truth | `tb10_lat875_b55_L70` | 9, 8.40-8.50, mean 8.45 | 0 |
+| `lv_L750_warm` | **v2** | `tb10_lat750_hp725_L70` | 8.65, 8.75 | 1 |
+
+So v2 matches AMCL's lap time on the proven line with **zero contacts over 19
+laps across two machines**, and it is not the limit on the faster lines.
+
+**Against AMCL on identical scans** (shadow run, replayed offline): along p90
+0.301 vs 0.334, cross p90 0.027 vs 0.042, corner along p90 0.048 vs 0.063, and
+the worst per-sample correction step **21 mm against AMCL's 460 mm**. That last
+number is the one that matters against a 0.09-0.13 m wall margin.
+
+**The odometry scale state.** Dead reckoning over-reads 2.0-3.4 % (o2b vs truth,
+six runs), which over the 16 m blind straight is 0.3-0.5 m of along error that
+no scan can see. It IS observable at every corner that pins the along axis, so
+V2Filter estimates it as a third state and spends it on the straight. Live it
+took along p90 from 0.375 to 0.235-0.265; offline across seven logs it roughly
+halves the along error. Two honest caveats: the estimator always runs to its
+bound, so it is absorbing more than scale and the bound is set from the measured
+physics (3.0 %) rather than from what minimises the metric; and it makes a short
+low-speed run slightly worse (`lv_margin_2` 0.114 -> 0.174), because there is
+no over-read to correct when the car never gets up to speed.
+
+**Where the remaining time is, and it is not the localizer.** On
+`tb10_lat750` the car ran 8.65/8.75 and then hit the tight left onto the main
+straight. Passes of that corner: 0.081, 0.089, 0.081, 0.113 m of tracking
+error -- then one pass at 0.403. Through the failing corner v2 reported
+**along error +-0.012 m, cross +-0.015 m, 100 % inliers, 9-13 mm residual**:
+the pose was right and the car still drifted from +0.05 to -0.52 m wide at
+2.5 m/s. The same corner is where `lv_L750_scale` hit too. The fix is the one
+section 11 used on this class of corner -- a lateral cap there (`--lat-zones`,
+what `bendz65` does on the line that runs 57 clean laps) -- and the whole tb10
+family lacks one. Ground truth clears it, so it is the follower plus the
+line's margin, not the estimate.
+
+**Race choice.** A contact costs 10 s, so over ten laps the proven line at
+8.93 with no contacts beats `tb10_lat750` at 8.70 with a contact every four
+laps (about 11.2 effective). Race `b05b15w05_ell_L65_B50_v9.0`.
+
+**Not yet validated:** the 19 clean laps were driven BEFORE the scale state
+existed. It is on by default now and is neutral-to-better on that line
+offline (along p90 0.298 -> 0.165), but one confirmation run on the race line
+with the current build is owed before trusting it in a race. `est_scale:=false`
+restores the validated behaviour exactly.
+
+### Bugs the offline harness caught before any simulator time
+
+Each would have read as "v2 is worse than AMCL":
+the information matrix is a beam COUNT and must be divided by the per-beam
+noise variance before it meets P^-1 (the fuse took 2 % of a correct
+correction); a cross-only measurement moved the along-track state through the
+covariance coupling (0.92 m of forbidden walk on the straight; the state
+update is now projected onto the gain subspace); the plain distance transform
+is zero at cell CENTRES, not wall faces, which pulled the estimate 1-2 cm
+toward the end wall and flattened every gradient at the solution (now a signed
+field); the segment table must be built with the node's own beam cuts; and a
+dozen beams through the middle wall's duct gap are real but ambiguous, so the
+table's blind threshold is 20 while the live guard stays at 5.
+
+### Bugs only the car caught
+
+- **A fixed whole-step gate cannot work.** `max_step_m` 0.35 rejected matches
+  with inliers 1.00 and residual 0.007 because their ALONG component was large
+  -- the component the design was about to discard -- and killed the CROSS
+  correction with them. Cross error went 0.06 -> 0.43 m through hairpin 1 while
+  every scan fitted perfectly. Each axis is now CLAMPED against
+  `gate_sigma * sigma + gate_floor`, never dropped. 242 rejections -> 2.
+- **The per-segment gains and rate limits were both stale proxies.** Forcing
+  the along gain to 0 on the blind straight is WORSE than not (along p90 0.429
+  vs 0.316): the information-form fuse already zeroes what it cannot see. And a
+  per-mode rate limit throttled the correction at hairpin 1 while the table
+  still said "blind" and the live information said otherwise -- it removed
+  0.239 m in 0.75 s, exactly the 0.30 m/s limit, saturated all the way in, and
+  the car turned in carrying 0.32 m. Both are uniform now; the segment table
+  survives as a LABEL for analyze_run's per-mode breakdown, which is how both
+  bugs were found.
+- **Publishing map->odom only once seeded deadlocks the bootstrap**, whose
+  `ready_check:=tf` waits for that transform BEFORE it sends the seed. The
+  first `localizer:=v2` run sat in "waiting for TF map -> odom" for the full
+  30 s and the car never moved. v2 now starts on the track's registered spawn
+  as a fallback prior, exactly as slam_toolbox starts on `map_start_pose`.
+- **The warmup release is a speed step if it lands where the profile is fast.**
+  `warmup_dist_m:=21` lifts the cap 5 m before a corner on the tb10 line, so
+  the car accelerates 2.0 -> 5.6 m/s into it and runs wide; the same corner is
+  passed cleanly at a HIGHER speed on every subsequent lap. `frames.py` states
+  the rule -- release where the profile is already slower than the cap -- and
+  36 m satisfies it on that line.

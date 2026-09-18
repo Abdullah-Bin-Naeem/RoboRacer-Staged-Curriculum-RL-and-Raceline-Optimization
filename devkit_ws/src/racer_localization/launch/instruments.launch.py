@@ -57,6 +57,9 @@ def generate_launch_description():
                               description='track whose grid the logger scores scans against'),
         DeclareLaunchArgument('log_rate', default_value='20.0',
                               description='CSV samples per second'),
+        DeclareLaunchArgument('scan_dump', default_value='',
+                              description='also save each logged scan to this .npz, for '
+                                          'tools/replay_localization_v2.py; empty disables'),
         DeclareLaunchArgument('wall_margin', default_value='0.089',
                               description='clearance at the tightest point of the '
                                           'line being driven; 0.367 for the centreline'),
@@ -83,6 +86,7 @@ def generate_launch_description():
                 # cast: log_rate:=50 arrives as an int and the node declares a double
                 'rate': ParameterValue(LaunchConfiguration('log_rate'), value_type=float),
                 'track': LaunchConfiguration('track'),
+                'scan_dump': LaunchConfiguration('scan_dump'),
             }],
         ),
 

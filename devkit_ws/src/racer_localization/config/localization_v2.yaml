@@ -1,0 +1,122 @@
+# localization_v2: segmented scan-to-map localizer. Every number here carries
+# the measurement that set it; read the comment before changing one.
+#
+# Frames:  map -> odom -> roboracer_1 -> lidar
+#          this node publishes map->odom as a PURE TRANSLATION (see the node
+#          docstring: dead_reckoning carries the IMU's absolute heading, and
+#          log_localization's m2o_yaw_deg is the invariant that must stay 0).
+
+localization_v2:
+  ros__parameters:
+    use_sim_time: false
+    scan_topic: /autodrive/roboracer_1/lidar
+    shadow: false                 # true: pose + status only, AMCL keeps /tf (the A/B)
+    publish_rate: 100.0
+    transform_tolerance: 0.10     # post-date like dead_reckoning (0.02) and AMCL (0.5)
+
+    # ---- matcher ------------------------------------------------------------
+    beam_stride: 3                # 1081 -> ~360 beams: the count the accepted L3
+                                  # AMCL config uses (180 -> 360 fixed hairpin-1 lag)
+    max_use_m: 9.5                # AMCL's laser_max_range: beyond, a beam's endpoint
+                                  # error (range x heading error) outgrows its information
+    sigma: 0.12                   # likelihood-field width [m]. 0.10-0.12: the map cell
+                                  # is 0.025 and fit_true (endpoint-to-wall at the true
+                                  # pose) measures 0.010-0.019 m
+    sigma_start: 0.40             # coarse-to-fine: at 0.12 a beam 0.30 m off weighs
+                                  # exp(-3.1) = 0.04 and the solve stalls (bench, 2026-09-19)
+    max_iters: 8
+    inlier_m: 0.25
+    min_inlier_frac: 0.55         # bench: perfect scans give 0.9+; a wrong minimum <0.5
+    max_resid_m: 0.16
+    max_step_m: 1.00              # GROSS bound only (solver divergence), on the observable
+                                  # axis. Plausibility is the filter's per-axis clamp below:
+                                  # at 0.35 this gate rejected perfect matches (inliers 1.00,
+                                  # residual 0.007) because their ALONG part was large, and
+                                  # took the cross correction with them -- cross error 0.06 ->
+                                  # 0.43 m through hairpin 1, shadow run 1
+    yaw_dof: false                # DIAGNOSTIC: 3-DOF solve with yaw heavily priored,
+                                  # so ~/status yaw_hint_deg can measure the invariant
+    min_clearance_m: 0.18         # corrected base centre must sit this far from a wall;
+                                  # the car is 0.27 m wide, the corridor 1.37
+
+    # ---- fusion -------------------------------------------------------------
+    # Process noise per metre of travel, in the CAR frame. Odometry error is
+    # longitudinal: measured dr/true 1.0000 over whole runs with slip dead
+    # reckoning, but the slip model is a fit (k 0.27), so along keeps a budget:
+    # 0.03 m 1-sigma after 1 m, 0.12 after the 16 m straight.
+    q_along: 0.0036               # (0.06 m)^2 per m. The MEASURED drift: dead
+                                  # reckoning over-reads ~2 % (enc/true 1.016,
+                                  # DR path 1.028 on shadow run 1), i.e. ~0.02 m
+                                  # per metre, so the along prior must be able to
+                                  # admit it. The earlier 0.0009 came from a
+                                  # botched measurement -- dist_m in
+                                  # log_localization IS ground-truth distance, so
+                                  # "dr/true = 1.0000" was a self-comparison.
+    q_cross: 0.000025             # (0.005 m)^2 per m
+    p_init: 0.09                  # (0.30 m)^2 after a seed
+
+    # Observability guard. Below this live along_info the along gain is 0
+    # whatever the segment table says. Measured with ~360 beams: the blind
+    # straight reads 0.0-2.6, corners 20-95, cross 60-165 everywhere. Scales
+    # with beam count -- halve beam_stride, double this.
+    blind_along_info: 5.0
+
+    # Per-mode gains on the information and rate limits on the PUBLISHED
+    # correction. Index order: STRAIGHT_BLIND, APPROACH, CORNER, TRANSIT.
+    #
+    # BOTH are now uniform, and that is the finding: the segment table never
+    # beat the live information matrix at deciding anything. It survives as a
+    # LABEL -- it is what gives analyze_run.py its per-mode error breakdown,
+    # which is how both of these bugs were found -- not as a controller. Keep
+    # the per-mode form for a track that genuinely needs forcing; measure first.
+    #   gain_along  ALL 1.0, measured. Forcing 0 on the blind straight was the
+            #               original rule and it is WORSE: shadow run 1 replayed at
+            #               gain 0 / 0.3 / 1.0 gives along p90 0.429 / 0.331 / 0.316
+            #               (AMCL 0.334). The information-form fuse already weights
+            #               by observability -- where along_info is ~0 the correction
+            #               is ~0 whatever the gain says -- so the hand-set gain was
+            #               redundant with the matrix and only discarded the real
+            #               information the duct-gap beams carry. blind_along_info
+            #               below is the floor that still catches a truly blind scan.
+            #               Kept as a parameter for a track that needs forcing.
+    #   rate_m_s    THE smoothness lever. UNIFORM 1.0, measured: the per-mode
+            #               split was the SECOND stale proxy in this design (after
+            #               the gains). Race run 1 crashed at hairpin 1 because the
+            #               table still said STRAIGHT_BLIND -- rate 0.30 -- where
+            #               the live along_info had already climbed 16 -> 54. The
+            #               filter had the right correction and the limiter
+            #               throttled it: it removed 0.239 m in 0.75 s, exactly
+            #               0.32 m/s, saturated the whole way into the corner, and
+            #               the car turned in carrying 0.32 m. Replayed at 1.0 the
+            #               error at turn-in is 0.016 m instead of 0.162, and the
+            #               worst per-sample step is 42 mm (AMCL 460). 2.0 is more
+            #               accurate still but steps 85 mm, past the budget.
+            #               Old per-mode values, for the record: the carried drift must be
+    #               out before the braking point but must not be a step. At
+    #               4 m/s into hairpin 1 the 3 m approach lasts 0.75 s; 0.60 m/s
+    #               removes up to 0.45 m in it. CORNER the tightest: wall margin
+    #               0.09-0.13 m there, and AMCL's per-sample steps of 0.14-0.19
+    #               were the failure. TUNE OFFLINE with replay_localization_v2.
+    gain_along: [1.0, 1.0, 1.0, 1.0]
+    gain_cross: [1.0, 1.0, 1.0, 1.0]
+    rate_m_s:   [1.00, 1.00, 1.00, 1.00]   # was [0.30, 0.60, 0.25, 0.50]
+    mode_hysteresis_m: 0.30       # travel before a table mode change is honoured
+    # Per-axis innovation clamp, in the car frame: an innovation larger than
+    # gate_sigma*sigma + gate_floor is CLAMPED, never dropped, so a big error
+    # slows the correction instead of locking it out. gate_floor is the honest
+    # error the covariance cannot see (map, extrinsic, timing).
+    gate_sigma: 4.0
+    gate_floor_m: 0.12
+    # Covariance floor, car frame. The beams-are-independent model drove the
+    # shadow run's posterior sigma_cross to 0.002 m; nothing here may claim
+    # better than the 0.025 m cell.
+    p_floor_along_m: 0.03
+    p_floor_cross_m: 0.025
+    # Per-beam endpoint noise. The matcher's information is a beam COUNT; this
+    # turns it into 1/m^2 so it can be added to P^-1. fit_true (endpoint-to-
+    # wall at the true pose) measures 0.010-0.019 m on the real runs, the cell
+    # is 0.025: 0.03. The first synthetic replay had this missing and took 2 %
+    # of a correction the matcher had right.
+    beam_sigma_m: 0.03
+    info_scale: 1.0               # extra trust multiplier on top; 1 = the field is the truth
+    status_every: 1

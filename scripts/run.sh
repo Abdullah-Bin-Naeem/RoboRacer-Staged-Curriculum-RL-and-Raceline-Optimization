@@ -4,6 +4,7 @@
 #     ./scripts/run.sh sim [--headless [BRIDGE_IP]]   the organizers' simulator
 #     ./scripts/run.sh race [NAME] [name:=value ...]  the multi-track race config (M15)
 #     ./scripts/run.sh truth [NAME] [name:=value ...] DIAGNOSTIC: steer on ground truth
+#     ./scripts/run.sh shadow [NAME] [name:=value ...] `race` with localization_v2 running beside AMCL, no TF
 #     ./scripts/run.sh racer [name:=value ...]        race.launch.py with those arguments
 #     ./scripts/run.sh shell                          bash in a racer container, nothing started
 #     ./scripts/run.sh exec                           second bash in the running racer container
@@ -33,16 +34,20 @@ IN=/root/Documents/roboracer
 # cannot drift between them. Everything here is from TEAM_IROS2026.md's race
 # config; the two callers add only what differs.
 #   AMCL_PARAMS  yaml in experiments/iros2026/params/, or an absolute path
+#   LOCALIZER    amcl (default) | v2 | slam -- which node owns map->odom
+#   SCAN_DUMP    with a NAME, also save every scan to runs/NAME.npz for
+#                tools/replay_localization_v2.py (SCAN_DUMP=1)
 #   V_MAX/ENC_WIN/HZ_CAP/RVIZ  override a single knob without editing this file
 mt_args() {
   local line="$1" name="$2"
   local params="${AMCL_PARAMS:-amcl_beams360.yaml}"
   case "$params" in */*) ;; *) params="$IN/experiments/iros2026/params/$params" ;; esac
   MT_ARGS=(
-    track:=iros2026 rviz:="${RVIZ:-false}"
+    track:=iros2026 rviz:="${RVIZ:-false}" localizer:="${LOCALIZER:-amcl}"
     tcp_nodelay:=true loop_hz_cap:="${HZ_CAP:-45}" control_hz:=45
     path_csv:="$IN/raceline/iros2026/$line"
     log_csv:="$IN/runs/${name}.csv"
+    scan_dump:="$( [ "${SCAN_DUMP:-0}" = "1" ] && echo "$IN/runs/${name}.npz" )"
     distance_source:=slip v_max:="${V_MAX:-9.0}" enc_rate_window_s:="${ENC_WIN:-0.10}"
     warmup_v_max:=2.0 warmup_dist_m:=21.0
     amcl_params_file:="$params"
@@ -150,6 +155,17 @@ case "${1:-}" in
     echo "[run.sh] amcl params: ${AMCL_PARAMS:-amcl_beams360.yaml}" >&2
     racer_run "${MT_ARGS[@]}" drive_on_truth:=true steer_a_lat_max:=8.0 "$@"
     ;;
+  shadow)
+    # The A/B nobody has to trust: the `race` config with AMCL owning map->odom
+    # and localization_v2 running beside it without TF. log_localization writes
+    # both estimates against truth (err_* is AMCL's, v2_* is v2's) and, with
+    # SCAN_DUMP=1, the scan dump that tools/replay_localization_v2.py replays.
+    shift
+    run_name "${1:-}" shadow && shift || true
+    LOCALIZER=amcl mt_args rl_mt_b05b15w05_ell_L65_B50_v9.0.csv "$RUN_NAME"
+    echo "[run.sh] shadow: localizer=amcl + localization_v2 (no TF); v2_* columns in runs/${RUN_NAME}.csv" >&2
+    racer_run "${MT_ARGS[@]}" v2_shadow:=true "$@"
+    ;;
   racer)
     shift
     [ $# -gt 0 ] || { echo "usage: $0 racer name:=value ..." >&2; exit 1; }
@@ -162,7 +178,7 @@ case "${1:-}" in
     exec docker exec -it "$NAME" bash
     ;;
   *)
-    echo "usage: $0 {sim [--headless [BRIDGE_IP]] | race [NAME] | truth [NAME] | racer name:=value ... | shell | exec}" >&2
+    echo "usage: $0 {sim [--headless [BRIDGE_IP]] | race [NAME] | truth [NAME] | shadow [NAME] | racer name:=value ... | shell | exec}" >&2
     exit 1
     ;;
 esac

@@ -1,0 +1,23 @@
+{
+  "id": "T06",
+  "name": "h70b_hz45_warm30_50laps",
+  "date": "2026-09-17",
+  "started": "2026-09-17T20:03:57",
+  "track": "iros2026",
+  "line": "raceline_tum_iqp_h7.0_a7.0b.csv",
+  "laps": 50,
+  "max_contacts": 3,
+  "hz_cap": "45",
+  "overrides": [
+    "control_hz:=45",
+    "warmup_v_max:=3.0",
+    "warmup_dist_m:=19.5"
+  ],
+  "hypothesis": "The two accepted changes together (control_hz 45 from T03, warmup 3.0 over 19.5 m from T05) pass the 50-lap gate under 10 s",
+  "prediction": "0 contacts in 50 laps; mean 9.6-9.75 (thermal drift), worst < 10.0",
+  "git_branch": "adil_iros",
+  "git_commit": "fc34cdb",
+  "git_dirty": false,
+  "verdict_short": "Out-lap clean, 1 timed lap 9.76, contact lap 2 hairpin 1: v_est +0.4-0.8 high under braking -> entered 0.9 m/s hot -> curvature cap",
+  "verdict": "Out-lap clean (warmup 3.0 holds). Timed lap 1 9.757. Lap 2, hairpin 1: through the braking zone v_est read 0.4-0.8 m/s above truth (4.83 vs 4.05, 4.50 vs 3.95), so the slip band braked too little and the car entered at 3.3-3.7 against a 2.4-3.0 target; at 2.9 m/s the curvature cap (7/v^2 = 0.83) held steering at 0.4-0.55 against kappa 1.2 and it ran 0.62 m wide; localization 2-12 cm. Then blind rehits (5 in the simulator's count). The E02 mechanism, with enc_rate_window_s 0.05 (~2 frames). Next: 0.10 (T07), which held v_est within 0.1-0.3 in E03."
+}

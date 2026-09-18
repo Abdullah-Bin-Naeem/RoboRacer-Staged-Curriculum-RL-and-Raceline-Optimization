@@ -1,0 +1,24 @@
+{
+  "id": "T14",
+  "name": "kb11c2_hp50_a50b55v85",
+  "date": "2026-09-17",
+  "started": "2026-09-17T20:23:48",
+  "track": "iros2026",
+  "line": "raceline_kb11c2_hp50_a50_b55_v85.csv",
+  "laps": 25,
+  "max_contacts": 2,
+  "hz_cap": "45",
+  "overrides": [
+    "control_hz:=45",
+    "warmup_v_max:=2.0",
+    "warmup_dist_m:=21.0",
+    "enc_rate_window_s:=0.10"
+  ],
+  "hypothesis": "The kappa-1.1 geometry (fallback E06: 0 % steering lock, clean hairpins, C2-exit margin) carries hairpins at 5.0 (apex 2.13) and takes the teammates' longitudinal budget (accel 5.0, brake 5.5, 8.5 m/s) plus control_hz 45: clean like E06 and close to 10 s",
+  "prediction": "0 contacts in 25 laps; hairpins 0 % lock, worst outward < 0.3; mean 9.95-10.1 (profile 9.77 + ~0.25)",
+  "git_branch": "adil_iros",
+  "git_commit": "a9dd33c",
+  "git_dirty": false,
+  "verdict_short": "kappa-1.1 hairpins clean; 4 timed laps 10.04-10.22; contact s 20.7 (right wall of the upper chevron lane) at 6.0 m/s, e_lat -0.13, loc 11 cm",
+  "verdict": "Hairpins held (the point of the geometry). 4 timed laps 10.04-10.22 s. Contact on lap 5 at s 20.7, (2.97, -2.91), heading +60 deg, 6.0-6.3 m/s, e_lat only -0.13 m, localization 11 cm: the line runs too close to the upper chevron's diagonal wall on the right, a spot the E-series (max 5.4 m/s there) never reached and where the teammates' line carries a 0.30 R margin zone. Next: add a right margin zone at s 18.5-22.5 to the kappa-1.1 geometry (T15)."
+}

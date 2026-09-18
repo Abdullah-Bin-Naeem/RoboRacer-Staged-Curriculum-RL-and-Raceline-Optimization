@@ -1,0 +1,6 @@
+LAPWATCH lap=0 last_lap=0.000 collisions=0
+[pure_pursuit-11] [0m[INFO] [1789593914.409123816] [pure_pursuit]: lap 0: inf s[0m
+LAPWATCH lap=1 last_lap=inf collisions=0
+[pure_pursuit-11] [0m[INFO] [1789593927.318451317] [pure_pursuit]: lap 1: 15.45 s[0m
+LAPWATCH lap=2 last_lap=10.309 collisions=0
+[pure_pursuit-11] [0m[INFO] [1789593937.632162415] [pure_pursuit]: lap 2: 10.31 s[0m

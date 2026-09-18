@@ -1,0 +1,22 @@
+{
+  "id": "E05",
+  "name": "kb11_h45_45hz_rerun",
+  "date": "2026-09-17",
+  "started": "2026-09-17T19:39:51",
+  "track": "iros2026",
+  "line": "raceline_kb11_h45_a45_b45.csv",
+  "laps": 25,
+  "max_contacts": 1,
+  "hz_cap": "45",
+  "overrides": [
+    "enc_window_s:=0.10",
+    "cmd_delay_tick_seed:=1"
+  ],
+  "hypothesis": "E04 with the simulator window visible (E04 ran minimized, delay 130 ms): the kappa 1.1 hairpins at 4.5 m/s^2 stay clean at the real 45 Hz loop",
+  "prediction": "0 contacts in 25 laps; delay 65-80 ms; C1/C4 worst outward < 0.25 m, 0-5 % at lock; median 10.3-10.6 s; watch C2 exit s 13-14 clearance",
+  "git_branch": "adil_iros",
+  "git_commit": "5edc136",
+  "git_dirty": true,
+  "verdict": "VALID; contact on lap 6 at the SAME place as E04 (s 13.7-14.5, C2 exit onto the straight), so it is the line, not the minimized window. 5 timed laps 10.38-10.44 s (std 0.024, gap to profile 0.26 s). Hairpins solved: C1/C4 worst outward 0.15/0.08 m, 0 % at lock, apex 2.00/1.95 vs 2.02 plan. At the contact: e_lat -0.14..-0.17 (right), localization 1-5 cm, heading error ~0: the line runs 0.32-0.34 m from the right-hand wall where the chevron's diagonal meets the straight wall (x 3.2, y -8.5..-9.5), so 0.14 m of drift puts the body on the duct. Delay: seeded 63 ms, the correlator then walked it to 125-143 ms (the throttle-to-wheel round trip at 45 Hz is ~6 frames, not the 3 the seed assumes). New checkpoint measured (3.730, -9.945, 2.356). Fix: --margin-zones 12.5:15.5:0.25:R -> line 0.51 m from that wall (raceline_kb11c2_h45_a45_b45.csv, profile 10.25 s).",
+  "verdict_short": "VALID: 5 laps 10.38-10.44, hairpins clean; contact C2 exit s 14 again = line 0.33 m from wall -> margin zone (E06)"
+}

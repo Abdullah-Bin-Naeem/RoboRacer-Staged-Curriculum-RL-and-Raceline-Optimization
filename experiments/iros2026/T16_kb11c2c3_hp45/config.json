@@ -1,0 +1,24 @@
+{
+  "id": "T16",
+  "name": "kb11c2c3_hp45",
+  "date": "2026-09-17",
+  "started": "2026-09-17T20:29:14",
+  "track": "iros2026",
+  "line": "raceline_kb11c2c3_hp45_a50_b55_v85.csv",
+  "laps": 25,
+  "max_contacts": 2,
+  "hz_cap": "45",
+  "overrides": [
+    "control_hz:=45",
+    "warmup_v_max:=2.0",
+    "warmup_dist_m:=21.0",
+    "enc_rate_window_s:=0.10"
+  ],
+  "hypothesis": "Hairpins at 4.5 m/s^2 (apex ~2.0), the only setting that has kept the steering off lock on this laptop (E05/E06), on the double-margin kappa-1.1 line with the teammates' longitudinal budget and control_hz 45",
+  "prediction": "0 contacts in 25 laps; hairpins 0 % lock; mean 10.15-10.35",
+  "git_branch": "adil_iros",
+  "git_commit": "ad5490c",
+  "git_dirty": true,
+  "verdict_short": "Out-lap contact at the s-40 bend (same spot as T11) at 4.6 m/s, e_lat -0.18, loc 4-13 cm: that bend has no margin zone on this geometry [CONFOUNDED: session loop decay, see T18]",
+  "verdict": "Out-lap, after the warmup release: contact at the bend before hairpin 2 ((3.7, 2.4) -> respawn (3.36, 2.10)) at 4.55-4.61 m/s, e_lat -0.17..-0.20 (right), localization 4-21 cm, steering small: the T11 spot. This geometry carries right margins at the C2 exit and the chevron lane only. Hairpins not reached at speed. Next: all three right-wall spots protected (T17)."
+}

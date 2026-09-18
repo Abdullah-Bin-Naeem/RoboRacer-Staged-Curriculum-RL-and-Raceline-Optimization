@@ -1,0 +1,41 @@
+/usr/local/lib/python3.10/dist-packages/numpy/lib/nanfunctions.py:1218: RuntimeWarning: All-NaN slice encountered
+  r, k = function_base._ureduce(a, func=_nanmedian, axis=axis, out=out,
+/usr/local/lib/python3.10/dist-packages/numpy/lib/nanfunctions.py:1584: RuntimeWarning: All-NaN slice encountered
+  result = np.apply_along_axis(_nanquantile_1d, axis, a, q,
+/usr/local/lib/python3.10/dist-packages/numpy/lib/nanfunctions.py:1218: RuntimeWarning: All-NaN slice encountered
+  r, k = function_base._ureduce(a, func=_nanmedian, axis=axis, out=out,
+/usr/local/lib/python3.10/dist-packages/numpy/lib/nanfunctions.py:1584: RuntimeWarning: All-NaN slice encountered
+  result = np.apply_along_axis(_nanquantile_1d, axis, a, q,
+
+==============================================================================
+run.csv   line: raceline_mt_kb12_z4041_hp65.csv
+==============================================================================
+1 clean laps of 1 complete   window [1.60, 2.30] s
+measured   best 1.95   median 1.95   mean 1.950 s
+profile predicts 9.71 s   integrated from the achieved speed 25.56 s
+GAP to the profile: -7.76 s per lap
+
+  follower clip  (v_plan -> v_target, lead-aligned): -2.094 s   over 38 % of the lap
+  delivery       (v_target -> v_true):               +17.984 s   <-- the controller's half
+  speed deficit vs the aligned target: median -3.042  mean -3.030 m/s   under it on 99 % of the lap
+  clip bites at s 3.6-33.9 m (plan asks up to 8.50, follower allows 5.87 m/s)
+
+section                   len   limit s   track s   deficit  slip pin
+straight 0-17 m         17.2m     0.157     1.197     -1.59       99%
+corner 17-20 m           2.8m    -0.586     0.431     -2.70      100%
+straight 21-23 m         1.8m    -0.119     0.386     -3.08      100%
+corner 23-25 m           1.8m    -0.258     0.439     -3.29      100%
+straight 25-36 m        11.1m    -0.159     5.078     -4.00      100%
+corner 36-38 m           1.6m    -0.211     1.566     -4.71      100%
+straight 38-41 m         3.0m    -0.210     4.363     -4.97      100%
+corner 41-43 m           2.6m    -0.593     4.327     -5.24       96%
+
+worst tracking sections: straight 25-36 m (+5.078 s, slip pinned 100 %), straight 38-41 m (+4.363 s, slip pinned 100 %), corner 41-43 m (+4.327 s, slip pinned 96 %)
+
+band preview: widening to the landing point would give a mean +0.003 of extra slip over 6 % of the lap
+
+wrote:
+  /root/Documents/roboracer/experiments/iros2026/T12_mt_kb12_z4041_hp65/figures/run_speed_profile.png
+  /root/Documents/roboracer/experiments/iros2026/T12_mt_kb12_z4041_hp65/figures/run_time_loss.png
+  /root/Documents/roboracer/experiments/iros2026/T12_mt_kb12_z4041_hp65/figures/run_slip_band.png
+  /root/Documents/roboracer/experiments/iros2026/T12_mt_kb12_z4041_hp65/figures/run_band_preview.png

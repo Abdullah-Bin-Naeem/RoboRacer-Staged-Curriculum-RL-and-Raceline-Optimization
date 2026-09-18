@@ -1,0 +1,25 @@
+{
+  "id": "T09",
+  "name": "h70b_steercap78",
+  "date": "2026-09-17",
+  "started": "2026-09-17T20:11:56",
+  "track": "iros2026",
+  "line": "raceline_tum_iqp_h7.0_a7.0b.csv",
+  "laps": 25,
+  "max_contacts": 2,
+  "hz_cap": "45",
+  "overrides": [
+    "control_hz:=45",
+    "warmup_v_max:=2.0",
+    "warmup_dist_m:=21.0",
+    "enc_rate_window_s:=0.10",
+    "steer_a_lat_max:=7.8"
+  ],
+  "hypothesis": "The follower's curvature cap steer_a_lat_max 7.0 equals the line's planned 7.0 m/s^2, so at the hairpin apex speed (2.4-2.5 m/s) it allows kappa 1.12-1.21 against the path's 1.20: zero steering headroom to correct any drift (T06, T08b ran 0.6 m wide at 0.64 steer). 7.8 gives ~11 % headroom",
+  "prediction": "0 contacts in 25 laps; hairpin 1/2 worst outward < 0.35 m; steering at lock stays ~0 %; mean 9.6-9.7",
+  "git_branch": "adil_iros",
+  "git_commit": "0917771",
+  "git_dirty": false,
+  "verdict_short": "REJECTED: hairpin 1 contact at plan speed with steer 0.72-0.82 (cap not binding), kappa achieved 0.65-0.95 vs 1.2: tire limit",
+  "verdict": "Rejected. Two contacts, both hairpin 1. At the timed-lap hit: speed on plan (2.26-2.44 vs 2.41), localization 7 cm, steering 0.72-0.82 (the raised cap was not binding), yet achieved curvature 0.65-0.95 against the path's 1.20 and the car ran 0.58 m wide: the tire, not the cap. Consistent with the lock analysis (kappa ~1.0 at 2.0-2.6 m/s near lock). The 7.0 m/s^2 hairpins of this line are beyond this car; T03's clean run was marginal (worst outward 0.44). Next: hairpins profiled at 6.0 on the same geometry (T10)."
+}

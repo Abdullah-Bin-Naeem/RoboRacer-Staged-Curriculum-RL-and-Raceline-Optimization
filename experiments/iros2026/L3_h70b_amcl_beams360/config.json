@@ -1,0 +1,25 @@
+{
+  "id": "L3",
+  "name": "h70b_amcl_beams360",
+  "date": "2026-09-17",
+  "started": "2026-09-17T21:35:15",
+  "track": "iros2026",
+  "line": "raceline_tum_iqp_h7.0_a7.0b.csv",
+  "laps": 25,
+  "max_contacts": 2,
+  "hz_cap": "45",
+  "overrides": [
+    "control_hz:=45",
+    "warmup_v_max:=2.0",
+    "warmup_dist_m:=21.0",
+    "enc_rate_window_s:=0.10",
+    "amcl_params_file:=/root/Documents/roboracer/experiments/iros2026/params/amcl_beams360.yaml"
+  ],
+  "hypothesis": "Hairpin-1 contacts come from along-track lag at turn-in (audit). With max_beams 180 over 270 deg only a few rays land on the end wall of the 17 m straight as it comes into range; 360 doubles the along-track evidence so AMCL pulls the estimate forward before turn-in",
+  "prediction": "hairpin-1 turn-in along error mean closer to 0 and p10 better than V1 (-0.18 / -0.30); cross p90 <= 0.05; no CPU-driven loop slowdown (delay median <= 0.11)",
+  "git_branch": "adil_iros",
+  "git_commit": "a76cc0a",
+  "git_dirty": false,
+  "verdict_short": "ACCEPTED: 20 clean laps ALL <10 s (best 9.465, mean 9.60); hp1 turn-in along -0.14/-0.33/+0.01 (V1 -0.18/-0.30/-0.08); contact lap 21 hp1 outlier along 1.02",
+  "verdict": "Accepted. AMCL max_beams 180 -> 360: 20 clean timed laps, all under 10 s, best 9.465, mean 9.603, worst 9.787, std 0.089, delay median 0.099 (no loop cost). Hairpin-1 turn-in along-track error mean -0.14, p10 -0.33, p90 +0.01 over 22 passes (V1: -0.18/-0.30/-0.08 over 9): the lag is smaller and centred. Contact on lap 21 at hairpin 1 from one outlier pass (along error 1.02 m, cut 0.27 m inside, heading error -21 deg). Next: 720 beams (L4)."
+}

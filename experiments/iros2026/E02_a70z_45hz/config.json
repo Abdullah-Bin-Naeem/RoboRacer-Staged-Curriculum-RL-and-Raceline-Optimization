@@ -1,0 +1,19 @@
+{
+  "id": "E02",
+  "name": "a70z_45hz",
+  "date": "2026-09-17",
+  "started": "2026-09-17T02:52:37",
+  "track": "iros2026",
+  "line": "raceline_tum_iqp_a7.0z.csv",
+  "laps": 25,
+  "max_contacts": 1,
+  "hz_cap": "45",
+  "overrides": [],
+  "hypothesis": "At the 45 Hz evaluation loop the round trip drops from ~210 ms to ~70 ms: no derate, less along-track localization swing into C1 (a timing error should scale with the delay), same follower constants",
+  "prediction": "loop 44-45 Hz, delay 65-80 ms, median 10.2-10.5 s, C1 along-error swing < 0.3 m; risk: lookahead floored at 0.7 scale (1.54 m) and latency_comp 0.05 now over-predicts",
+  "git_branch": "adil_iros",
+  "git_commit": "5edc136",
+  "git_dirty": true,
+  "verdict": "CONTACT on timed lap 1 at C1 (s 6.2), entered at 3.9 m/s against a 1.9-2.5 target. What 45 Hz fixed: loop ran at the cap, delay 81-87 ms (was 205-220), localization 0.02-0.29 m through the whole C1 approach (E01: 0.36-0.62 along-track), no derate. What it broke: braking. Per-message wheel-speed differentiation on ~22 ms bridge stamps is jitter-dominated (v_enc 2.8 <-> 5.4 m/s at a steady 3.9), the tire observer read 0.7-1.0 m/s HIGH through the braking zone (v_est 4.6-4.9 vs 3.9), and the slip band (brake edge v_land - 0.08*4 = -0.32 m/s under the estimate) held the wheel command at 3.9-4.2 while the target fell to 1.9. At 3.9 m/s the curvature cap (7.0/v^2 = 0.46) allowed a third of the hairpin's 1.5, steering 0.25-0.52, straight into the outer wall. Same code braked correctly at 15 Hz (E01). Fix candidate: enc_window_s (389e561), ported default 0.",
+  "verdict_short": "45 Hz fixes localization; C1 contact lap 1: encoder jitter -> v_est +0.8 high -> slip band cannot brake"
+}

@@ -1,0 +1,225 @@
+[INFO] [launch]: All log files can be found below /root/.ros/log/2026-09-17-14-53-13-582697-adil-laptop-159
+[INFO] [launch]: Default logging verbosity is set to INFO
+[INFO] [launch.user]: [race] mode=dev  localizer=amcl  instruments=ON  bootstrap=truth
+[INFO] [dead_reckoning-1]: process started with pid [185]
+[INFO] [amcl-4]: process started with pid [191]
+[INFO] [localization_bootstrap-6]: process started with pid [195]
+[INFO] [localization_error-7]: process started with pid [197]
+[INFO] [log_localization-8]: process started with pid [199]
+[INFO] [static_transform_publisher-2]: process started with pid [187]
+[INFO] [map_server-3]: process started with pid [189]
+[INFO] [lifecycle_manager-5]: process started with pid [193]
+[INFO] [static_transform_publisher-9]: process started with pid [201]
+[static_transform_publisher-2] 1789656793.703534 [0] static_tra: selected interface "lo" is not multicast-capable: disabling multicast
+[lifecycle_manager-5] 1789656793.710133 [0] lifecycle_: selected interface "lo" is not multicast-capable: disabling multicast
+[amcl-4] 1789656793.711633 [0]       amcl: selected interface "lo" is not multicast-capable: disabling multicast
+[static_transform_publisher-9] 1789656793.714470 [0] static_tra: selected interface "lo" is not multicast-capable: disabling multicast
+[static_transform_publisher-2] [INFO] [1789656793.726132389] [lidar_tf]: Spinning until stopped - publishing transform
+[static_transform_publisher-2] translation: ('0.273300', '0.000000', '0.096000')
+[static_transform_publisher-2] rotation: ('0.000000', '0.000000', '0.000000', '1.000000')
+[static_transform_publisher-2] from 'roboracer_1' to 'lidar'
+[static_transform_publisher-9] [INFO] [1789656793.727004888] [map_world_tf]: Spinning until stopped - publishing transform
+[static_transform_publisher-9] translation: ('0.000000', '0.000000', '0.000000')
+[static_transform_publisher-9] rotation: ('0.000000', '0.000000', '0.000000', '1.000000')
+[static_transform_publisher-9] from 'map' to 'world'
+[map_server-3] 1789656793.729560 [0] map_server: selected interface "lo" is not multicast-capable: disabling multicast
+[amcl-4] [0m[INFO] [1789656793.734613079] [amcl]: 
+[amcl-4] 	amcl lifecycle node launched. 
+[amcl-4] 	Waiting on external lifecycle transitions to activate
+[amcl-4] 	See https://design.ros2.org/articles/node_lifecycle.html for more information.[0m
+[amcl-4] [0m[INFO] [1789656793.735958089] [amcl]: Creating[0m
+[lifecycle_manager-5] [INFO] [1789656793.735060003] [lifecycle_manager_localization]: Creating
+[lifecycle_manager-5] [INFO] [1789656793.745127003] [lifecycle_manager_localization]: [34m[1mCreating and initializing lifecycle service clients[0m[0m
+[map_server-3] [INFO] [1789656793.750628322] [map_server]: 
+[map_server-3] 	map_server lifecycle node launched. 
+[map_server-3] 	Waiting on external lifecycle transitions to activate
+[map_server-3] 	See https://design.ros2.org/articles/node_lifecycle.html for more information.
+[map_server-3] [INFO] [1789656793.750814800] [map_server]: Creating
+[lifecycle_manager-5] [INFO] [1789656793.751992999] [lifecycle_manager_localization]: [34m[1mStarting managed nodes bringup...[0m[0m
+[lifecycle_manager-5] [INFO] [1789656793.752111791] [lifecycle_manager_localization]: [34m[1mConfiguring map_server[0m[0m
+[map_server-3] [INFO] [1789656793.768818875] [map_server]: Configuring
+[map_server-3] [INFO] [1789656793.768921617] [map_io]: Loading yaml file: /root/Documents/roboracer/devkit_ws/src/racer_mapping/maps/iros2026/track_clean.yaml
+[map_server-3] [INFO] [1789656793.769377918] [map_io]: resolution: 0.025
+[map_server-3] [INFO] [1789656793.769398066] [map_io]: origin[0]: 0.00427
+[map_server-3] [INFO] [1789656793.769408115] [map_io]: origin[1]: -16.8
+[map_server-3] [INFO] [1789656793.769416380] [map_io]: origin[2]: 0
+[map_server-3] [INFO] [1789656793.769424996] [map_io]: free_thresh: 0.25
+[map_server-3] [INFO] [1789656793.769433252] [map_io]: occupied_thresh: 0.65
+[map_server-3] [INFO] [1789656793.769442068] [map_io]: mode: trinary
+[map_server-3] [INFO] [1789656793.769451315] [map_io]: negate: 0
+[map_server-3] [INFO] [1789656793.769851222] [map_io]: Loading image_file: /root/Documents/roboracer/devkit_ws/src/racer_mapping/maps/iros2026/track_clean.pgm
+[map_server-3] [INFO] [1789656793.867655896] [map_io]: Read map /root/Documents/roboracer/devkit_ws/src/racer_mapping/maps/iros2026/track_clean.pgm: 241 X 901 map @ 0.025 m/cell
+[amcl-4] [0m[INFO] [1789656793.886927267] [amcl]: Configuring[0m
+[amcl-4] [0m[INFO] [1789656793.887109868] [amcl]: initTransforms[0m
+[lifecycle_manager-5] [INFO] [1789656793.886508655] [lifecycle_manager_localization]: [34m[1mConfiguring amcl[0m[0m
+[amcl-4] [0m[INFO] [1789656793.912672461] [amcl]: initPubSub[0m
+[amcl-4] [0m[INFO] [1789656793.926516010] [amcl]: Subscribed to map topic.[0m
+[lifecycle_manager-5] [INFO] [1789656793.947528330] [lifecycle_manager_localization]: [34m[1mActivating map_server[0m[0m
+[map_server-3] [INFO] [1789656793.949247158] [map_server]: Activating
+[map_server-3] [INFO] [1789656793.950132942] [map_server]: Creating bond (map_server) to lifecycle manager.
+[amcl-4] [0m[INFO] [1789656793.952304134] [amcl]: Received a 241 X 901 map @ 0.025 m/pix[0m
+[lifecycle_manager-5] [INFO] [1789656794.059070206] [lifecycle_manager_localization]: Server map_server connected with bond.
+[lifecycle_manager-5] [INFO] [1789656794.059154884] [lifecycle_manager_localization]: [34m[1mActivating amcl[0m[0m
+[amcl-4] [0m[INFO] [1789656794.059489178] [amcl]: Activating[0m
+[amcl-4] [0m[INFO] [1789656794.059585858] [amcl]: initialPoseReceived[0m
+[amcl-4] [0m[INFO] [1789656794.059756356] [amcl]: Setting pose (1789656794.059756): 0.818 3.158 -1.571[0m
+[amcl-4] [0m[INFO] [1789656794.063889531] [amcl]: Creating bond (amcl) to lifecycle manager.[0m
+[lifecycle_manager-5] [INFO] [1789656794.167758725] [lifecycle_manager_localization]: Server amcl connected with bond.
+[lifecycle_manager-5] [INFO] [1789656794.167839696] [lifecycle_manager_localization]: [34m[1mManaged nodes are active[0m[0m
+[lifecycle_manager-5] [INFO] [1789656794.167865845] [lifecycle_manager_localization]: [34m[1mCreating bond timer...[0m[0m
+[localization_error-7] 1789656794.291195 [0] localizati: selected interface "lo" is not multicast-capable: disabling multicast
+[dead_reckoning-1] 1789656794.292356 [0] dead_recko: selected interface "lo" is not multicast-capable: disabling multicast
+[localization_bootstrap-6] 1789656794.292518 [0] localizati: selected interface "lo" is not multicast-capable: disabling multicast
+[log_localization-8] 1789656794.406169 [0] log_locali: selected interface "lo" is not multicast-capable: disabling multicast
+[localization_error-7] [31m[ERROR] [1789656794.428316382] [localization_error]: RESTRICTED TOPIC: reading /autodrive/roboracer_1/odom (simulator ground-truth pose and twist) -- continuous comparison against TF map -> roboracer_1. This run is NOT race-legal; any lap time from it is a development number. See racer_common/restricted.py.[0m
+[dead_reckoning-1] [0m[INFO] [1789656794.429330144] [dead_reckoning]: dead reckoning: odom -> roboracer_1, wheel r=0.0581 m, scale=1.0, 200 Hz, tf +20 ms, extrapolate yaw=True pos=True[0m
+[localization_error-7] [0m[INFO] [1789656794.429964198] [localization_error]: sampling starts 1.0 s after /localization_ready; bootstrap is excluded (require_ready:=false to include it)[0m
+[localization_error-7] [0m[INFO] [1789656794.432173682] [localization_error]: waiting for TF map -> roboracer_1: "map" passed to lookupTransform argument target_frame does not exist. [0m
+[amcl-4] [0m[INFO] [1789656794.446563210] [amcl]: Message Filter dropping message: frame 'lidar' at time 1789656793.914 for reason 'the timestamp on the message is earlier than all the data in the transform cache'[0m
+[localization_bootstrap-6] [0m[INFO] [1789656794.453026725] [localization_bootstrap]: centreline runs against the lap; arc length reversed for checkpoint ordering[0m
+[amcl-4] [0m[INFO] [1789656794.468388558] [amcl]: createLaserObject[0m
+[localization_bootstrap-6] [0m[INFO] [1789656794.477711940] [localization_bootstrap]: WARMUP SEED: reading /autodrive/roboracer_1/ips (simulator ground-truth position) ONCE -- initial pose seed. Legal: the first lap is warmup, this is read before the car moves, and it is released immediately after. Nothing reads ground truth afterwards.[0m
+[localization_bootstrap-6] [0m[INFO] [1789656794.478803277] [localization_bootstrap]: mode=truth: seeding the initial pose from /ips + /imu before the car moves, then releasing /ips. Tracking is lidar + map + dead reckoning from there on.[0m
+[localization_bootstrap-6] [0m[INFO] [1789656794.479884646] [localization_bootstrap]: waiting for amcl to reach the active state before sending anything[0m
+[localization_bootstrap-6] [0m[INFO] [1789656794.532278771] [localization_bootstrap]: amcl is ACTIVE -- an initial pose will now be accepted[0m
+[localization_bootstrap-6] [0m[INFO] [1789656794.581617432] [localization_bootstrap]: seed 1/5: x=+0.800 y=+3.158 yaw=-90.0 deg -- awaiting confirmation[0m
+[localization_bootstrap-6] [0m[INFO] [1789656794.582954578] [localization_bootstrap]: MEASURED SPAWN x=+0.800 y=+3.158 yaw=-90.0 deg -- within 2 cm of racer_common.frames.SPAWN_*, so the fallback is sound too. Nothing to change.[0m
+[log_localization-8] [31m[ERROR] [1789656794.587611961] [log_localization]: RESTRICTED TOPIC: reading /autodrive/roboracer_1/ips (simulator ground-truth position) -- continuous logging against the estimate. This run is NOT race-legal; any lap time from it is a development number. See racer_common/restricted.py.[0m
+[log_localization-8] [31m[ERROR] [1789656794.588936443] [log_localization]: RESTRICTED TOPIC: reading /autodrive/roboracer_1/odom (simulator ground-truth pose and twist) -- continuous logging against the estimate. This run is NOT race-legal; any lap time from it is a development number. See racer_common/restricted.py.[0m
+[log_localization-8] [0m[INFO] [1789656794.590354460] [log_localization]: logging to /root/Documents/roboracer/experiments/iros2026/T03_h70b_ctrlhz45/run.csv at 20 Hz until Ctrl-C[0m
+[log_localization-8] [0m[INFO] [1789656794.640620042] [log_localization]: waiting for TF map -> roboracer_1 ...[0m
+[amcl-4] [0m[INFO] [1789656794.716556980] [amcl]: initialPoseReceived[0m
+[amcl-4] [0m[INFO] [1789656794.716773835] [amcl]: Setting pose (1789656794.716774): 0.800 3.158 -1.571[0m
+[amcl-4] [0m[INFO] [1789656794.721129986] [amcl]: Requesting no-motion update[0m
+[amcl-4] [0m[INFO] [1789656795.030831110] [amcl]: Requesting no-motion update[0m
+[amcl-4] [0m[INFO] [1789656795.480576681] [amcl]: Requesting no-motion update[0m
+[pure_pursuit] launch overrides: {'v_max': 8.5, 'warmup_v_max': 4.0, 'warmup_dist_m': 19.0, 'target_lead_s': 0.0, 'slip_circle': 0.12, 'accel_ff': 1.0, 'control_hz': 45.0}
+[INFO] [pure_pursuit-10]: process started with pid [347]
+[amcl-4] [0m[INFO] [1789656795.882357654] [amcl]: Requesting no-motion update[0m
+[pure_pursuit-10] 1789656796.120707 [0] pure_pursu: selected interface "lo" is not multicast-capable: disabling multicast
+[pure_pursuit-10] [0m[INFO] [1789656796.307679487] [pure_pursuit]: path: 435 points, 43.41 m lap, from /root/Documents/roboracer/raceline/iros2026/raceline_tum_iqp_h7.0_a7.0b.csv[0m
+[pure_pursuit-10] [0m[INFO] [1789656796.314281139] [pure_pursuit]: pose from TF map -> roboracer_1 (continuous); /amcl_pose kept as a fallback[0m
+[pure_pursuit-10] [0m[INFO] [1789656796.315979299] [pure_pursuit]: steering on /amcl_pose[0m
+[pure_pursuit-10] [0m[INFO] [1789656796.316737084] [pure_pursuit]: warmup cap: speed target held at 4.00 m/s for the first 19.0 m of driving, then released[0m
+[pure_pursuit-10] [0m[INFO] [1789656796.321214451] [pure_pursuit]: speed_source=tire  throttle_mode=slip  slip band [-0.08, +0.08]  u_launch 0.4 m/s  lookahead 0.8-2.2 m (k 0.55)  latency_comp 0.05 s[0m
+[pure_pursuit-10] [0m[INFO] [1789656796.322329442] [pure_pursuit]: slip band: circle 0.12 x sqrt(1 - (a_lat/7)^2), replacing the fixed band above  |  plan-acceleration feedforward ON[0m
+[pure_pursuit-10] [33m[WARN] [1789656796.323526867] [pure_pursuit]: dev_lap_telemetry ON: subscribing to RESTRICTED lap topics[0m
+[pure_pursuit-10] [0m[INFO] [1789656796.326375273] [pure_pursuit]: holding until /localization_ready[0m
+[amcl-4] [0m[INFO] [1789656796.330542822] [amcl]: Requesting no-motion update[0m
+[pure_pursuit-10] [0m[INFO] [1789656796.352301175] [pure_pursuit]: lap 0: inf s[0m
+[localization_bootstrap-6] [0m[INFO] [1789656796.481650178] [localization_bootstrap]: seed 1/5 sent, awaiting a fresh /amcl_pose to confirm it[0m
+[localization_bootstrap-6] [0m[INFO] [1789656796.633471816] [localization_bootstrap]: localization_bootstrap: released /autodrive/roboracer_1/ips -- no restricted topic is read from here on; the timed laps are clean.[0m
+[localization_error-7] [0m[INFO] [1789656796.634929096] [localization_error]: /localization_ready latched -- sampling opens in 1.0 s (34 bootstrap samples discarded)[0m
+[pure_pursuit-10] [0m[INFO] [1789656796.635147684] [pure_pursuit]: localization converged, taking over[0m
+[localization_bootstrap-6] [0m[INFO] [1789656796.635351715] [localization_bootstrap]: seed CONFIRMED on attempt 1: the estimate is 1.7 cm / 0.2 deg from truth (pos std 0.051 m). Tracking is now lidar + map + dead reckoning only.[0m
+[localization_bootstrap-6] [0m[INFO] [1789656796.636279116] [localization_bootstrap]: /localization_ready = true, follower may take over[0m
+[localization_bootstrap-6] [0m[INFO] [1789656796.637403595] [localization_bootstrap]: recovery armed: watching encoders + IMU for a reset; 15 checkpoint(s) known for this track[0m
+[localization_error-7] [0m[INFO] [1789656799.360453661] [localization_error]: now[ 35] 0.403 m / 0.48 deg  |  session[n=35] mean 0.403 p95 0.558 max 0.598 m, heading mean 0.48 max 1.63 deg[0m
+[log_localization-8] [0m[INFO] [1789656799.692117630] [log_localization]:    5.0 s    10.4 m  err 0.025 m (along +0.023 cross +0.008) yaw  -0.13 deg  m->o yaw  -0.14 deg | fit true 0.012 est 0.012 (x0.98)  enc/true 1.035  dr_err 0.36 m[0m
+[pure_pursuit-10] [0m[INFO] [1789656802.424191369] [pure_pursuit]: warmup cap released after 19.0 m; v_max back to 8.50 m/s[0m
+[localization_error-7] [0m[INFO] [1789656804.361139257] [localization_error]: now[135] 0.257 m / 1.18 deg  |  session[n=135] mean 0.257 p95 0.478 max 0.598 m, heading mean 1.18 max 5.15 deg[0m
+[log_localization-8] [0m[INFO] [1789656804.691451713] [log_localization]:   10.0 s    28.6 m  err 0.098 m (along +0.097 cross -0.016) yaw  -0.16 deg  m->o yaw  +0.58 deg | fit true 0.011 est 0.020 (x1.78)  enc/true 1.026  dr_err 0.07 m[0m
+[pure_pursuit-10] [0m[INFO] [1789656807.991757260] [pure_pursuit]: lap 1: 17.60 s[0m
+[localization_error-7] [0m[INFO] [1789656809.359371203] [localization_error]: now[200] 0.232 m / 1.57 deg  |  session[n=235] mean 0.257 p95 0.545 max 0.714 m, heading mean 1.41 max 5.68 deg[0m
+[log_localization-8] [0m[INFO] [1789656809.690791617] [log_localization]:   14.9 s    51.6 m  err 0.203 m (along +0.202 cross +0.026) yaw  +1.14 deg  m->o yaw  +1.13 deg | fit true 0.012 est 0.020 (x1.64)  enc/true 1.028  dr_err 0.72 m[0m
+[localization_error-7] [0m[INFO] [1789656814.360444193] [localization_error]: now[200] 0.282 m / 1.65 deg  |  session[n=335] mean 0.272 p95 0.609 max 0.820 m, heading mean 1.46 max 5.68 deg[0m
+[log_localization-8] [0m[INFO] [1789656814.690880390] [log_localization]:   19.9 s    74.6 m  err 0.155 m (along +0.154 cross +0.021) yaw  +2.01 deg  m->o yaw  +1.94 deg | fit true 0.010 est 0.027 (x2.65)  enc/true 1.023  dr_err 0.11 m[0m
+[pure_pursuit-10] [0m[INFO] [1789656817.574580303] [pure_pursuit]: lap 2: 9.57 s[0m
+[localization_error-7] [0m[INFO] [1789656819.359139384] [localization_error]: now[200] 0.293 m / 1.56 deg  |  session[n=435] mean 0.274 p95 0.614 max 0.828 m, heading mean 1.48 max 6.13 deg[0m
+[log_localization-8] [0m[INFO] [1789656819.693497571] [log_localization]:   25.0 s    98.0 m  err 0.506 m (along +0.505 cross +0.022) yaw  -0.50 deg  m->o yaw  -0.62 deg | fit true 0.011 est 0.015 (x1.39)  enc/true 1.025  dr_err 0.86 m[0m
+[localization_error-7] [0m[INFO] [1789656824.359253003] [localization_error]: now[200] 0.299 m / 1.55 deg  |  session[n=535] mean 0.282 p95 0.679 max 0.925 m, heading mean 1.49 max 6.13 deg[0m
+[log_localization-8] [0m[INFO] [1789656824.692809504] [log_localization]:   30.0 s   120.3 m  err 0.069 m (along -0.068 cross -0.012) yaw  -0.08 deg  m->o yaw  +0.25 deg | fit true 0.021 est 0.017 (x0.80)  enc/true 1.022  dr_err 0.12 m[0m
+[pure_pursuit-10] [0m[INFO] [1789656827.192979669] [pure_pursuit]: lap 3: 9.63 s[0m
+[localization_error-7] [0m[INFO] [1789656829.359190032] [localization_error]: now[200] 0.335 m / 1.48 deg  |  session[n=635] mean 0.293 p95 0.739 max 1.050 m, heading mean 1.48 max 6.13 deg[0m
+[log_localization-8] [0m[INFO] [1789656829.690802564] [log_localization]:   34.9 s   145.1 m  err 0.543 m (along +0.543 cross -0.004) yaw  -0.23 deg  m->o yaw  -0.34 deg | fit true 0.005 est 0.010 (x2.10)  enc/true 1.021  dr_err 0.69 m[0m
+[localization_error-7] [0m[INFO] [1789656834.358843922] [localization_error]: now[200] 0.341 m / 1.60 deg  |  session[n=735] mean 0.298 p95 0.738 max 1.050 m, heading mean 1.52 max 6.13 deg[0m
+[log_localization-8] [0m[INFO] [1789656834.690689429] [log_localization]:   39.9 s   166.1 m  err 0.133 m (along -0.132 cross +0.016) yaw  -0.30 deg  m->o yaw  +0.20 deg | fit true 0.003 est 0.029 (x11.64)  enc/true 1.020  dr_err 0.25 m[0m
+[pure_pursuit-10] [0m[INFO] [1789656836.823569430] [pure_pursuit]: lap 4: 9.62 s[0m
+[localization_error-7] [0m[INFO] [1789656839.359142476] [localization_error]: now[200] 0.340 m / 1.51 deg  |  session[n=835] mean 0.304 p95 0.750 max 1.050 m, heading mean 1.49 max 6.13 deg[0m
+[log_localization-8] [0m[INFO] [1789656839.691272845] [log_localization]:   44.9 s   190.7 m  err 0.009 m (along -0.007 cross -0.006) yaw  +0.42 deg  m->o yaw  +0.47 deg | fit true 0.002 est 0.004 (x1.69)  enc/true 1.020  dr_err 0.62 m[0m
+[localization_error-7] [0m[INFO] [1789656844.359352254] [localization_error]: now[200] 0.302 m / 1.48 deg  |  session[n=935] mean 0.299 p95 0.741 max 1.050 m, heading mean 1.51 max 6.13 deg[0m
+[log_localization-8] [0m[INFO] [1789656844.693395814] [log_localization]:   50.0 s   211.2 m  err 0.056 m (along -0.047 cross +0.031) yaw  -1.70 deg  m->o yaw  -2.02 deg | fit true 0.013 est 0.039 (x2.96)  enc/true 1.020  dr_err 0.38 m[0m
+[pure_pursuit-10] [0m[INFO] [1789656846.443974790] [pure_pursuit]: lap 5: 9.61 s[0m
+[localization_error-7] [0m[INFO] [1789656849.359076426] [localization_error]: now[200] 0.301 m / 1.56 deg  |  session[n=1035] mean 0.303 p95 0.741 max 1.050 m, heading mean 1.50 max 6.70 deg[0m
+[log_localization-8] [0m[INFO] [1789656849.692464823] [log_localization]:   54.9 s   235.9 m  err 0.193 m (along -0.177 cross +0.076) yaw  +0.18 deg  m->o yaw  +0.16 deg | fit true 0.019 est 0.049 (x2.55)  enc/true 1.020  dr_err 0.64 m[0m
+[localization_error-7] [0m[INFO] [1789656854.360362963] [localization_error]: now[200] 0.291 m / 1.75 deg  |  session[n=1135] mean 0.297 p95 0.739 max 1.050 m, heading mean 1.56 max 6.70 deg[0m
+[log_localization-8] [0m[INFO] [1789656854.691224745] [log_localization]:   59.9 s   256.5 m  err 0.088 m (along +0.086 cross +0.017) yaw  -0.40 deg  m->o yaw  -0.38 deg | fit true 0.006 est 0.007 (x1.26)  enc/true 1.020  dr_err 0.52 m[0m
+[pure_pursuit-10] [0m[INFO] [1789656855.976247449] [pure_pursuit]: lap 6: 9.54 s[0m
+[localization_error-7] [0m[INFO] [1789656859.358941718] [localization_error]: now[200] 0.302 m / 1.64 deg  |  session[n=1235] mean 0.303 p95 0.741 max 1.050 m, heading mean 1.52 max 6.70 deg[0m
+[log_localization-8] [0m[INFO] [1789656859.691166273] [log_localization]:   64.9 s   280.4 m  err 0.034 m (along +0.005 cross +0.033) yaw  -1.31 deg  m->o yaw  -1.48 deg | fit true 0.010 est 0.004 (x0.38)  enc/true 1.020  dr_err 0.70 m[0m
+[localization_error-7] [0m[INFO] [1789656864.360776849] [localization_error]: now[200] 0.302 m / 1.51 deg  |  session[n=1335] mean 0.298 p95 0.739 max 1.050 m, heading mean 1.55 max 6.70 deg[0m
+[log_localization-8] [0m[INFO] [1789656864.691364719] [log_localization]:   69.9 s   301.9 m  err 0.026 m (along -0.025 cross -0.007) yaw  -0.13 deg  m->o yaw  -0.36 deg | fit true 0.015 est 0.009 (x0.58)  enc/true 1.020  dr_err 0.64 m[0m
+[pure_pursuit-10] [0m[INFO] [1789656865.549947564] [pure_pursuit]: lap 7: 9.58 s[0m
+[localization_error-7] [0m[INFO] [1789656869.360186504] [localization_error]: now[200] 0.287 m / 1.58 deg  |  session[n=1435] mean 0.301 p95 0.742 max 1.050 m, heading mean 1.53 max 6.70 deg[0m
+[log_localization-8] [0m[INFO] [1789656869.692658781] [log_localization]:   75.0 s   325.3 m  err 0.117 m (along +0.117 cross -0.000) yaw  +0.28 deg  m->o yaw  -0.44 deg | fit true 0.005 est 0.016 (x3.46)  enc/true 1.020  dr_err 0.63 m[0m
+[localization_error-7] [0m[INFO] [1789656874.360192632] [localization_error]: now[200] 0.292 m / 1.46 deg  |  session[n=1535] mean 0.297 p95 0.740 max 1.050 m, heading mean 1.54 max 6.70 deg[0m
+[log_localization-8] [0m[INFO] [1789656874.690769251] [log_localization]:   79.9 s   347.0 m  err 0.096 m (along -0.085 cross +0.044) yaw  -1.64 deg  m->o yaw  -1.67 deg | fit true 0.012 est 0.043 (x3.43)  enc/true 1.019  dr_err 0.67 m[0m
+[pure_pursuit-10] [0m[INFO] [1789656875.131695490] [pure_pursuit]: lap 8: 9.58 s[0m
+[localization_error-7] [0m[INFO] [1789656879.360595871] [localization_error]: now[200] 0.320 m / 1.60 deg  |  session[n=1635] mean 0.303 p95 0.755 max 1.093 m, heading mean 1.54 max 7.64 deg[0m
+[log_localization-8] [0m[INFO] [1789656879.692514104] [log_localization]:   84.9 s   370.4 m  err 0.064 m (along +0.062 cross -0.019) yaw  -0.67 deg  m->o yaw  -0.66 deg | fit true 0.002 est 0.012 (x5.90)  enc/true 1.020  dr_err 0.67 m[0m
+[localization_error-7] [0m[INFO] [1789656884.359083434] [localization_error]: now[200] 0.309 m / 1.71 deg  |  session[n=1735] mean 0.299 p95 0.749 max 1.093 m, heading mean 1.56 max 7.64 deg[0m
+[pure_pursuit-10] [0m[INFO] [1789656884.625010013] [pure_pursuit]: lap 9: 9.50 s[0m
+[log_localization-8] [0m[INFO] [1789656884.692013166] [log_localization]:   89.9 s   391.4 m  err 0.062 m (along +0.055 cross +0.029) yaw  -2.57 deg  m->o yaw  -2.58 deg | fit true 0.013 est 0.050 (x3.87)  enc/true 1.020  dr_err 0.90 m[0m
+[localization_error-7] [0m[INFO] [1789656889.361183561] [localization_error]: now[200] 0.289 m / 1.66 deg  |  session[n=1835] mean 0.302 p95 0.748 max 1.093 m, heading mean 1.55 max 7.64 deg[0m
+[log_localization-8] [0m[INFO] [1789656889.692297052] [log_localization]:   94.9 s   415.9 m  err 0.073 m (along -0.073 cross +0.009) yaw  +0.12 deg  m->o yaw  +0.42 deg | fit true 0.005 est 0.033 (x6.07)  enc/true 1.020  dr_err 0.83 m[0m
+[pure_pursuit-10] [0m[INFO] [1789656894.263470083] [pure_pursuit]: lap 10: 9.62 s[0m
+[localization_error-7] [0m[INFO] [1789656894.359758948] [localization_error]: now[200] 0.282 m / 1.70 deg  |  session[n=1935] mean 0.297 p95 0.741 max 1.093 m, heading mean 1.57 max 7.64 deg[0m
+[log_localization-8] [0m[INFO] [1789656894.690905962] [log_localization]:   99.9 s   436.5 m  err 0.139 m (along +0.139 cross +0.004) yaw  +0.45 deg  m->o yaw  +0.36 deg | fit true 0.022 est 0.012 (x0.57)  enc/true 1.020  dr_err 1.06 m[0m
+[localization_error-7] [0m[INFO] [1789656899.360307248] [localization_error]: now[200] 0.314 m / 1.52 deg  |  session[n=2035] mean 0.303 p95 0.756 max 1.093 m, heading mean 1.55 max 7.64 deg[0m
+[log_localization-8] [0m[INFO] [1789656899.691956679] [log_localization]:  105.0 s   460.8 m  err 0.018 m (along +0.010 cross +0.015) yaw  -0.62 deg  m->o yaw  -0.99 deg | fit true 0.017 est 0.018 (x1.09)  enc/true 1.020  dr_err 0.94 m[0m
+[pure_pursuit-10] [0m[INFO] [1789656903.777881523] [pure_pursuit]: lap 11: 9.54 s[0m
+[localization_error-7] [0m[INFO] [1789656904.359593252] [localization_error]: now[200] 0.310 m / 1.46 deg  |  session[n=2135] mean 0.298 p95 0.751 max 1.093 m, heading mean 1.56 max 7.64 deg[0m
+[log_localization-8] [0m[INFO] [1789656904.692907320] [log_localization]:  110.0 s   482.3 m  err 0.295 m (along +0.295 cross -0.008) yaw  +0.75 deg  m->o yaw  +0.72 deg | fit true 0.012 est 0.006 (x0.47)  enc/true 1.020  dr_err 1.24 m[0m
+[localization_error-7] [0m[INFO] [1789656909.359254486] [localization_error]: now[200] 0.294 m / 1.63 deg  |  session[n=2235] mean 0.302 p95 0.757 max 1.093 m, heading mean 1.56 max 7.64 deg[0m
+[log_localization-8] [0m[INFO] [1789656909.693169276] [log_localization]:  115.0 s   506.2 m  err 0.114 m (along +0.113 cross +0.013) yaw  -1.00 deg  m->o yaw  -1.08 deg | fit true 0.012 est 0.023 (x1.95)  enc/true 1.020  dr_err 1.09 m[0m
+[pure_pursuit-10] [0m[INFO] [1789656913.464501666] [pure_pursuit]: lap 12: 9.67 s[0m
+[localization_error-7] [0m[INFO] [1789656914.359259422] [localization_error]: now[200] 0.311 m / 1.59 deg  |  session[n=2335] mean 0.299 p95 0.752 max 1.093 m, heading mean 1.56 max 7.64 deg[0m
+[log_localization-8] [0m[INFO] [1789656914.692218979] [log_localization]:  119.9 s   528.2 m  err 0.484 m (along +0.483 cross +0.029) yaw  +0.58 deg  m->o yaw  +0.58 deg | fit true 0.013 est 0.008 (x0.66)  enc/true 1.020  dr_err 1.37 m[0m
+[localization_error-7] [0m[INFO] [1789656919.359089111] [localization_error]: now[200] 0.344 m / 1.60 deg  |  session[n=2435] mean 0.306 p95 0.773 max 1.093 m, heading mean 1.56 max 7.64 deg[0m
+[log_localization-8] [0m[INFO] [1789656919.690718685] [log_localization]:  124.9 s   551.8 m  err 0.086 m (along +0.080 cross -0.030) yaw  -0.40 deg  m->o yaw  -0.42 deg | fit true 0.009 est 0.008 (x0.88)  enc/true 1.020  dr_err 1.19 m[0m
+[pure_pursuit-10] [0m[INFO] [1789656922.997687800] [pure_pursuit]: lap 13: 9.56 s[0m
+[localization_error-7] [0m[INFO] [1789656924.361835283] [localization_error]: now[200] 0.362 m / 1.51 deg  |  session[n=2535] mean 0.304 p95 0.770 max 1.093 m, heading mean 1.56 max 7.64 deg[0m
+[log_localization-8] [0m[INFO] [1789656924.692643484] [log_localization]:  130.0 s   574.8 m  err 0.485 m (along +0.483 cross +0.037) yaw  +1.30 deg  m->o yaw  +1.31 deg | fit true 0.013 est 0.023 (x1.86)  enc/true 1.020  dr_err 1.55 m[0m
+[localization_error-7] [0m[INFO] [1789656929.361595432] [localization_error]: now[200] 0.326 m / 1.66 deg  |  session[n=2635] mean 0.307 p95 0.778 max 1.093 m, heading mean 1.57 max 7.64 deg[0m
+[log_localization-8] [0m[INFO] [1789656929.691567622] [log_localization]:  135.0 s   597.6 m  err 0.201 m (along +0.201 cross -0.001) yaw  +1.17 deg  m->o yaw  +1.27 deg | fit true 0.005 est 0.029 (x5.75)  enc/true 1.020  dr_err 1.26 m[0m
+[pure_pursuit-10] [0m[INFO] [1789656932.638807374] [pure_pursuit]: lap 14: 9.64 s[0m
+[localization_error-7] [0m[INFO] [1789656934.360962086] [localization_error]: now[200] 0.338 m / 1.51 deg  |  session[n=2735] mean 0.307 p95 0.773 max 1.093 m, heading mean 1.56 max 7.64 deg[0m
+[log_localization-8] [0m[INFO] [1789656934.691747084] [log_localization]:  140.0 s   621.7 m  err 0.046 m (along -0.045 cross +0.008) yaw  -0.36 deg  m->o yaw  -0.35 deg | fit true 0.012 est 0.012 (x1.08)  enc/true 1.020  dr_err 1.73 m[0m
+[localization_error-7] [0m[INFO] [1789656939.360613151] [localization_error]: now[200] 0.299 m / 1.56 deg  |  session[n=2835] mean 0.306 p95 0.771 max 1.093 m, heading mean 1.57 max 7.64 deg[0m
+[log_localization-8] [0m[INFO] [1789656939.690726075] [log_localization]:  144.9 s   644.2 m  err 0.026 m (along -0.015 cross +0.022) yaw  +0.77 deg  m->o yaw  +0.70 deg | fit true 0.007 est 0.014 (x1.86)  enc/true 1.020  dr_err 1.34 m[0m
+[pure_pursuit-10] [0m[INFO] [1789656942.257748311] [pure_pursuit]: lap 15: 9.62 s[0m
+[localization_error-7] [0m[INFO] [1789656944.360171584] [localization_error]: now[200] 0.318 m / 1.58 deg  |  session[n=2935] mean 0.307 p95 0.771 max 1.093 m, heading mean 1.56 max 7.64 deg[0m
+[log_localization-8] [0m[INFO] [1789656944.692852250] [log_localization]:  150.0 s   669.0 m  err 0.103 m (along +0.102 cross -0.011) yaw  -0.75 deg  m->o yaw  +0.09 deg | fit true 0.005 est 0.023 (x4.56)  enc/true 1.020  dr_err 1.74 m[0m
+[localization_error-7] [0m[INFO] [1789656949.361434698] [localization_error]: now[200] 0.298 m / 1.50 deg  |  session[n=3035] mean 0.306 p95 0.770 max 1.093 m, heading mean 1.56 max 7.64 deg[0m
+[log_localization-8] [0m[INFO] [1789656949.690670524] [log_localization]:  154.9 s   690.3 m  err 0.196 m (along -0.195 cross +0.022) yaw  +1.88 deg  m->o yaw  +2.02 deg | fit true 0.005 est 0.045 (x8.36)  enc/true 1.020  dr_err 1.47 m[0m
+[pure_pursuit-10] [0m[INFO] [1789656951.826899655] [pure_pursuit]: lap 16: 9.55 s[0m
+[localization_error-7] [0m[INFO] [1789656954.359219560] [localization_error]: now[200] 0.328 m / 1.68 deg  |  session[n=3135] mean 0.309 p95 0.778 max 1.093 m, heading mean 1.56 max 7.64 deg[0m
+[log_localization-8] [0m[INFO] [1789656954.691427533] [log_localization]:  159.9 s   714.9 m  err 0.119 m (along -0.119 cross +0.006) yaw  -0.54 deg  m->o yaw  -0.61 deg | fit true 0.001 est 0.015 (x12.08)  enc/true 1.020  dr_err 1.77 m[0m
+[localization_error-7] [0m[INFO] [1789656959.360903830] [localization_error]: now[200] 0.316 m / 1.70 deg  |  session[n=3235] mean 0.307 p95 0.773 max 1.093 m, heading mean 1.57 max 7.64 deg[0m
+[log_localization-8] [0m[INFO] [1789656959.691125115] [log_localization]:  164.9 s   735.4 m  err 0.050 m (along -0.045 cross +0.022) yaw  -2.24 deg  m->o yaw  -2.24 deg | fit true 0.017 est 0.041 (x2.40)  enc/true 1.020  dr_err 1.63 m[0m
+[pure_pursuit-10] [0m[INFO] [1789656961.382612026] [pure_pursuit]: lap 17: 9.55 s[0m
+[localization_error-7] [0m[INFO] [1789656964.359462586] [localization_error]: now[200] 0.303 m / 1.64 deg  |  session[n=3335] mean 0.308 p95 0.783 max 1.093 m, heading mean 1.57 max 7.64 deg[0m
+[log_localization-8] [0m[INFO] [1789656964.692310374] [log_localization]:  169.9 s   760.0 m  err 0.235 m (along -0.209 cross +0.106) yaw  -1.44 deg  m->o yaw  -0.94 deg | fit true 0.007 est 0.070 (x10.00)  enc/true 1.020  dr_err 1.84 m[0m
+[localization_error-7] [0m[INFO] [1789656969.360976929] [localization_error]: now[200] 0.301 m / 1.72 deg  |  session[n=3435] mean 0.306 p95 0.777 max 1.093 m, heading mean 1.58 max 7.64 deg[0m
+[log_localization-8] [0m[INFO] [1789656969.690767141] [log_localization]:  174.9 s   780.5 m  err 0.062 m (along +0.060 cross +0.017) yaw  +0.40 deg  m->o yaw  +0.47 deg | fit true 0.006 est 0.013 (x2.24)  enc/true 1.020  dr_err 1.78 m[0m
+[pure_pursuit-10] [0m[INFO] [1789656970.954420880] [pure_pursuit]: lap 18: 9.60 s[0m
+[localization_error-7] [0m[INFO] [1789656974.361292094] [localization_error]: now[200] 0.301 m / 1.62 deg  |  session[n=3535] mean 0.308 p95 0.780 max 1.093 m, heading mean 1.57 max 7.64 deg[0m
+[log_localization-8] [0m[INFO] [1789656974.691069301] [log_localization]:  180.0 s   804.5 m  err 0.016 m (along +0.004 cross +0.015) yaw  -1.18 deg  m->o yaw  -1.21 deg | fit true 0.002 est 0.009 (x4.00)  enc/true 1.020  dr_err 1.89 m[0m
+[localization_error-7] [0m[INFO] [1789656979.359145164] [localization_error]: now[200] 0.310 m / 1.63 deg  |  session[n=3635] mean 0.306 p95 0.776 max 1.093 m, heading mean 1.58 max 7.64 deg[0m
+[log_localization-8] [0m[INFO] [1789656979.690971936] [log_localization]:  184.9 s   826.1 m  err 0.038 m (along -0.031 cross -0.022) yaw  -1.63 deg  m->o yaw  -1.26 deg | fit true 0.017 est 0.006 (x0.36)  enc/true 1.020  dr_err 1.86 m[0m
+[pure_pursuit-10] [0m[INFO] [1789656980.545679027] [pure_pursuit]: lap 19: 9.57 s[0m
+[localization_error-7] [0m[INFO] [1789656984.359833475] [localization_error]: now[200] 0.332 m / 1.67 deg  |  session[n=3735] mean 0.309 p95 0.783 max 1.115 m, heading mean 1.58 max 7.64 deg[0m
+[log_localization-8] [0m[INFO] [1789656984.691221398] [log_localization]:  189.9 s   849.1 m  err 0.081 m (along +0.080 cross +0.016) yaw  -0.81 deg  m->o yaw  -0.69 deg | fit true 0.004 est 0.004 (x0.95)  enc/true 1.020  dr_err 1.89 m[0m
+[localization_error-7] [0m[INFO] [1789656989.361317571] [localization_error]: now[200] 0.322 m / 1.61 deg  |  session[n=3835] mean 0.307 p95 0.778 max 1.115 m, heading mean 1.58 max 7.64 deg[0m
+[log_localization-8] [0m[INFO] [1789656989.691241562] [log_localization]:  194.9 s   871.0 m  err 0.119 m (along -0.107 cross +0.051) yaw  -0.99 deg  m->o yaw  -0.46 deg | fit true 0.019 est 0.033 (x1.67)  enc/true 1.020  dr_err 1.95 m[0m
+[pure_pursuit-10] [0m[INFO] [1789656990.217880616] [pure_pursuit]: lap 20: 9.68 s[0m
+[localization_error-7] [0m[INFO] [1789656994.359834550] [localization_error]: now[200] 0.325 m / 1.75 deg  |  session[n=3935] mean 0.310 p95 0.794 max 1.115 m, heading mean 1.59 max 7.64 deg[0m
+[log_localization-8] [0m[INFO] [1789656994.690862561] [log_localization]:  199.9 s   894.2 m  err 0.092 m (along +0.092 cross -0.011) yaw  -1.42 deg  m->o yaw  -1.45 deg | fit true 0.000 est 0.016 (x36.45)  enc/true 1.020  dr_err 1.93 m[0m
+[localization_error-7] [0m[INFO] [1789656999.359207676] [localization_error]: now[200] 0.318 m / 1.68 deg  |  session[n=4035] mean 0.308 p95 0.789 max 1.115 m, heading mean 1.59 max 7.64 deg[0m
+[log_localization-8] [0m[INFO] [1789656999.690994605] [log_localization]:  204.9 s   915.7 m  err 0.051 m (along +0.029 cross +0.042) yaw  -1.95 deg  m->o yaw  -1.47 deg | fit true 0.018 est 0.030 (x1.66)  enc/true 1.020  dr_err 2.12 m[0m
+[pure_pursuit-10] [0m[INFO] [1789656999.790336228] [pure_pursuit]: lap 21: 9.57 s[0m
+[localization_error-7] [0m[INFO] [1789657004.359968804] [localization_error]: now[200] 0.328 m / 1.68 deg  |  session[n=4135] mean 0.311 p95 0.800 max 1.175 m, heading mean 1.59 max 7.64 deg[0m
+[log_localization-8] [0m[INFO] [1789657004.691316482] [log_localization]:  209.9 s   939.8 m  err 0.018 m (along -0.018 cross +0.004) yaw  +1.13 deg  m->o yaw  +1.17 deg | fit true 0.002 est 0.014 (x6.96)  enc/true 1.020  dr_err 2.00 m[0m
+[pure_pursuit-10] [0m[INFO] [1789657009.355721202] [pure_pursuit]: lap 22: 9.58 s[0m
+[localization_error-7] [0m[INFO] [1789657009.359253946] [localization_error]: now[200] 0.324 m / 1.79 deg  |  session[n=4235] mean 0.309 p95 0.795 max 1.175 m, heading mean 1.60 max 7.64 deg[0m
+[log_localization-8] [0m[INFO] [1789657009.690811556] [log_localization]:  214.9 s   960.3 m  err 0.160 m (along +0.159 cross +0.019) yaw  +0.41 deg  m->o yaw  -0.20 deg | fit true 0.019 est 0.021 (x1.06)  enc/true 1.020  dr_err 2.29 m[0m

@@ -95,7 +95,7 @@ TUNABLES = ('lookahead_min', 'lookahead_max', 'lookahead_k', 'lookahead_curv_gai
             # Tunable from the command line for the same reason as the rest:
             # limits are measured on the car, and a rebuild per attempt is tedious.
             'slip_accel', 'slip_brake', 'u_launch', 'u_per_throttle', 'v_slip_den', 'tire_rise_slope',
-            'observer_wheels', 'slip_circle', 'accel_ff' 'drag_ff',
+            'observer_wheels', 'slip_circle', 'accel_ff', 'drag_ff',
             'cmd_delay_s', 'slip_kp', 'target_lead_s',
             # control loop rate; 20 matches the 17.5 Hz sim tick seen here, raise it
             # with the tick (headless sim, faster machine) so the loop is not the limit
@@ -230,9 +230,18 @@ def _launch(context, *args, **kwargs):
                     'bootstrap_mode': bootstrap_mode,
                     'require_convergence': cfg('require_convergence'),
                     'recover': cfg('recover'),
-                    'recover_use_checkpoints': cfg('recover_use_checkpoints')}
+                    'recover_use_checkpoints': cfg('recover_use_checkpoints'),
+                    'recover_settle_s': cfg('recover_settle_s'),
+                    'recover_creep_s': cfg('recover_creep_s')}
         loc_args['map_yaml' if localizer == 'amcl' else 'map_graph'] = (
             map_yaml if localizer == 'amcl' else map_graph)
+        # A/B a localizer parameter set without touching the package's yaml.
+        # Always pass a real path: launch configurations are inherited by the
+        # include, so an empty value declared here would override amcl.launch.py's
+        # own default and start map_server/amcl with no parameters (they hang).
+        if localizer == 'amcl':
+            loc_args['amcl_params_file'] = (cfg('amcl_params_file')
+                                            or os.path.join(loc_share, 'config', 'amcl.yaml'))
 
         # Warn only when nothing will seed this localizer: no global search AND
         # no one-shot truth seed leaves it on the hardcoded constant, which
@@ -345,6 +354,8 @@ def generate_launch_description():
             'map_graph', default_value='',
             description="serialized pose graph, slam only; empty = the track's"),
         DeclareLaunchArgument('rviz', default_value='true'),
+        DeclareLaunchArgument('amcl_params_file', default_value='',
+                              description='AMCL yaml to use instead of racer_localization/config/amcl.yaml (empty = the package default)'),
 
         # Turn pieces off when running them yourself.
         DeclareLaunchArgument('bridge', default_value='true'),
@@ -356,9 +367,13 @@ def generate_launch_description():
                               description='re-localize after a wall reset; see localization_bootstrap'),
         DeclareLaunchArgument('recover_use_checkpoints', default_value='true',
                               description='false forces the no-data recovery tier; see localization_bootstrap'),
+        DeclareLaunchArgument('recover_settle_s', default_value='1.0',
+                              description='pause after a reset seed before creep'),
+        DeclareLaunchArgument('recover_creep_s', default_value='1.0',
+                              description='gentle lidar creep duration after recovery'),
         DeclareLaunchArgument(
             'distance_source', default_value='encoder',
-            description="dead reckoning distance source, 'encoder' or 'tire'; see dead_reckoning.py"),
+            description="dead reckoning distance source, 'encoder', 'tire' or 'slip'; see dead_reckoning.py"),
         DeclareLaunchArgument(
             'drive_on_truth', default_value='false',
             description='DIAGNOSTIC: steer on the simulator ground-truth pose instead of the '

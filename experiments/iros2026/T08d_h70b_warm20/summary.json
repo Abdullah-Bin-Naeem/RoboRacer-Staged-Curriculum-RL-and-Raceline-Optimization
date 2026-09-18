@@ -1,0 +1,139 @@
+{
+  "id": "T08d",
+  "name": "h70b_warm20",
+  "date": "2026-09-17",
+  "line": "raceline_tum_iqp_h7.0_a7.0b.csv",
+  "overrides": [
+    "control_hz:=45",
+    "warmup_v_max:=2.0",
+    "warmup_dist_m:=21.0",
+    "enc_rate_window_s:=0.10"
+  ],
+  "hz_cap": "45",
+  "laps_target": 2,
+  "profile_lap_s": 9.31,
+  "timed_laps": 2,
+  "lap_source": "simulator",
+  "lap_best": 9.779,
+  "lap_median": 9.838,
+  "lap_mean": 9.838,
+  "lap_std": 0.059,
+  "lap_worst": 9.896,
+  "laps_under_10": 2,
+  "gap_to_profile_s": 0.527,
+  "contacts": 0,
+  "first_contact_t": null,
+  "first_contact_s": null,
+  "e_lat_abs": {
+    "mean": 0.1208,
+    "p90": 0.2715,
+    "max": 0.6066
+  },
+  "outward": {
+    "mean": 0.0368,
+    "p90": 0.2632,
+    "max": 0.6066
+  },
+  "clearance_min": 0.056,
+  "clearance_p05": 0.098,
+  "loc_err": {
+    "mean": 0.176,
+    "p90": 0.4323,
+    "max": 0.7234
+  },
+  "a_lat": {
+    "mean": 3.602,
+    "p90": 6.5481,
+    "max": 7.9932
+  },
+  "v_est_err": {
+    "mean": 0.1876,
+    "p90": 0.3947,
+    "max": 0.748
+  },
+  "delay_median": 0.124,
+  "loop_hz": 24.2,
+  "steer_lock_pct": 0.0,
+  "corners": [
+    {
+      "name": "C1",
+      "s": "0.0-0.0",
+      "side": "L",
+      "kappa": 0.36,
+      "v_plan_apex": 3.2,
+      "v_true_apex": 3.64,
+      "outward_max": 0.161,
+      "abs_e_p90": 0.161,
+      "clearance_min": 0.35,
+      "a_lat_max": 4.93,
+      "steer_lock_pct": 0.0
+    },
+    {
+      "name": "C2",
+      "s": "17.2-20.1",
+      "side": "L",
+      "kappa": 1.2,
+      "v_plan_apex": 2.41,
+      "v_true_apex": 2.32,
+      "outward_max": 0.607,
+      "abs_e_p90": 0.572,
+      "clearance_min": 0.079,
+      "a_lat_max": 7.81,
+      "steer_lock_pct": 0.0
+    },
+    {
+      "name": "C3",
+      "s": "21.1-21.2",
+      "side": "R",
+      "kappa": 0.38,
+      "v_plan_apex": 4.28,
+      "v_true_apex": 4.29,
+      "outward_max": 0.002,
+      "abs_e_p90": 0.253,
+      "clearance_min": 0.236,
+      "a_lat_max": 6.17,
+      "steer_lock_pct": 0.0
+    },
+    {
+      "name": "C4",
+      "s": "23.0-24.9",
+      "side": "L",
+      "kappa": 0.8,
+      "v_plan_apex": 2.96,
+      "v_true_apex": 2.93,
+      "outward_max": 0.125,
+      "abs_e_p90": 0.22,
+      "clearance_min": 0.056,
+      "a_lat_max": 7.39,
+      "steer_lock_pct": 0.0
+    },
+    {
+      "name": "C5",
+      "s": "35.9-37.6",
+      "side": "L",
+      "kappa": 0.66,
+      "v_plan_apex": 3.27,
+      "v_true_apex": 3.27,
+      "outward_max": 0.145,
+      "abs_e_p90": 0.127,
+      "clearance_min": 0.225,
+      "a_lat_max": 7.13,
+      "steer_lock_pct": 0.0
+    },
+    {
+      "name": "C6",
+      "s": "40.7-43.3",
+      "side": "L",
+      "kappa": 1.21,
+      "v_plan_apex": 2.4,
+      "v_true_apex": 2.24,
+      "outward_max": 0.155,
+      "abs_e_p90": 0.149,
+      "clearance_min": 0.146,
+      "a_lat_max": 6.61,
+      "steer_lock_pct": 0.0
+    }
+  ],
+  "gate_50": false,
+  "gate_sub10": true
+}

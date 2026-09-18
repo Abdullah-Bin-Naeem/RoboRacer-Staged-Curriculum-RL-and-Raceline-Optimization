@@ -1,0 +1,21 @@
+{
+  "id": "T04",
+  "name": "h70b_ctrlhz45_50laps",
+  "date": "2026-09-17",
+  "started": "2026-09-17T19:57:26",
+  "track": "iros2026",
+  "line": "raceline_tum_iqp_h7.0_a7.0b.csv",
+  "laps": 50,
+  "max_contacts": 3,
+  "hz_cap": "45",
+  "overrides": [
+    "control_hz:=45"
+  ],
+  "hypothesis": "T03's configuration (teammates' line + registry defaults + control_hz 45) holds for the 50-lap gate",
+  "prediction": "0 contacts in 50 laps, mean 9.55-9.65, worst < 9.8; risk: thermal loop decay over ~9 min, hairpin 1 exit",
+  "git_branch": "adil_iros",
+  "git_commit": "89a0f0a",
+  "git_dirty": true,
+  "verdict_short": "OUT-LAP contact x3: hairpin-1 entry with loc +0.6 m along-track (T03 had -0.1): turned in early, cut inside; blind rehits",
+  "verdict": "Failed on the untimed out-lap: at hairpin 1 entry (s 16.4-18.4) the estimate was +0.54..+0.63 m AHEAD along-track (T03 same pass: -0.08..-0.20), so the follower turned in early, e_lat +0.01 -> +0.41 (inside), contact at the tip at 2.6 m/s; recovery rehit twice. The start straight is the along-track blind spot the warmup cap exists for; 2 of 4 out-laps on this line (T02, T04) have now hit, the timed laps never did (T03 20/20). Next: slower warmup through hairpin 1 (T05)."
+}

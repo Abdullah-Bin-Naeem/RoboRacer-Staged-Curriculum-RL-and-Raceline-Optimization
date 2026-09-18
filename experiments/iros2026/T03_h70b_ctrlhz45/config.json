@@ -1,0 +1,21 @@
+{
+  "id": "T03",
+  "name": "h70b_ctrlhz45",
+  "date": "2026-09-17",
+  "started": "2026-09-17T19:53:00",
+  "track": "iros2026",
+  "line": "raceline_tum_iqp_h7.0_a7.0b.csv",
+  "laps": 20,
+  "max_contacts": 3,
+  "hz_cap": "45",
+  "overrides": [
+    "control_hz:=45"
+  ],
+  "hypothesis": "The follower still runs control_hz 20 against a 45 Hz simulator loop, so every steering command is up to one extra frame stale and half the frames are dropped; at the hairpins and C3 exit, where T01/T02 understeered with steering lagging the path, a 45 Hz follower catches the turn-in earlier",
+  "prediction": "fewer contacts than T01/T02 (<= 1 in 20 laps); hairpin worst outward < 0.3 m; clean laps 9.5-9.7 s",
+  "git_branch": "adil_iros",
+  "git_commit": "89a0f0a",
+  "git_dirty": false,
+  "verdict_short": "ACCEPTED: 20 clean laps ALL <10 s, best 9.50 median 9.58 mean 9.59 std 0.046; hairpin 1 worst outward 0.44",
+  "verdict": "ACCEPTED, the largest single gain of the campaign. control_hz 20 -> 45 on the teammates' line at the 45 Hz loop: 20/20 clean timed laps (T01, T02: contact inside lap 1), best 9.496, median 9.578, mean 9.589, worst 9.681, std 0.046, gap to profile 0.27 s, delay ~100 ms. Remaining weak spot: hairpin 1 (s 17-20) worst outward 0.44 m, |e| p90 0.29 m, min clearance 0.125 m; C4 (chevron, s 23-25) min clearance 0.075 m. Next: 50-lap validation (T04)."
+}

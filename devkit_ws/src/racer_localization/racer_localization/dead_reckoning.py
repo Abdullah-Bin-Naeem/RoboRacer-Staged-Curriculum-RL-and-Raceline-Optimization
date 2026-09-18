@@ -42,6 +42,7 @@ harmless: computing the reported `twist.linear.x`, which nothing integrates.
 """
 
 import math
+from collections import deque
 
 import numpy as np
 import rclpy
@@ -52,6 +53,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from racer_common.tire_model import TireSpeedObserver
 from sensor_msgs.msg import Imu, JointState
+from std_msgs.msg import Float32
 
 NS = '/autodrive/roboracer_1'
 QOS = QoSProfile(durability=QoSDurabilityPolicy.VOLATILE,
@@ -108,7 +110,27 @@ class DeadReckoning(Node):
         # interval the wheel speed was measured on so the sum stays unbiased.
         # Ported from the iros_compete_usman branch (common/tire_model.py).
         # Default stays 'encoder': 'tire' is an A/B, not a silent switch.
+        # 'slip': the encoder arc length MINUS the part of it that is wheelspin,
+        #     ds = dang * r  -  k * max(u_cmd - v_car, 0) * dt   while |yaw rate| < gate
+        # u_cmd is our own throttle command as a wheel speed (legal: it is our
+        # output), v_car the tire observer on the encoder rate. 'tire' is the
+        # k = 1 end of this and over-corrects (straight +5.3 % -> -3.0 %, A03).
+        # k replayed through THIS function on six logs, 45 Hz and 20 Hz alike
+        # (A03, S01, S03, mtb15, edit_2, truth): the straight-zeroing k is
+        # 0.22-0.33, and 0.27 takes the straight over-read from +5.3..+6.8 % to
+        # within +-1 %, corners and whole lap within +-1.3 %. Ungated, corners
+        # go to -1..-3.5 %: through a corner the car carries lateral slip the
+        # longitudinal model does not see, so the gate leaves them on the
+        # encoder, within 1 % there already. u is the COMMAND, not the encoder
+        # rate: fitted on the encoder rate k scattered 0.64-1.2 between runs.
         p('distance_source', 'encoder')
+        p('slip_k', 0.27)
+        p('slip_yaw_gate', 0.5)                     # rad/s
+        p('u_per_throttle', 25.25)                  # as pure_pursuit.yaml
+        # The observer's input rate spans at least this long: a per-sample rate
+        # at 45 Hz scatters 2x and runs the observer low (pure_pursuit's
+        # enc_rate_window_s, same finding).
+        p('slip_rate_window_s', 0.05)
         p('tire_rise_slope', 3.0)                   # as pure_pursuit.yaml
         p('v_slip_den', 4.0)
         p('distance_scale', 1.0)
@@ -150,6 +172,16 @@ class DeadReckoning(Node):
         self.dist_src = str(g('distance_source')).lower()
         self._tire = TireSpeedObserver(rise_slope=float(g('tire_rise_slope')),
                                        v_slip_den=float(g('v_slip_den')))
+        if self.dist_src not in ('encoder', 'tire', 'slip'):
+            raise RuntimeError(f"distance_source must be encoder, tire or slip, not {self.dist_src!r}")
+        self.slip_k = float(g('slip_k'))
+        self.slip_gate = float(g('slip_yaw_gate'))
+        self.u_per_thr = float(g('u_per_throttle'))
+        self.slip_win = float(g('slip_rate_window_s'))
+        self._obs = {s: TireSpeedObserver(rise_slope=float(g('tire_rise_slope')),
+                                          v_slip_den=float(g('v_slip_den'))) for s in ('l', 'r')}
+        self._hist = {'l': deque(maxlen=16), 'r': deque(maxlen=16)}
+        self._u_cmd = 0.0
         self.tf_tol = float(g('transform_tolerance'))
         self.max_step = float(g('max_wheel_step'))
         self.extrapolate_yaw = bool(g('extrapolate_yaw'))
@@ -172,6 +204,8 @@ class DeadReckoning(Node):
         self.create_subscription(JointState, f'{NS}/right_encoder',
                                  lambda m: self._cb_enc('r', m), QOS)
         self.create_subscription(Imu, f'{NS}/imu', self._cb_imu, QOS)
+        if self.dist_src == 'slip':
+            self.create_subscription(Float32, f'{NS}/throttle_command', self._cb_thr, QOS)
 
         self.pub = self.create_publisher(Odometry, 'odom', QOS)
         self.tfb = tf2_ros.TransformBroadcaster(self)
@@ -182,7 +216,8 @@ class DeadReckoning(Node):
             f'wheel r={self.wheel_r} m, scale={self.scale}, '
             f'{g("publish_rate"):.0f} Hz, tf +{self.tf_tol * 1e3:.0f} ms, '
             f'extrapolate yaw={self.extrapolate_yaw} pos={self.extrapolate_pos}, '
-            f'distance from {self.dist_src}')
+            f'distance from {self.dist_src}'
+            + (f' (k={self.slip_k}, yaw gate {self.slip_gate} rad/s)' if self.dist_src == 'slip' else ''))
 
     def _cb_enc(self, side, msg):
         """position is cumulative wheel angle in RADIANS (measured, not ticks)."""
@@ -208,7 +243,9 @@ class DeadReckoning(Node):
                 f'treating as a reset, not travel. AMCL needs re-seeding.')
             return
         dt = t - prev[1]
-        if self.dist_src != 'tire':
+        if self.dist_src == 'slip':
+            self._ds[side] = self._ds.get(side, 0.0) + dang * self.wheel_r - self._slip_ds(side, ang, t, dt)
+        elif self.dist_src != 'tire':
             self._ds[side] = self._ds.get(side, 0.0) + dang * self.wheel_r
         elif 1e-4 < dt <= 0.5:
             # The observer's CAR speed over the same interval the wheel speed was
@@ -225,6 +262,30 @@ class DeadReckoning(Node):
         rates = [v for v in self._rate.values() if v is not None]
         if rates:
             self.speed = float(np.mean(rates)) * self.scale
+
+    def _slip_ds(self, side, ang, t, dt):
+        """Metres of wheelspin in this encoder interval (see distance_source)."""
+        h = self._hist[side]
+        h.append((ang, t))
+        if not (1e-4 < dt <= 0.5):
+            return 0.0
+        # rate over the newest span >= slip_rate_window_s
+        a0, t0 = h[0]
+        for a_old, t_old in reversed(h):
+            if t - t_old >= self.slip_win:
+                a0, t0 = a_old, t_old
+                break
+        if t - t0 <= 1e-4:
+            return 0.0
+        u_wheel = abs(ang - a0) / (t - t0) * self.wheel_r
+        v_car = self._obs[side].step(u_wheel, dt)
+        if abs(self.yaw_rate) >= self.slip_gate:
+            return 0.0
+        ds = self.slip_k * max(self._u_cmd - v_car, 0.0) * dt
+        return ds
+
+    def _cb_thr(self, msg):
+        self._u_cmd = max(0.0, float(msg.data)) * self.u_per_thr
 
     def _cb_imu(self, msg):
         self.yaw = yaw_from_quat(msg.orientation)

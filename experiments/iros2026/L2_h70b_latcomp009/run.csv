@@ -1,0 +1,1 @@
+t,dist_m,true_x,true_y,true_yaw_deg,est_x,est_y,est_yaw_deg,err_along,err_cross,err_dist,err_yaw_deg,m2o_x,m2o_y,m2o_yaw_deg,o2b_x,o2b_y,o2b_yaw_deg,speed,yaw_rate,enc_dist,dr_err,fit_true,fit_est,fit_ratio,ready,pp_v_est,pp_v_enc,pp_v_pose,pp_v_target,pp_u_cmd,pp_throttle,pp_steering,pp_ld,pp_e_lat,pp_e_head,pp_kappa,pp_s,pp_slip,pp_a_imu,pp_delay

@@ -1,0 +1,24 @@
+{
+  "id": "T18",
+  "name": "kb11z3_hp45_b45",
+  "date": "2026-09-17",
+  "started": "2026-09-17T20:33:55",
+  "track": "iros2026",
+  "line": "raceline_kb11z3_hp45_a50_b45_v85.csv",
+  "laps": 25,
+  "max_contacts": 2,
+  "hz_cap": "45",
+  "overrides": [
+    "control_hz:=45",
+    "warmup_v_max:=2.0",
+    "warmup_dist_m:=21.0",
+    "enc_rate_window_s:=0.10"
+  ],
+  "hypothesis": "T17's hairpin-1 contact came with the car still braking hard into the turn under the 5.5 m/s^2 brake budget (fronts saturated by longitudinal + lateral demand at turn-in); braking at 4.5 ends the deceleration before turn-in, as on the clean E05/E06 line",
+  "prediction": "0 contacts in 25 laps; hairpins 0 % lock; mean 10.3-10.5",
+  "git_branch": "adil_iros",
+  "git_commit": "94bb8a4",
+  "git_dirty": true,
+  "verdict_short": "INVALID: machine degraded (delay median 0.21 s, follower status froze >1 s before the contact); stop and restart the simulator",
+  "verdict": "Invalid run. Loop delay median 0.212 s (E05/E06/T03: 0.10-0.14; T17 0.161), out-lap 24.4 s, and pure_pursuit's status froze for more than a second (pp_s and delay constant) while the car kept moving on its last command into hairpin 1. GPU 85 C at 22 W (thermal throttling) after ~2 h of simulator graphics. T15-T18 are confounded by this decay to an unknown degree; the ICRA/Porto notes record the same session decay and a simulator restart as the fix."
+}

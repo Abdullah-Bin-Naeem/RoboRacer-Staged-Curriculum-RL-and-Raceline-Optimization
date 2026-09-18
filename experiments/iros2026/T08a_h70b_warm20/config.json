@@ -1,0 +1,23 @@
+{
+  "id": "T08a",
+  "name": "h70b_warm20",
+  "date": "2026-09-17",
+  "started": "2026-09-17T20:06:53",
+  "track": "iros2026",
+  "line": "raceline_tum_iqp_h7.0_a7.0b.csv",
+  "laps": 2,
+  "max_contacts": 1,
+  "hz_cap": "45",
+  "overrides": [
+    "control_hz:=45",
+    "warmup_v_max:=2.0",
+    "warmup_dist_m:=21.0",
+    "enc_rate_window_s:=0.10"
+  ],
+  "hypothesis": "Out-lap: warmup_v_max 2.0 over 21 m lets AMCL snap to the hairpin-1 walls (error collapses within ~1 m of them) before turn-in, whichever sign the start-straight along error takes (+0.6 T04, -0.8 T07)",
+  "prediction": "out-lap clean 4/4; timed laps clean with enc_rate_window_s 0.10",
+  "git_branch": "adil_iros",
+  "git_commit": "fc34cdb",
+  "git_dirty": false,
+  "verdict_short": "T08 a-d: out-lap clean 4/4 at warmup 2.0 over 21 m (with T05: 8/8 at <= 3.0)"
+}

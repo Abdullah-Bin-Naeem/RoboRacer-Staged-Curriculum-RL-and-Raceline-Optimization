@@ -671,7 +671,12 @@ class LocalizationBootstrap(Node):
         if self.truth_pos is not None and self.truth_quat is not None:
             self.est_err = math.hypot(x - self.truth_pos[0], y - self.truth_pos[1])
             self.est_dyaw = abs(wrap(yaw - yaw_from_quat_xyzw(self.truth_quat)))
-        if self.rec_state == 'watch':
+        # 'creep' too: the estimate was confirmed a moment ago, and a car reset
+        # again mid-creep lands at a checkpoint AHEAD of where the creep began.
+        # Frozen at the confirmation instead, every re-seed went back to the first
+        # checkpoint while the car sat 3, 6, 9 m further on (M01, 2026-09-18:
+        # seven resets, then the global search timed out).
+        if self.rec_state in ('watch', 'creep'):
             self.last_good = (x, y, yaw)         # frozen the instant a reset is flagged
 
     def _cb_enc(self, side, msg):
@@ -719,7 +724,10 @@ class LocalizationBootstrap(Node):
 
         # Past the straight phase, bias the steering so the car finds a corner --
         # corridors are ambiguous, corners are not.
-        if self.distance > self.straight_m:
+        # Not in a recovery creep: the pose is already confirmed there, and on a
+        # long straight the bias walked the car into the left wall about 3 m in
+        # (M01 at recover_creep_s 3.0, 2 m/s).
+        if self.distance > self.straight_m and self.rec_state != 'creep':
             steer += 0.25
 
         throttle = self.throttle

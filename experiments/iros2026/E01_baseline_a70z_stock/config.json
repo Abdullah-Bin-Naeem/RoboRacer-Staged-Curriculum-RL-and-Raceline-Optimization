@@ -1,0 +1,19 @@
+{
+  "id": "E01",
+  "name": "baseline_a70z_stock",
+  "date": "2026-09-17",
+  "started": "2026-09-17T02:46:50",
+  "track": "iros2026",
+  "line": "raceline_tum_iqp_a7.0z.csv",
+  "laps": 25,
+  "max_contacts": 1,
+  "hz_cap": "stock",
+  "overrides": [],
+  "hypothesis": "run_iros_08's actual profile (hairpins capped, apex 1.90) is clean at the stock loop; gives the logged reference every later change is compared against",
+  "prediction": "0 contacts in 25 laps, median 10.3-10.5 s (run_iros_08: 10.25-10.70), C1/C4 outward p90 < 0.2 m",
+  "git_branch": "adil_iros",
+  "git_commit": "5edc136",
+  "git_dirty": true,
+  "verdict": "NOT A VALID BASELINE, and a contact. The stock loop ran 15 Hz here (GPU 84-86 C, power throttled 60 -> 32 W), so the measured delay was 205-220 ms, past derate_delay_to 0.21: every speed target was derated to the 6.0 rung (laps 11.2-11.6 s, gap 1.46 s). Contact on timed lap 7 at C1 (s 6.5): on the braking approach the AMCL estimate was 0.36-0.62 m BEHIND the car (err_along), so turn-in came late; the estimate snapped forward inside the hairpin with the car already at steering lock and 0.17 m wide, and it drifted to 0.6 m wide at lock into the exit wall at 2.1 m/s (a_lat < 5, not a grip limit). The same along-track swing (+0.3 at speed -> -0.3 after braking, 0.3-0.9 m per pass) is present in every C1 approach of run_iros_08, so it is systematic, not new. Encoder under-read under braking was tested and rejected (enc/true median 1.00 in the zone). Recovery: the new C1 checkpoint re-localized in 1 s (7 cm), but the respawn itself was missed (encoder speed 2.1 -> 0.46 m/s, above reset_speed_to 0.3; yaw step 12 deg < 20) and the car drove 0.8 m mislocalized into a second contact 0.8 s later, which was then detected.",
+  "verdict_short": "INVALID (15 Hz, derated) + C1 contact lap 7: late turn-in from along-track loc error; low-speed respawn missed"
+}

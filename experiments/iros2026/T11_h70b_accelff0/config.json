@@ -1,0 +1,25 @@
+{
+  "id": "T11",
+  "name": "h70b_accelff0",
+  "date": "2026-09-17",
+  "started": "2026-09-17T20:17:32",
+  "track": "iros2026",
+  "line": "raceline_tum_iqp_h7.0_a7.0b.csv",
+  "laps": 25,
+  "max_contacts": 2,
+  "hz_cap": "45",
+  "overrides": [
+    "control_hz:=45",
+    "warmup_v_max:=2.0",
+    "warmup_dist_m:=21.0",
+    "enc_rate_window_s:=0.10",
+    "accel_ff:=0.0"
+  ],
+  "hypothesis": "Hairpin-exit contacts (T06-T10) happen while the car accelerates at 0.6-0.9 steering: accel_ff 1 feeds the plan's exit acceleration into the slip band at the moment the front tires are near their lateral limit; without it the exit throttle follows the speed error only, leaving grip for cornering",
+  "prediction": "0-1 contacts in 25 laps; hairpin exit worst outward < 0.35 m; mean 9.65-9.8 (slower exits)",
+  "git_branch": "adil_iros",
+  "git_commit": "2fc4926",
+  "git_dirty": false,
+  "verdict_short": "INCONCLUSIVE for accel_ff: out-lap contact at s 40.2 (bend before hairpin 2, right wall, 7 cm design clearance) at 4.6-4.9 m/s",
+  "verdict": "Inconclusive on accel_ff (no timed lap). Out-lap, just after the warmup release: contact at s 40.2 ((3.6, 2.5), the bend before hairpin 2) at 4.6-4.9 m/s with e_lat -0.18 (right) and localization 8-15 cm; this is the registry's documented tightest spot (body clearance 0.071 m, car runs 0.10 m right). With the hairpins that makes two geometric weak spots on this line. Next: regenerate it at kappa_bound 1.1 with a deeper right margin there."
+}

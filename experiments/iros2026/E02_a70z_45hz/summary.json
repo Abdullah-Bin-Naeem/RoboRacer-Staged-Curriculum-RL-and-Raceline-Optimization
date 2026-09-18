@@ -1,0 +1,108 @@
+{
+  "id": "E02",
+  "name": "a70z_45hz",
+  "date": "2026-09-17",
+  "line": "raceline_tum_iqp_a7.0z.csv",
+  "overrides": [],
+  "hz_cap": "45",
+  "laps_target": 25,
+  "profile_lap_s": 9.969,
+  "timed_laps": 0,
+  "lap_source": "simulator",
+  "lap_best": null,
+  "lap_median": null,
+  "lap_mean": null,
+  "lap_std": null,
+  "lap_worst": null,
+  "laps_under_10": 0,
+  "gap_to_profile_s": null,
+  "contacts": 1,
+  "first_contact_t": 45.0,
+  "first_contact_s": 5.99,
+  "e_lat_abs": {
+    "mean": 0.0546,
+    "p90": 0.121,
+    "max": 0.1933
+  },
+  "outward": {
+    "mean": -0.0034,
+    "p90": 0.0899,
+    "max": 0.1933
+  },
+  "clearance_min": 0.1,
+  "clearance_p05": 0.175,
+  "loc_err": {
+    "mean": 0.0596,
+    "p90": 0.1165,
+    "max": 0.1881
+  },
+  "a_lat": {
+    "mean": 2.4794,
+    "p90": 5.0894,
+    "max": 6.8612
+  },
+  "v_est_err": {
+    "mean": 0.2599,
+    "p90": 0.5423,
+    "max": 0.8746
+  },
+  "delay_median": 0.099,
+  "loop_hz": 30.3,
+  "steer_lock_pct": 0.0,
+  "corners": [
+    {
+      "name": "C1",
+      "s": "4.6-6.9",
+      "side": "L",
+      "kappa": 1.5,
+      "v_plan_apex": 1.92,
+      "v_true_apex": 1.79,
+      "outward_max": 0.193,
+      "abs_e_p90": 0.189,
+      "clearance_min": 0.23,
+      "a_lat_max": 5.64,
+      "steer_lock_pct": 0.0
+    },
+    {
+      "name": "C2",
+      "s": "10.0-11.9",
+      "side": "L",
+      "kappa": 0.72,
+      "v_plan_apex": 3.12,
+      "v_true_apex": 3.11,
+      "outward_max": 0.083,
+      "abs_e_p90": 0.119,
+      "clearance_min": 0.1,
+      "a_lat_max": 6.72,
+      "steer_lock_pct": 0.0
+    },
+    {
+      "name": "C3",
+      "s": "22.8-24.7",
+      "side": "L",
+      "kappa": 0.7,
+      "v_plan_apex": 3.16,
+      "v_true_apex": 3.12,
+      "outward_max": 0.08,
+      "abs_e_p90": 0.073,
+      "clearance_min": 0.158,
+      "a_lat_max": 6.86,
+      "steer_lock_pct": 0.0
+    },
+    {
+      "name": "C4",
+      "s": "27.7-30.3",
+      "side": "L",
+      "kappa": 1.51,
+      "v_plan_apex": 1.91,
+      "v_true_apex": 1.78,
+      "outward_max": 0.093,
+      "abs_e_p90": 0.091,
+      "clearance_min": 0.2,
+      "a_lat_max": 4.83,
+      "steer_lock_pct": 0.0
+    }
+  ],
+  "gate_50": false,
+  "gate_sub10": false
+}

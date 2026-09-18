@@ -459,7 +459,23 @@ value that keeps every wall at 0.20 m or more. The car is now 0.12 s off its
 own profile (8.25 predicted), all of it in the hairpin braking zones and
 exits, and the levers that remain there are controller structure, not knobs.
 
-Record configuration on the true pose (not race-legal; `drive_on_truth`):
-line `rl_mt_tb07_z9_L70.csv`, `steer_a_lat_max:=8.0 latency_comp_s:=0.075
-slip_circle_ref:=9.5 warmup_dist_m:=28`, Adil's hybrid-LQR and slip-DR
-arguments unchanged.
+Record configuration on the true pose (not race-legal; `drive_on_truth`),
+the exact launch line, from the repo root with the simulator up and the
+bridge started by this launch:
+
+```bash
+pgrep -af "nav2_amcl|racer_localization|racer_control|map_server" | grep -v pgrep || echo clean
+ros2 launch racer_bringup race.launch.py track:=iros2026 tcp_nodelay:=true loop_hz_cap:=45 rviz:=false \
+  drive_on_truth:=true log_rate:=45 \
+  path_csv:=$PWD/raceline/iros2026/rl_mt_tb07_z9_L70.csv log_csv:=run_truth_record.csv \
+  distance_source:=slip v_max:=9.0 control_hz:=45 warmup_v_max:=2.0 warmup_dist_m:=28.0 enc_rate_window_s:=0.10 \
+  amcl_params_file:=$PWD/experiments/iros2026/params/amcl_beams360.yaml exit_guard_from:=0.0 exit_guard_full:=0.0 \
+  controller_mode:=hybrid_lqr lqr_k_lat:=0.03 lqr_k_head:=0.05 lqr_k_yaw:=0.0 lqr_max_correction_rad:=0.02 \
+  recover_settle_s:=2.0 recover_creep_s:=3.0 steer_a_lat_max:=8.0 latency_comp_s:=0.075 slip_circle_ref:=9.5
+```
+
+Read the result with
+`python3 raceline/analyze_run.py run_truth_record.csv --path raceline/iros2026/rl_mt_tb07_z9_L70.csv`
+(from `.venv-rl`). The same line without `drive_on_truth:=true` is the
+race-legal launch, and there the propagation should start at
+`latency_comp_s:=0.05`: the localized car already exits 0.05 m wider.

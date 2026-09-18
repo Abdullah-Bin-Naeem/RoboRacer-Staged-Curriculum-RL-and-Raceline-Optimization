@@ -437,3 +437,29 @@ defaults and the other two modes are untouched. The 0.13 m the hairpins run
 wide is the tire at the exit, so it will not yield to a steering law that
 still asks the same lateral demand; the remaining ways in are the profile at
 the exits (less combined demand) or a controller that knows the tire.
+
+### 11.2 True-pose record: 8.37 s (2026-09-20, early)
+
+After the controller experiments (11.1 and the `mpc` branch, both shelved),
+three follower-side steps and one profile step on the true pose, each a
+single change, each 19-25 clean laps:
+
+| step | mean | best |
+|---|---|---|
+| baseline (section 11) | 8.450 | 8.40 |
+| `latency_comp_s` 0.05 -> 0.10 | 8.355, but 2 contacts (exits 0.05 m wider) | 8.33 |
+| `latency_comp_s` 0.075, `warmup_dist_m` 28 | **8.410**, clean | 8.38 |
+| + `slip_circle_ref` 9.5 (throttle slip budget no longer tied to the 8.0 steering cap) | **8.385**, clean | 8.36 |
+| + line `rl_mt_tb07_z9_L70.csv` (9.0 lateral zone s 28-36, pre-bend 6.75, margin re-solved at 0.07 buffer) | **8.371**, clean | 8.35 |
+
+What the steps say: the steering was being timed to a 50 ms delay against a
+measured 120 ms, and every exit is where the time and the risk both sit, so
+the propagation is a dial between lap time and exit margin, 0.075 being the
+value that keeps every wall at 0.20 m or more. The car is now 0.12 s off its
+own profile (8.25 predicted), all of it in the hairpin braking zones and
+exits, and the levers that remain there are controller structure, not knobs.
+
+Record configuration on the true pose (not race-legal; `drive_on_truth`):
+line `rl_mt_tb07_z9_L70.csv`, `steer_a_lat_max:=8.0 latency_comp_s:=0.075
+slip_circle_ref:=9.5 warmup_dist_m:=28`, Adil's hybrid-LQR and slip-DR
+arguments unchanged.

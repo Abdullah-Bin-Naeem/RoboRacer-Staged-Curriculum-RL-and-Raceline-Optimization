@@ -45,6 +45,7 @@ def main():
     ap.add_argument('a'); ap.add_argument('b')
     ap.add_argument('--zones', required=True, help='s0:s1,... in A arc length')
     ap.add_argument('--ramp', type=float, default=1.5)
+    ap.add_argument('--weight', type=float, default=1.0, help='how far toward B inside the zones (1 = all the way)')
     ap.add_argument('--track', default=DEFAULT_TRACK)
     ap.add_argument('-o', '--out', required=True)
     a = ap.parse_args()
@@ -53,7 +54,7 @@ def main():
     sa, xa, ya = A[:, 0], A[:, 1], A[:, 2]
     lap = sa[-1] + np.hypot(xa[0] - xa[-1], ya[0] - ya[-1])
     zones = [tuple(float(v) for v in z.split(':')) for z in a.zones.split(',') if z]
-    w = weight(sa, zones, a.ramp, lap)
+    w = a.weight * weight(sa, zones, a.ramp, lap)
     # Blend the optimiser's OWN columns rather than re-fitting a spline: a re-fit
     # of rl_mt_b0.05 raised total |dkappa| 8.9 -> 12.3 and cost the speed profile
     # 0.37 s. Both lines are smooth and within ~0.1 m of each other, so heading and

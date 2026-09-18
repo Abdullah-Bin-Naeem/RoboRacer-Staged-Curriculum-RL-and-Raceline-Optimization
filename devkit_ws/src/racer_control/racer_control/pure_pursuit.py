@@ -458,8 +458,8 @@ class PurePursuit(Node):
         self.lqr_k_head = float(g('lqr_k_head'))
         self.lqr_k_yaw = float(g('lqr_k_yaw'))
         self.lqr_max_correction = float(g('lqr_max_correction_rad'))
-        if self.controller_mode not in ('pure_pursuit', 'hybrid_lqr'):
-            raise RuntimeError(f'controller_mode must be pure_pursuit or hybrid_lqr, not {self.controller_mode!r}')
+        if self.controller_mode not in ('pure_pursuit', 'hybrid_lqr', 'ff_lqr'):
+            raise RuntimeError(f'controller_mode must be pure_pursuit, hybrid_lqr or ff_lqr, not {self.controller_mode!r}')
         self.exit_guard_from = float(g('exit_guard_from'))
         self.exit_guard_full = float(g('exit_guard_full'))
         if self.exit_guard_from < 0.0 or self.exit_guard_full < self.exit_guard_from:
@@ -1256,12 +1256,23 @@ class PurePursuit(Node):
         # curvature at a_cap / v^2 holds the steering where the force is still
         # near its maximum and lets the car run wide by the physical amount
         # instead of spiralling. Measured usable maxima: 6.4-7.8 m/s^2.
+        if self.controller_mode == 'ff_lqr':
+            # Feed-forward from the PATH's curvature at the point the car reaches
+            # when the command lands (the latency-propagated pose), instead of
+            # the pursuit chord. Pure pursuit steers at a point 0.8-1.9 m ahead,
+            # so through a 1.22 hairpin it commands 1.08-1.16 and runs 0.13 m
+            # wide on every lap (IROS 2026, true pose, 2026-09-18); that 0.13 m
+            # is what sizes the wall margin. The LQR below is the whole
+            # correction here, so it needs its design gains (0.18 / 0.70 /
+            # 0.035, 0.12 rad), not the 0.03 / 0.05 / 0.02 the hybrid mode
+            # runs with beside pursuit.
+            kappa_cmd = float(self.kappa[near])
         if self.steer_a_lat_max > 0.0 and self.speed > 0.5:
             k_cap = self.steer_a_lat_max / (self.speed ** 2)
             kappa_cmd = max(-k_cap, min(k_cap, kappa_cmd))
         e_lat_now = ((x - self.px[near]) * -math.sin(self.psi[near])
                      + (y - self.py[near]) * math.cos(self.psi[near]))
-        if self.controller_mode == 'hybrid_lqr' and self.speed > 0.8:
+        if self.controller_mode in ('hybrid_lqr', 'ff_lqr') and self.speed > 0.8:
             # Pure pursuit supplies the path-curvature feedforward term. LQR
             # only corrects measured lateral/heading/yaw-rate error and is
             # bounded so stale localization cannot replace the proven fallback.

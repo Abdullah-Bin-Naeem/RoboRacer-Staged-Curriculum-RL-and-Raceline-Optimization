@@ -838,10 +838,25 @@ class LocalizationBootstrap(Node):
                     f'(pos std {std}). Tracking is now lidar + map + dead '
                     'reckoning only.')
                 return
+            agrees = gap <= self.tol_m and dyaw <= self.tol_yaw
+            failed = [n for n, ok in (('position', agrees), (scan_text, scan_ok),
+                                      (f'pos std {self.pos_std} > {self.recover_std_ok}', self._recover_ok()))
+                      if not ok]
             reason = (f'the estimate is {gap:.2f} m / {math.degrees(dyaw):.1f} deg from '
-                      f'TRUTH, tolerance {self.tol_m:.2f} m / '
+                      f'the seed, tolerance {self.tol_m:.2f} m / '
                       f'{math.degrees(self.tol_yaw):.1f} deg '
-                      f'(speed {abs(self.speed):.1f} m/s)')
+                      f'(speed {abs(self.speed):.1f} m/s); failed: {", ".join(failed)}')
+            if (self.rec_state == 'seed' and agrees and self.est is not None
+                    and self.attempts >= self.max_attempts):
+                # The estimate sits on the checkpoint, only the scan score or the
+                # spread is short -- typically a car reset facing a wall. The
+                # global fallback cannot converge on this track (std 4-5 m for 15 s,
+                # M03 recovery #3, 2026-09-18), so a pose that agrees with the
+                # prior on every attempt is the better bet; creep tightens it.
+                self.get_logger().warn(f'recovery: accepting the seed on agreement -- {reason}')
+                self._finish(f'seed ACCEPTED on agreement after {self.attempts} attempts: '
+                             f'{gap * 100:.1f} cm / {math.degrees(dyaw):.1f} deg from the prior')
+                return
         else:
             source = (f'TF {self.map_frame} -> {self.base_frame}'
                       if self.verify_via_tf else self.est_topic)

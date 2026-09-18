@@ -1030,8 +1030,14 @@ class PurePursuit(Node):
         # is at or under its target (drag must be fed forward), or the car is
         # ABOVE its target and the plan says accelerate (it must be allowed to
         # fall back). Only the first gets the feedforward. See drag_ff.
-        ff_on = self.accel_ff and (a_pred > 0.0
-                                   or (self.drag_ff and a_pred == 0.0 and v_target >= v))
+        # drag_ff only where the plan is genuinely FLAT and the tire has lateral
+        # room. a_pred is also clamped to 0 when the plan BRAKES with the car
+        # under target, and there the old `a_pred == 0` test fed drive into every
+        # braking zone; at an apex (lateral limit) the extra slip is grip the
+        # tire does not have. M03 (2026-09-18): three contacts in two laps.
+        flat = (self.drag_ff and a_pred == 0.0 and v_target >= v
+                and abs(a_plan) < 0.05 and a_lat < 0.5 * (self.steer_a_lat_max or 7.0))
+        ff_on = self.accel_ff and (a_pred > 0.0 or flat)
         if ff_on:
             # ACCELERATION ONLY. The slip that delivers the plan's (gated)
             # acceleration at landing, gross of drag; the proportional term then

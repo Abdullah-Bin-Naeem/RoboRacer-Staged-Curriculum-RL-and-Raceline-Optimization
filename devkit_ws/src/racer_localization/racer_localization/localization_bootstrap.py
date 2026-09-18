@@ -210,6 +210,7 @@ class LocalizationBootstrap(Node):
         p('track', '')                   # which track's registered spawn to check against; '' = RACER_TRACK
         p('throttle', 0.08)              # gentle -- this is a search, not a lap
         p('steer_gain', 0.6)             # wall-centring proportional gain
+        p('gap_gain', 1.0)               # recovery creep: steer per rad toward the most open beam
         p('pos_std_target', 0.15)        # [m]   converged when below this
         p('yaw_std_target', 0.09)        # [rad] ~5 degrees
         p('straight_distance_m', 3.0)    # creep straight this far, then seek a corner
@@ -280,6 +281,7 @@ class LocalizationBootstrap(Node):
         g = lambda n: self.get_parameter(n).value
         self.throttle = g('throttle')
         self.steer_gain = g('steer_gain')
+        self.gap_gain = float(g('gap_gain'))
         self.pos_target = g('pos_std_target')
         self.yaw_target = g('yaw_std_target')
         self.straight_m = g('straight_distance_m')
@@ -671,7 +673,12 @@ class LocalizationBootstrap(Node):
         if self.truth_pos is not None and self.truth_quat is not None:
             self.est_err = math.hypot(x - self.truth_pos[0], y - self.truth_pos[1])
             self.est_dyaw = abs(wrap(yaw - yaw_from_quat_xyzw(self.truth_quat)))
-        if self.rec_state == 'watch':
+        # 'creep' too: the estimate was confirmed a moment ago, and a car reset
+        # again mid-creep lands at a checkpoint AHEAD of where the creep began.
+        # Frozen at the confirmation instead, every re-seed went back to the first
+        # checkpoint while the car sat 3, 6, 9 m further on (M01, 2026-09-18:
+        # seven resets, then the global search timed out).
+        if self.rec_state in ('watch', 'creep'):
             self.last_good = (x, y, yaw)         # frozen the instant a reset is flagged
 
     def _cb_enc(self, side, msg):
@@ -713,13 +720,30 @@ class LocalizationBootstrap(Node):
         right = self._beam(math.radians(-90))
         front = self._beam(0.0)
 
+        # Steering is + = LEFT in this sim (+0.7 at hairpin 1 gives +2.3 rad/s yaw)
+        # and the scan is REP-103 (+90 deg = left), so steer toward the side with
+        # MORE room: left - right. It was right - left, which steers toward the
+        # nearer wall and grows any offset -- M01's creep curved left from the
+        # first metre and M02's hit the wall within 1 m, five times over.
         steer = 0.0
         if math.isfinite(left) and math.isfinite(right):
-            steer = self.steer_gain * (right - left) / max(left + right, 0.1)
+            steer = self.steer_gain * (left - right) / max(left + right, 0.1)
+        if self.rec_state == 'creep':
+            # A reset checkpoint on a bend points the car at the outside wall
+            # (s 22.2 on IROS 2026: 0.94 m at +30 deg, 3.8 m at -30), where
+            # side-beam centring alone drives straight on. Head for the most
+            # open direction ahead as well.
+            angles = [math.radians(a) for a in range(-60, 61, 10)]
+            ranges = [min(self._beam(a), 4.0) for a in angles]
+            best = angles[int(np.argmax(ranges))]
+            steer += self.gap_gain * best
 
         # Past the straight phase, bias the steering so the car finds a corner --
         # corridors are ambiguous, corners are not.
-        if self.distance > self.straight_m:
+        # Not in a recovery creep: the pose is already confirmed there, and on a
+        # long straight the bias walked the car into the left wall about 3 m in
+        # (M01 at recover_creep_s 3.0, 2 m/s).
+        if self.distance > self.straight_m and self.rec_state != 'creep':
             steer += 0.25
 
         throttle = self.throttle
@@ -814,10 +838,25 @@ class LocalizationBootstrap(Node):
                     f'(pos std {std}). Tracking is now lidar + map + dead '
                     'reckoning only.')
                 return
+            agrees = gap <= self.tol_m and dyaw <= self.tol_yaw
+            failed = [n for n, ok in (('position', agrees), (scan_text, scan_ok),
+                                      (f'pos std {self.pos_std} > {self.recover_std_ok}', self._recover_ok()))
+                      if not ok]
             reason = (f'the estimate is {gap:.2f} m / {math.degrees(dyaw):.1f} deg from '
-                      f'TRUTH, tolerance {self.tol_m:.2f} m / '
+                      f'the seed, tolerance {self.tol_m:.2f} m / '
                       f'{math.degrees(self.tol_yaw):.1f} deg '
-                      f'(speed {abs(self.speed):.1f} m/s)')
+                      f'(speed {abs(self.speed):.1f} m/s); failed: {", ".join(failed)}')
+            if (self.rec_state == 'seed' and agrees and self.est is not None
+                    and self.attempts >= self.max_attempts):
+                # The estimate sits on the checkpoint, only the scan score or the
+                # spread is short -- typically a car reset facing a wall. The
+                # global fallback cannot converge on this track (std 4-5 m for 15 s,
+                # M03 recovery #3, 2026-09-18), so a pose that agrees with the
+                # prior on every attempt is the better bet; creep tightens it.
+                self.get_logger().warn(f'recovery: accepting the seed on agreement -- {reason}')
+                self._finish(f'seed ACCEPTED on agreement after {self.attempts} attempts: '
+                             f'{gap * 100:.1f} cm / {math.degrees(dyaw):.1f} deg from the prior')
+                return
         else:
             source = (f'TF {self.map_frame} -> {self.base_frame}'
                       if self.verify_via_tf else self.est_topic)

@@ -1,0 +1,1 @@
+/root/Documents/roboracer/experiments/iros2026/T09_h70b_steercap78/run.csv: no laps inside [10.78, 11.48] s of 2 complete

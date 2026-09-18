@@ -1,0 +1,19 @@
+{
+  "id": "T01",
+  "name": "h70b_baseline_45hz",
+  "date": "2026-09-17",
+  "started": "2026-09-17T19:50:29",
+  "track": "iros2026",
+  "line": "raceline_tum_iqp_h7.0_a7.0b.csv",
+  "laps": 25,
+  "max_contacts": 1,
+  "hz_cap": "45",
+  "overrides": [],
+  "hypothesis": "Reproduce the teammates' run 18 on this machine through the tuning runner: multi-track registry defaults (v_max 8.5, target_lead 0, slip_circle 0.12, accel_ff 1, warmup cap 4.0 m/s over 19 m, enc_rate_window_s 0.05) on raceline_tum_iqp_h7.0_a7.0b.csv at 45 Hz; the control for every controller change on this line",
+  "prediction": "0 contacts in 25 laps; best 9.45-9.55, median 9.55-9.70 (run 18: 19 clean laps, best 9.45); tightest clearance at s 39.6-40.2",
+  "git_branch": "adil_iros",
+  "git_commit": "89a0f0a",
+  "git_dirty": false,
+  "verdict_short": "CONTACT lap 1 at C3 exit (s 37.8): 0.34 m wide right, steering at half the path curvature, loc 4 cm",
+  "verdict": "Contact on the first timed lap at the C3 exit (s 37.8, (4.6, 1.3)): e_lat -0.14 -> -0.41 in 0.3 s at 3.6-3.8 m/s, heading error -13..-15 deg, commanded steering 0.28-0.33 (kappa ~0.55) against a path kappa 0.66 and an achieved 0.46; localization 4-5 cm, delay 103 ms. Same area the registry flags as this line's tightest (s 39.6-40.2). One sample: repeated as T02 with max-contacts 3."
+}

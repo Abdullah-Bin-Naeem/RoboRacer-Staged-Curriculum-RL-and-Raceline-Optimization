@@ -1,0 +1,22 @@
+{
+  "id": "V2",
+  "name": "mt_kb12_z4041_h70_50laps",
+  "date": "2026-09-17",
+  "started": "2026-09-17T21:20:12",
+  "track": "iros2026",
+  "line": "raceline_mt_kb12_z4041_h70.csv",
+  "laps": 50,
+  "max_contacts": 2,
+  "hz_cap": "45",
+  "overrides": [
+    "control_hz:=45",
+    "warmup_v_max:=2.0",
+    "warmup_dist_m:=21.0",
+    "enc_rate_window_s:=0.10"
+  ],
+  "hypothesis": "V1's only failure mode on a healthy loop was the s-40 bend wall (line 0.35 m off it); the same geometry regenerated with a 0.25 m right margin there (0.62 m) and profiled exactly as the teammates' line (7.0 everywhere, accel 5.0, brake 5.5, 8.5 m/s), with the V1 controller settings",
+  "prediction": "0 contacts in 50 laps; mean 9.6-9.75; s-40 bend clearance >= 0.25 m",
+  "git_branch": "adil_iros",
+  "git_commit": "c553129",
+  "git_dirty": false
+}

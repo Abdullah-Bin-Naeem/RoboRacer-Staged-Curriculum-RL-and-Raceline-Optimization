@@ -46,6 +46,17 @@ COPY raceline ${RACER_REPO}/raceline
 COPY tools ${RACER_REPO}/tools
 COPY ros_env.sh ${RACER_REPO}/ros_env.sh
 
+# The multi-track race config is not all in the registry: run_mt.sh passes
+# amcl_params_file:=experiments/iros2026/params/amcl_beams360.yaml, so the params
+# and the launch/teardown scripts have to be in the image or the winning config
+# cannot be reproduced in here. Only those two directories -- the rest of
+# experiments/ is 86 MB of run artefacts that nothing reads at run time.
+COPY experiments/iros2026/params ${RACER_REPO}/experiments/iros2026/params
+COPY experiments/iros2026/scripts ${RACER_REPO}/experiments/iros2026/scripts
+
+# run_mt.sh writes log_csv to logs/; scripts/run.sh bind-mounts it to the host.
+RUN mkdir -p ${RACER_REPO}/logs
+
 # tcp_nodelay:=true preloads this into the bridge (bridge.launch.py).
 RUN gcc -shared -fPIC -O2 -o tools/libnodelay.so tools/nodelay.c -ldl
 

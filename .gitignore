@@ -54,3 +54,6 @@ events.out.tfevents.*
 /.data
 tools/libnodelay.so
 runs_docker/
+# run_mt.sh (and anything else writing log_csv into the mounted logs/) drops run
+# CSVs here; only the racer_*.log files in logs/ are tracked.
+logs/*.csv

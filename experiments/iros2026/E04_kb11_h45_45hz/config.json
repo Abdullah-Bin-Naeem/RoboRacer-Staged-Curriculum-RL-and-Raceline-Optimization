@@ -1,0 +1,22 @@
+{
+  "id": "E04",
+  "name": "kb11_h45_45hz",
+  "date": "2026-09-17",
+  "started": "2026-09-17T19:37:34",
+  "track": "iros2026",
+  "line": "raceline_kb11_h45_a45_b45.csv",
+  "laps": 25,
+  "max_contacts": 1,
+  "hz_cap": "45",
+  "overrides": [
+    "enc_window_s:=0.10",
+    "cmd_delay_tick_seed:=1"
+  ],
+  "hypothesis": "Hairpins regenerated at kappa 1.1 (20 deg of steering, was 23-26) and planned at 4.5 m/s^2 keep the front tires off lock, so C1/C4 no longer run wide; with enc_window_s 0.10 (E03 braking fix) and the delay seeded from the tick on the out-lap",
+  "prediction": "0 contacts in 25 laps; C1/C4 worst outward < 0.25 m, <5 % of hairpin ticks at lock; median 10.4-10.7 s (profile 10.18 + ~0.3)",
+  "git_branch": "adil_iros",
+  "git_commit": "5edc136",
+  "git_dirty": true,
+  "verdict": "INVALID (simulator window minimized for the run): delay 126-141 ms throughout instead of the ~69 ms the tick seed measured at start. Still the first run with clean hairpins: 3 timed laps 10.44-10.53 s (std 0.04), C1/C4 worst outward 0.15/0.08 m, 0 % at steering lock, apex speeds on plan (2.00/1.95 vs 2.02), encoder-window speed estimate p90 error 0.22 m/s. Contact on lap 4 at s 13.8 (C2 exit onto the straight) with e_lat only -0.16 m: body clearance there is 0.03-0.10 m on every lap of every run, the line's tightest spot. Rerun as E05 with the window visible; C2-exit margin zone is the next geometry fix if it recurs.",
+  "verdict_short": "INVALID (sim minimized, delay 130 ms); hairpins clean 3 laps 10.44-10.53; contact C2 exit s 13.8 (clearance 0.03-0.10 every lap)"
+}

@@ -154,6 +154,11 @@ def main():
                         'across the lap. Pick it from what a contact costs (10 s under the rules), not from what '
                         'makes the predicted lap look good.')
     p.add_argument('--margin-smooth', type=float, default=1.5, help='m, window the margin profile is smoothed over')
+    p.add_argument('--margin-zones', default='',
+                   help='s0:s1:m[,s0:s1:m...]: FLOOR on the margin inside each s-range, and inside a zone the wall '
+                        'bound is not clipped at n=0, so a reference line already inside the margin is pushed out. '
+                        'Placed from analyze_run contacts: on IROS 2026 the car exits the s 36-37.5 left-hander '
+                        '0.13-0.22 m wide into a right wall 0.39 m off the line at s 39, and three variants hit there.')
     p.add_argument('--half-width', type=float, default=0.135)
     p.add_argument('--rate-iters', type=int, default=4,
                    help='re-solve this many times, each time tightening the internal steering-rate limit by the '
@@ -174,9 +179,25 @@ def main():
               f'{marg.min():.3f}..{marg.max():.3f} m, mean {marg.mean():.3f} (uniform would be {a.margin:.3f})')
     else:
         marg = np.full(n_pts, a.margin)
+    inzone = np.zeros(n_pts, bool)
+    for spec in [z for z in a.margin_zones.split(',') if z]:
+        s0, s1, m = (float(v) for v in spec.split(':'))
+        z = ((L['s'] >= s0) & (L['s'] <= s1)) if s0 <= s1 else ((L['s'] >= s0) | (L['s'] <= s1))
+        marg[z] = np.maximum(marg[z], m)
+        inzone |= z
+        print(f'margin zone s {s0:g}-{s1:g}: floor {m:.3f} m on {int(z.sum())} points')
     c = a.half_width + marg
     lo = np.minimum(0.0, -(L['wr'] - c))        # clipped so n = 0 is always feasible
     hi = np.maximum(0.0, (L['wl'] - c))
+    if inzone.any():
+        # inside a zone the reference may sit within the margin: let the bound go
+        # positive (forces the line left) but never past the other wall's bound
+        lo_z = -(L['wr'] - c)
+        lo[inzone] = np.minimum(lo_z[inzone], hi[inzone] - 1e-3)
+        hi_z = (L['wl'] - c)
+        hi[inzone] = np.maximum(hi_z[inzone], lo[inzone] + 1e-3)
+        f = inzone & (lo > 1e-6)
+        print(f'  zone forces the line LEFT on {int(f.sum())} points, up to {lo[f].max() if f.any() else 0:.3f} m')
     print(f'reference {os.path.basename(a.line)}: {n_pts} points, {lap_ref:.2f} m, '
           f'|kappa|max {np.abs(L["kappa"]).max():.2f}')
     print(f'corridor after {c.mean():.3f} m of body+margin (mean): can move left on {100*np.mean(hi>1e-6):.0f} % of points, '

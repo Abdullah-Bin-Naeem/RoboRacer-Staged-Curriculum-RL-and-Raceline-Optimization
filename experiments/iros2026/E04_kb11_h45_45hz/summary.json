@@ -1,0 +1,111 @@
+{
+  "id": "E04",
+  "name": "kb11_h45_45hz",
+  "date": "2026-09-17",
+  "line": "raceline_kb11_h45_a45_b45.csv",
+  "overrides": [
+    "enc_window_s:=0.10",
+    "cmd_delay_tick_seed:=1"
+  ],
+  "hz_cap": "45",
+  "laps_target": 25,
+  "profile_lap_s": 10.177,
+  "timed_laps": 3,
+  "lap_source": "simulator",
+  "lap_best": 10.442,
+  "lap_median": 10.481,
+  "lap_mean": 10.485,
+  "lap_std": 0.037,
+  "lap_worst": 10.533,
+  "laps_under_10": 0,
+  "gap_to_profile_s": 0.304,
+  "contacts": 3,
+  "first_contact_t": 50.6,
+  "first_contact_s": 13.27,
+  "e_lat_abs": {
+    "mean": 0.0524,
+    "p90": 0.1074,
+    "max": 0.1627
+  },
+  "outward": {
+    "mean": 0.0021,
+    "p90": 0.0858,
+    "max": 0.1544
+  },
+  "clearance_min": 0.035,
+  "clearance_p05": 0.106,
+  "loc_err": {
+    "mean": 0.1121,
+    "p90": 0.2734,
+    "max": 0.5189
+  },
+  "a_lat": {
+    "mean": 2.76,
+    "p90": 5.7555,
+    "max": 7.4909
+  },
+  "v_est_err": {
+    "mean": 0.1097,
+    "p90": 0.2208,
+    "max": 0.7799
+  },
+  "delay_median": 0.129,
+  "loop_hz": 23.2,
+  "steer_lock_pct": 0.0,
+  "corners": [
+    {
+      "name": "C1",
+      "s": "4.2-7.2",
+      "side": "L",
+      "kappa": 1.1,
+      "v_plan_apex": 2.02,
+      "v_true_apex": 2.0,
+      "outward_max": 0.154,
+      "abs_e_p90": 0.126,
+      "clearance_min": 0.146,
+      "a_lat_max": 4.66,
+      "steer_lock_pct": 0.0
+    },
+    {
+      "name": "C2",
+      "s": "10.2-11.9",
+      "side": "L",
+      "kappa": 0.63,
+      "v_plan_apex": 3.34,
+      "v_true_apex": 3.33,
+      "outward_max": 0.065,
+      "abs_e_p90": 0.096,
+      "clearance_min": 0.103,
+      "a_lat_max": 6.75,
+      "steer_lock_pct": 0.0
+    },
+    {
+      "name": "C3",
+      "s": "23.0-24.6",
+      "side": "L",
+      "kappa": 0.62,
+      "v_plan_apex": 3.36,
+      "v_true_apex": 3.31,
+      "outward_max": 0.11,
+      "abs_e_p90": 0.087,
+      "clearance_min": 0.19,
+      "a_lat_max": 6.89,
+      "steer_lock_pct": 0.0
+    },
+    {
+      "name": "C4",
+      "s": "27.7-30.7",
+      "side": "L",
+      "kappa": 1.1,
+      "v_plan_apex": 2.02,
+      "v_true_apex": 1.95,
+      "outward_max": 0.084,
+      "abs_e_p90": 0.077,
+      "clearance_min": 0.125,
+      "a_lat_max": 5.01,
+      "steer_lock_pct": 0.0
+    }
+  ],
+  "gate_50": false,
+  "gate_sub10": false
+}

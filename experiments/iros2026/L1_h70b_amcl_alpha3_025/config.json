@@ -1,0 +1,25 @@
+{
+  "id": "L1",
+  "name": "h70b_amcl_alpha3_025",
+  "date": "2026-09-17",
+  "started": "2026-09-17T21:25:18",
+  "track": "iros2026",
+  "line": "raceline_tum_iqp_h7.0_a7.0b.csv",
+  "laps": 25,
+  "max_contacts": 2,
+  "hz_cap": "45",
+  "overrides": [
+    "control_hz:=45",
+    "warmup_v_max:=2.0",
+    "warmup_dist_m:=21.0",
+    "enc_rate_window_s:=0.10",
+    "amcl_params_file:=/root/Documents/roboracer/experiments/iros2026/params/amcl_alpha3_025.yaml"
+  ],
+  "hypothesis": "Audit: 14/21 valid first contacts are hairpin 1 with along-track localization error; at turn-in the estimate lags the car (clean laps -0.10..-0.31 m, contact laps to -0.8, 13/15 wide). AMCL alpha3 0.10 gives too little along-track particle spread after the 17 m straight, so the end wall pulls the estimate forward late; 0.25 lets it correct within the braking zone",
+  "prediction": "hairpin-1 turn-in along error mean closer to 0 and p10..p90 spread narrower than V1 (-0.30..-0.08); cross-track p90 stays <= 0.06 m; fewer hairpin-1 contacts",
+  "git_branch": "adil_iros",
+  "git_commit": "c553129",
+  "git_dirty": true,
+  "verdict_short": "REJECTED: 7 laps 9.49-9.66 then hp1 contact wide; turn-in along error WORSE (mean -0.26, p10 -0.59 vs V1 -0.18/-0.30)",
+  "verdict": "Rejected. 7 timed laps 9.493-9.660, contact lap 8 at hairpin 1 (e_lat -0.81, along 0.78). Hairpin-1 turn-in along error mean -0.26, p10 -0.59, p90 -0.04 (V1: -0.18/-0.30/-0.08): a wider along-track spread adds noise instead of speeding the correction. Cross-track unchanged 0.04. The lag at turn-in is a consistent -0.18 m on clean laps, i.e. a timing offset; next lever is latency_comp_s (0.05, tuned at a 175 ms loop) -> 0.09 (L2)."
+}

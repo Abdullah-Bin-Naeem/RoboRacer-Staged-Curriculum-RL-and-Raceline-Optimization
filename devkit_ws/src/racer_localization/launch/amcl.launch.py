@@ -87,6 +87,8 @@ def _nodes(context, *args, **kwargs):
                 'require_convergence': cfg('require_convergence').lower() == 'true',
                 'recover': cfg('recover').lower() == 'true',
                 'recover_use_checkpoints': cfg('recover_use_checkpoints').lower() == 'true',
+                'recover_settle_s': float(cfg('recover_settle_s')),
+                'recover_creep_s': float(cfg('recover_creep_s')),
             }],
             condition=IfCondition(LaunchConfiguration('bootstrap')),
         ),
@@ -134,6 +136,8 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'recover_use_checkpoints', default_value='true',
             description='false forces the no-data recovery tier (last pose 0.9 m back, wide prior), to test it where truth exists'),
+        DeclareLaunchArgument('recover_settle_s', default_value='1.0'),
+        DeclareLaunchArgument('recover_creep_s', default_value='1.0'),
         # Fallback pose, used only when the bootstrap seed is unavailable.
         DeclareLaunchArgument('initial_x', default_value=''),
         DeclareLaunchArgument('initial_y', default_value=''),

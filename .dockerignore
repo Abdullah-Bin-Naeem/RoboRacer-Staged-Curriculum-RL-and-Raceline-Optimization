@@ -1,11 +1,20 @@
-# The Dockerfile copies only devkit_ws/src, raceline, tools and ros_env.sh;
-# everything else stays out of the build context.
+# The Dockerfile copies only devkit_ws/src, raceline, tools, ros_env.sh and the
+# multi-track params/scripts; everything else stays out of the build context.
+# An un-ignore only takes effect if every parent directory is un-ignored too,
+# which is why experiments/ and experiments/iros2026 are listed before the
+# two leaves; the 86 MB of run artefacts beside them stay excluded.
 *
 !devkit_ws/src
 !raceline
 !tools
 !ros_env.sh
 !docker/entrypoint.sh
+!experiments
+experiments/*
+!experiments/iros2026
+experiments/iros2026/*
+!experiments/iros2026/params
+!experiments/iros2026/scripts
 
 # colcon artefacts and caches inside the copied directories
 **/build/

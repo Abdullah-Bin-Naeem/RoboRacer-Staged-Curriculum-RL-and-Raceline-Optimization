@@ -1,0 +1,24 @@
+{
+  "id": "T10",
+  "name": "h70b_hp60",
+  "date": "2026-09-17",
+  "started": "2026-09-17T20:13:38",
+  "track": "iros2026",
+  "line": "raceline_h70b_hp60.csv",
+  "laps": 25,
+  "max_contacts": 2,
+  "hz_cap": "45",
+  "overrides": [
+    "control_hz:=45",
+    "warmup_v_max:=2.0",
+    "warmup_dist_m:=21.0",
+    "enc_rate_window_s:=0.10"
+  ],
+  "hypothesis": "Same geometry as the teammates' line, hairpins (|kappa| > 1.0, +-1.2 m) profiled at 6.0 m/s^2 instead of 7.0 (apex 2.22 vs 2.41 m/s), rest unchanged (7.0 lateral, accel 5.0, brake 5.5, 8.5 m/s): the car stays inside the kappa it can achieve at hairpin speed; curvature cap 7.0 now leaves 18 % headroom at the apex",
+  "prediction": "0 contacts in 25 laps; hairpin worst outward < 0.3 m; mean 9.65-9.8 (about +0.1 s vs T03)",
+  "git_branch": "adil_iros",
+  "git_commit": "0917771",
+  "git_dirty": false,
+  "verdict_short": "Hairpins 6.0: 15 laps 9.99-10.38 (over 10 s), contacts at h1 and h2 EXITS while accelerating at steer 0.6-0.9, kappa 0.62-0.79",
+  "verdict": "Partial. First contact after 5 clean timed laps (T06-T09: inside lap 2), 15 timed laps at 9.99-10.38 s, 2 contacts: hairpin 1 exit (lap 7) and hairpin 2 exit (lap 16). Both at 2.1-2.5 m/s, localization 5-8 cm, steering 0.63-0.90, target rising 2.23 -> 2.89 and the car accelerating, achieved kappa 0.62-0.79 against 1.2-0.9: exit understeer under acceleration (ICRA run 14/15 signature). Slower hairpins alone cost 0.4 s and did not remove it. Next: accel_ff 0 on the fast line (T11)."
+}

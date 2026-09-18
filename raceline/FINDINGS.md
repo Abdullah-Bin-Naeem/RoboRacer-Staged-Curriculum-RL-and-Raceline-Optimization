@@ -343,3 +343,74 @@ Still open: the follower's 0.2 m/s deficit is untouched (the run predicts 9.13
 and drives 9.45), `mode:=race` has never been run on this track, and this line
 has 30 clean laps against the previous line's 63.
 
+
+## 11. Pushing the lap time on IROS 2026 (2026-09-18)
+
+Plain summary of one day's runs. Every run below was at the 45 Hz loop
+(`tcp_nodelay:=true loop_hz_cap:=45`), on Adil's race arguments (slip dead
+reckoning, 360-beam AMCL, hybrid LQR), fresh simulator each time. A run is
+"clean" when the car never touched a wall.
+
+### Best runs
+
+| stack | line | laps | mean | best |
+|---|---|---|---|---|
+| **race-legal (AMCL)** | `rl_mt_lat7.25_hp70_bendz65_L70.csv` | 57 clean of 58 | **8.92 s** | 8.85 |
+| **ground-truth pose (not race-legal)** | `rl_mt_tb10_lat875_b55_L70.csv` + `steer_a_lat_max:=8.0` | 22 clean | **8.45 s** | 8.40 |
+
+The ground-truth run is the controller's ceiling on this track: same car,
+same follower, no localization error. The gap between the two rows, about
+half a second, is what localization costs today, and that is being fixed
+separately.
+
+### What we did, in order
+
+Start of the day: 8.90 s on AMCL, 50 clean laps, lateral limit 7.25.
+
+1. **Tried the obvious knobs on AMCL and they all hit the same wall.** Lateral
+   7.50, braking later, more acceleration: each one contacted at the exit of
+   the corner before the bend (s 38-39), where the line sits 0.35 m from the
+   right wall and the car always runs 0.15 m wide. Capping the lateral limit at
+   that one corner (6.5) fixed it: 57 clean laps, 8.92 s. Lap time did not
+   move, but the car stopped hitting.
+2. **Switched to the true pose to find out what the controller alone can do**
+   (`drive_on_truth:=true`). Same line: 8.88 s. So localization was costing
+   only 0.04 s at that point; the rest was the line and the follower.
+3. **Raised the lateral limit in steps**, 7.25 -> 7.50 -> 7.75 -> 8.0 -> 8.25
+   -> 8.50 -> 8.75, hairpins held a step lower. Every step was clean and the
+   car's corner errors never grew. Together: 8.88 -> 8.49 s.
+4. **Re-solved the line with the smaller wall margin the true-pose car needs**
+   (its worst error is 0.09 m against 0.13 on AMCL). 0.08 s.
+5. **Found the follower's own lateral cap** (`steer_a_lat_max`, default 7.0)
+   was clipping the steering at every hairpin apex and starving the throttle
+   there. Raised to 8.0: 0.05 s. 8.5 was worse, so 8.0 it is.
+6. **Braking budget 5.0 -> 5.5**: 0.04 s. 6.0 slid at a hairpin exit and hit;
+   rejected.
+7. **Things that did nothing:** top speed 9.5 (the car cannot reach it before
+   the braking point), and pulling the speed target back (`target_lead_s`
+   -0.06); it moved the loss around and ran every corner a few centimetres
+   wider.
+
+Result on the true pose: 8.88 -> 8.45 s in eleven runs, every kept step clean.
+
+### Where the rest is
+
+The best line predicts 8.30 s and the car drives 8.45. The missing 0.15 s is
+in the hairpin apexes: pure pursuit cuts a chord through a 1.22 curvature
+corner and runs 0.13 m wide, and the throttle's slip budget collapses at the
+apex. That 0.13 m is also what sets the wall margin, which is the single
+biggest cost on the lap (about 0.5 s). The next lever is therefore the
+steering law, not another budget. A physics floor for this car on this track,
+tire peak everywhere and no margin, is about 7.1 s; a realistic ceiling with a
+better controller is 7.8-7.9 on the true pose and about 8.0 race-legal.
+
+### Carrying the gains to AMCL
+
+The same budgets on the AMCL-margin geometry ran 8.54 s on its clean laps but
+the localized car exits hairpin 1 0.25 m wide at the 8.0 hairpin budget
+(0.13 on truth) and contacted there. The line to continue from is
+`rl_mt_amcl_lat80_hp725_b55_L70.csv` (hairpins back at 7.25, predicts 8.55)
+with `warmup_dist_m:=28` so lap 1 accelerates after the right-wall zone. That
+run also exposed a recovery bug: after two contacts the re-seed picked the
+wrong checkpoint (estimate 12 m and 27 m off) and the run never came back.
+One contact should cost 10 s, not the session.

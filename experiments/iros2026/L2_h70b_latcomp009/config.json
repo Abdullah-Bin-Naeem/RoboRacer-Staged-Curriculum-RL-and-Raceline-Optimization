@@ -1,0 +1,24 @@
+{
+  "id": "L2",
+  "name": "h70b_latcomp009",
+  "date": "2026-09-17",
+  "started": "2026-09-17T21:27:50",
+  "track": "iros2026",
+  "line": "raceline_tum_iqp_h7.0_a7.0b.csv",
+  "laps": 25,
+  "max_contacts": 2,
+  "hz_cap": "45",
+  "overrides": [
+    "control_hz:=45",
+    "warmup_v_max:=2.0",
+    "warmup_dist_m:=21.0",
+    "enc_rate_window_s:=0.10",
+    "latency_comp_s:=0.09"
+  ],
+  "hypothesis": "The estimate lags the car by a consistent ~0.18 m at hairpin-1 turn-in (V1), a timing offset of ~40 ms at braking speed; latency_comp_s (steering-pose propagation) is still 0.05 s from the 175 ms loop while the measured delay is ~0.095 s. 0.09 moves the steering pose ~0.15-0.2 m forward there and restores on-time turn-in",
+  "prediction": "hairpin-1 contacts gone or rarer; hairpin worst outward smaller than V1; no new inside cuts (check C4 / chevrons); laps 9.5-9.6",
+  "git_branch": "adil_iros",
+  "git_commit": "57ef027",
+  "git_dirty": false,
+  "verdict_short": "INVALID (startup): race.launch passed an empty amcl_params_file to AMCL (launch-config inheritance bug), fixed; rerun as L2c"
+}

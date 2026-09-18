@@ -90,13 +90,14 @@ TUNABLES = ('lookahead_min', 'lookahead_max', 'lookahead_k', 'lookahead_curv_gai
             'lqr_k_lat', 'lqr_k_head', 'lqr_k_yaw', 'lqr_max_correction_rad',
             'v_max', 'a_lat_max', 'throttle_max', 'steering_gain',
             'warmup_v_max', 'warmup_dist_m',
+            'recover_warmup_v_max', 'recover_warmup_dist_m',
             'curvature_preview_m',
             # Slip throttle and fused speed estimate (pure_pursuit.py docstring).
             # Tunable from the command line for the same reason as the rest:
             # limits are measured on the car, and a rebuild per attempt is tedious.
             'slip_accel', 'slip_brake', 'u_launch', 'u_per_throttle', 'v_slip_den', 'tire_rise_slope',
-            'observer_wheels', 'slip_circle', 'accel_ff' 'drag_ff',
-            'cmd_delay_s', 'slip_kp', 'target_lead_s',
+            'observer_wheels', 'slip_circle', 'accel_ff', 'drag_ff', 'brake_cap_margin',
+            'cmd_delay_s', 'slip_kp', 'target_lead_s', 'enc_rate_window_s',
             # control loop rate; 20 matches the 17.5 Hz sim tick seen here, raise it
             # with the tick (headless sim, faster machine) so the loop is not the limit
             'control_hz',
@@ -164,6 +165,13 @@ def _launch(context, *args, **kwargs):
     dev_lap = 'false' if race_mode else cfg('dev_lap_telemetry')
     bootstrap_seconds = '0.0' if race_mode else cfg('bootstrap_seconds')
     use_tf_pose = 'true' if race_mode else cfg('use_tf_pose')
+    # DIAGNOSTIC ONLY. Steer on the simulator's own pose instead of the
+    # localizer's, so a run separates "the controller cannot follow this line"
+    # from "the estimate is not good enough to follow it". Nothing else changes:
+    # the localizer still runs, so its error is still logged beside a car that
+    # is not using it. Refused in race mode, and the follower prints
+    # restricted.warn() on top of the line printed here.
+    drive_on_truth = (not race_mode) and cfg('drive_on_truth').lower() == 'true'
     # NOT forced. bootstrap_mode:=truth is race-legal: the first lap is a warmup
     # and the timer starts after it, so the one-shot /ips read that seeds the
     # localizer happens inside the permitted window, and localization_bootstrap
@@ -223,9 +231,18 @@ def _launch(context, *args, **kwargs):
                     'bootstrap_mode': bootstrap_mode,
                     'require_convergence': cfg('require_convergence'),
                     'recover': cfg('recover'),
-                    'recover_use_checkpoints': cfg('recover_use_checkpoints')}
+                    'recover_use_checkpoints': cfg('recover_use_checkpoints'),
+                    'recover_settle_s': cfg('recover_settle_s'),
+                    'recover_creep_s': cfg('recover_creep_s')}
         loc_args['map_yaml' if localizer == 'amcl' else 'map_graph'] = (
             map_yaml if localizer == 'amcl' else map_graph)
+        # A/B a localizer parameter set without touching the package's yaml.
+        # Always pass a real path: launch configurations are inherited by the
+        # include, so an empty value declared here would override amcl.launch.py's
+        # own default and start map_server/amcl with no parameters (they hang).
+        if localizer == 'amcl':
+            loc_args['amcl_params_file'] = (cfg('amcl_params_file')
+                                            or os.path.join(loc_share, 'config', 'amcl.yaml'))
 
         # Warn only when nothing will seed this localizer: no global search AND
         # no one-shot truth seed leaves it on the hardcoded constant, which
@@ -290,8 +307,9 @@ def _launch(context, *args, **kwargs):
     # 6. follower, on a delay so the localizer is publishing before it asks
     follower_args = {
         'path_csv': path_csv,
-        'pose_topic': spec['pose_topic'] if spec else cfg('pose_topic'),
-        'use_tf_pose': use_tf_pose,
+        'pose_topic': (f'{frames.NS}/odom' if drive_on_truth
+                       else (spec['pose_topic'] if spec else cfg('pose_topic'))),
+        'use_tf_pose': 'false' if drive_on_truth else use_tf_pose,
         'dev_lap_telemetry': dev_lap,
         'wait_for_ready': ready_latched,
         'bootstrap_seconds': bootstrap_seconds,
@@ -337,6 +355,8 @@ def generate_launch_description():
             'map_graph', default_value='',
             description="serialized pose graph, slam only; empty = the track's"),
         DeclareLaunchArgument('rviz', default_value='true'),
+        DeclareLaunchArgument('amcl_params_file', default_value='',
+                              description='AMCL yaml to use instead of racer_localization/config/amcl.yaml (empty = the package default)'),
 
         # Turn pieces off when running them yourself.
         DeclareLaunchArgument('bridge', default_value='true'),
@@ -348,9 +368,18 @@ def generate_launch_description():
                               description='re-localize after a wall reset; see localization_bootstrap'),
         DeclareLaunchArgument('recover_use_checkpoints', default_value='true',
                               description='false forces the no-data recovery tier; see localization_bootstrap'),
+        DeclareLaunchArgument('recover_settle_s', default_value='1.0',
+                              description='pause after a reset seed before creep'),
+        DeclareLaunchArgument('recover_creep_s', default_value='1.0',
+                              description='gentle lidar creep duration after recovery'),
         DeclareLaunchArgument(
             'distance_source', default_value='encoder',
-            description="dead reckoning distance source, 'encoder' or 'tire'; see dead_reckoning.py"),
+            description="dead reckoning distance source, 'encoder', 'tire' or 'slip'; see dead_reckoning.py"),
+        DeclareLaunchArgument(
+            'drive_on_truth', default_value='false',
+            description='DIAGNOSTIC: steer on the simulator ground-truth pose instead of the '
+                        'localizer. NOT race-legal, refused by mode:=race, and the follower says so '
+                        'in red. Use it to separate controller error from localization error.'),
         DeclareLaunchArgument('chassis', default_value='true'),
         DeclareLaunchArgument('localization', default_value='true'),
         DeclareLaunchArgument('follower', default_value='true'),

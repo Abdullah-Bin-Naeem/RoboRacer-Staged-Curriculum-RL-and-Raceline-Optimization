@@ -1,0 +1,25 @@
+{
+  "id": "T12",
+  "name": "mt_kb12_z4041_hp65",
+  "date": "2026-09-17",
+  "started": "2026-09-17T20:20:36",
+  "track": "iros2026",
+  "line": "raceline_mt_kb12_z4041_hp65.csv",
+  "laps": 25,
+  "max_contacts": 2,
+  "hz_cap": "45",
+  "overrides": [
+    "control_hz:=45",
+    "warmup_v_max:=2.0",
+    "warmup_dist_m:=21.0",
+    "enc_rate_window_s:=0.10",
+    "accel_ff:=0.0"
+  ],
+  "hypothesis": "Teammates' geometry regenerated with a 0.25 m right margin at s 36.5-41 (line 0.58 m from the s-40 wall, was 0.34) and hairpins profiled at 6.5 (apex 2.32): removes the s-40 contact of T11 and part of the hairpin-exit margin, controller at the best settings with accel_ff 0",
+  "prediction": "0-1 contacts in 25 laps; clearance at s 39-41 >= 0.2 m; mean 9.65-9.8",
+  "git_branch": "adil_iros",
+  "git_commit": "2fc4926",
+  "git_dirty": true,
+  "verdict_short": "Out-lap contact hairpin 2 at plan speed (2.3), steer 0.75, loc 6 cm: late turn-in (heading err -25 vs T03 clean -4), kappa 0.66-0.90",
+  "verdict": "Out-lap, hairpin 2 (s 41-43): speed on plan 2.24-2.35 vs 2.32, localization 5-9 cm, steering 0.72-0.80 (not at lock), achieved kappa 0.66-0.90 vs 1.2, heading error opened to -25..-29 deg, contact 0.56 m wide. Compared with T03's clean passes at the same speed (kappa 1.12-1.22 at steer 0.72-0.75, heading error ~-4 deg) the difference is turn-in timing: steering was 0.37 when the path was already at kappa 0.66 and yaw rate built too late. The s-40 margin was not reached. Next: lookahead_min 1.0 (earlier turn-in, T13)."
+}

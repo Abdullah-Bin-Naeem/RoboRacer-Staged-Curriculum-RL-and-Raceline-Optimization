@@ -235,6 +235,12 @@ class PurePursuit(Node):
         # gentler acceleration until it has seen one.
         p('warmup_v_max', 0.0)
         p('warmup_dist_m', 0.0)
+        # After a wall reset the follower used to resume at full race speed on a
+        # pose that is still on the duct. M11: 9 recoveries in ~20 s, every one
+        # a re-hit within 1 s of "follower resumes". Cap the target for a few
+        # metres after /localization_ready returns; 0 dist disables.
+        p('recover_warmup_v_max', 2.0)
+        p('recover_warmup_dist_m', 8.0)
         # ---- speed source ---------------------------------------------
         # 'tire' (default), 'fused' or 'encoder'. See the module docstring: the
         # encoder is the throttle echo in this simulator, so 'tire' runs the
@@ -330,6 +336,15 @@ class PurePursuit(Node):
         # (ICRA run 18), and a car already ABOVE its target must be allowed to
         # fall back to it rather than hold speed against drag.
         p('drag_ff', 0.0)
+        # Braking: never command a wheel more than this above the TARGET. Below the
+        # band the wheel is placed relative to the observer's speed (v_land - s_brk
+        # * den), and the observer runs 0.4-0.9 m/s HIGH at hairpin turn-in on every
+        # IROS run (it has no cornering drag), exactly where the friction circle
+        # also shrinks s_brk to its 0.02 floor -- so the "brake" wheel sat above the
+        # real car and DROVE it into the apex (M03 hp2, M08 hp1: +0.95 m/s, IMU
+        # +2.6 m/s2 while braking). Capping against the target cannot be fooled by
+        # the observer. Only ever lowers u, only when braking. 0 = off.
+        p('brake_cap_margin', 0.0)
         # Loop delay from publishing a throttle to seeing it on the wheel. MEASURED
         # 0.15 s (see _throttle_slip). Everything in the band is predicted this far
         # ahead with the observer's acceleration. 0 = the old behaviour.
@@ -443,8 +458,8 @@ class PurePursuit(Node):
         self.lqr_k_head = float(g('lqr_k_head'))
         self.lqr_k_yaw = float(g('lqr_k_yaw'))
         self.lqr_max_correction = float(g('lqr_max_correction_rad'))
-        if self.controller_mode not in ('pure_pursuit', 'hybrid_lqr'):
-            raise RuntimeError(f'controller_mode must be pure_pursuit or hybrid_lqr, not {self.controller_mode!r}')
+        if self.controller_mode not in ('pure_pursuit', 'hybrid_lqr', 'ff_lqr'):
+            raise RuntimeError(f'controller_mode must be pure_pursuit, hybrid_lqr or ff_lqr, not {self.controller_mode!r}')
         self.exit_guard_from = float(g('exit_guard_from'))
         self.exit_guard_full = float(g('exit_guard_full'))
         if self.exit_guard_from < 0.0 or self.exit_guard_full < self.exit_guard_from:
@@ -465,6 +480,11 @@ class PurePursuit(Node):
         self._warm_dist = 0.0        # metres driven since the follower first moved
         self._warm_t = None          # previous control tick, for that integral
         self._warm_done = not (self.warm_v > 0.0 and self.warm_d > 0.0)
+        self.rec_warm_v = float(g('recover_warmup_v_max'))
+        self.rec_warm_d = float(g('recover_warmup_dist_m'))
+        self._rec_warm = False
+        self._rec_warm_dist = 0.0
+        self._rec_warm_t = None
         self.hz = float(g('control_hz'))
         self.a_long_launch = float(g('a_long_launch'))
         self.a_long_launch_v = float(g('a_long_launch_v'))
@@ -505,6 +525,7 @@ class PurePursuit(Node):
         self.slip_circle = float(g('slip_circle'))
         self.accel_ff = float(g('accel_ff')) > 0.5
         self.drag_ff = float(g('drag_ff')) > 0.0
+        self.brake_cap = float(g('brake_cap_margin'))
         # mu is monotone on [0, S_PEAK]: tabulate it once for the inverse.
         self._s_tab = np.linspace(0.0, TIRE_S_PEAK, 151)
         self._mu_tab = np.array([self._mu(float(S)) for S in self._s_tab])
@@ -929,6 +950,16 @@ class PurePursuit(Node):
 
     def _cb_ready(self, msg):
         if msg.data and not self.ready:
+            # A re-confirm after a wall reset (initial warmup already finished)
+            # must not resume at 9 m/s on the duct. Initial seed uses the
+            # ordinary warmup cap instead.
+            if self._warm_done and self.rec_warm_v > 0.0 and self.rec_warm_d > 0.0:
+                self._rec_warm = True
+                self._rec_warm_dist = 0.0
+                self._rec_warm_t = None
+                self.get_logger().info(
+                    f'localization re-confirmed after reset: speed cap {self.rec_warm_v:.2f} m/s '
+                    f'for {self.rec_warm_d:.1f} m')
             self.ready = True
             self.get_logger().info('localization converged, taking over')
         elif not msg.data and self.ready:
@@ -1030,8 +1061,14 @@ class PurePursuit(Node):
         # is at or under its target (drag must be fed forward), or the car is
         # ABOVE its target and the plan says accelerate (it must be allowed to
         # fall back). Only the first gets the feedforward. See drag_ff.
-        ff_on = self.accel_ff and (a_pred > 0.0
-                                   or (self.drag_ff and a_pred == 0.0 and v_target >= v))
+        # drag_ff only where the plan is genuinely FLAT and the tire has lateral
+        # room. a_pred is also clamped to 0 when the plan BRAKES with the car
+        # under target, and there the old `a_pred == 0` test fed drive into every
+        # braking zone; at an apex (lateral limit) the extra slip is grip the
+        # tire does not have. M03 (2026-09-18): three contacts in two laps.
+        flat = (self.drag_ff and a_pred == 0.0 and v_target >= v
+                and abs(a_plan) < 0.05 and a_lat < 0.5 * (self.steer_a_lat_max or 7.0))
+        ff_on = self.accel_ff and (a_pred > 0.0 or flat)
         if ff_on:
             # ACCELERATION ONLY. The slip that delivers the plan's (gated)
             # acceleration at landing, gross of drag; the proportional term then
@@ -1048,6 +1085,8 @@ class PurePursuit(Node):
         else:
             u = v_target + self.slip_kp * (v_target - v_land)
         u = min(max(u, v_land - s_brk * den), v_land + s_acc * den)
+        if self.brake_cap > 0.0 and v_target < v_land:
+            u = min(u, v_target + self.brake_cap)
         if v_target > v and u < self.u_launch:
             u = self.u_launch
         self.v_land = v_land
@@ -1217,12 +1256,23 @@ class PurePursuit(Node):
         # curvature at a_cap / v^2 holds the steering where the force is still
         # near its maximum and lets the car run wide by the physical amount
         # instead of spiralling. Measured usable maxima: 6.4-7.8 m/s^2.
+        if self.controller_mode == 'ff_lqr':
+            # Feed-forward from the PATH's curvature at the point the car reaches
+            # when the command lands (the latency-propagated pose), instead of
+            # the pursuit chord. Pure pursuit steers at a point 0.8-1.9 m ahead,
+            # so through a 1.22 hairpin it commands 1.08-1.16 and runs 0.13 m
+            # wide on every lap (IROS 2026, true pose, 2026-09-18); that 0.13 m
+            # is what sizes the wall margin. The LQR below is the whole
+            # correction here, so it needs its design gains (0.18 / 0.70 /
+            # 0.035, 0.12 rad), not the 0.03 / 0.05 / 0.02 the hybrid mode
+            # runs with beside pursuit.
+            kappa_cmd = float(self.kappa[near])
         if self.steer_a_lat_max > 0.0 and self.speed > 0.5:
             k_cap = self.steer_a_lat_max / (self.speed ** 2)
             kappa_cmd = max(-k_cap, min(k_cap, kappa_cmd))
         e_lat_now = ((x - self.px[near]) * -math.sin(self.psi[near])
                      + (y - self.py[near]) * math.cos(self.psi[near]))
-        if self.controller_mode == 'hybrid_lqr' and self.speed > 0.8:
+        if self.controller_mode in ('hybrid_lqr', 'ff_lqr') and self.speed > 0.8:
             # Pure pursuit supplies the path-curvature feedforward term. LQR
             # only corrects measured lateral/heading/yaw-rate error and is
             # bounded so stale localization cannot replace the proven fallback.
@@ -1296,9 +1346,27 @@ class PurePursuit(Node):
             else:
                 v_target = min(v_target, self.warm_v)
 
+        if self._rec_warm:
+            if self._rec_warm_t is not None:
+                dt_r = now - self._rec_warm_t
+                if 0.0 < dt_r < 0.5:
+                    self._rec_warm_dist += max(self.speed, 0.0) * dt_r
+            self._rec_warm_t = now
+            if self._rec_warm_dist >= self.rec_warm_d:
+                self._rec_warm = False
+                self.get_logger().info(
+                    f'recover warmup released after {self._rec_warm_dist:.1f} m')
+            else:
+                v_target = min(v_target, self.rec_warm_v)
+
         # Corner-exit guard: while the car is outward of the line in a corner and
         # the profile is asking for MORE speed, give it only the part of that
         # increase it has earned back. Reduces the demand, never raises it.
+        #
+        # Lowering v_target alone is not enough in slip mode: accel_ff still
+        # commands u > v from the plan's a_long, so the car keeps driving while
+        # wide (M12, hp1 exit, e_lat -0.10 -> -0.50 with throttle 0.09 -> 0.14).
+        outward = 0.0
         if self.exit_guard_full > 0.0 and abs(float(self.kappa[near])) > 1e-3:
             outward = -math.copysign(e_lat_now, float(self.kappa[near]))
             if outward > self.exit_guard_from and v_target > self.speed:
@@ -1306,8 +1374,12 @@ class PurePursuit(Node):
                 fraction = 1.0 if span <= 0.0 else min(1.0, (outward - self.exit_guard_from) / span)
                 v_target = self.speed + (v_target - self.speed) * (1.0 - fraction)
 
+        a_plan_use = float(self.path_a[near])
+        if outward > self.exit_guard_from:
+            a_plan_use = min(a_plan_use, 0.0)
+
         if self.throttle_mode == 'slip':
-            throttle = self._throttle_slip(v_target, float(self.path_a[near]),
+            throttle = self._throttle_slip(v_target, a_plan_use,
                                            max(self.speed, 0.0) ** 2 * abs(float(self.kappa[near])))
         else:
             v_target = self._limit_accel(v_target)
@@ -1315,6 +1387,14 @@ class PurePursuit(Node):
             throttle = float(np.clip(self.ff * v_target + self.kp * err, 0.0, self.thr_max))
             self.u_cmd = throttle * self.u_per_thr
             self.v_land = max(self.speed, 0.0)
+
+        if self.exit_guard_full > 0.0 and outward > self.exit_guard_from:
+            u_cap = self.speed
+            if outward >= self.exit_guard_full:
+                u_cap = max(0.0, self.speed - 0.4)
+            if self.u_cmd > u_cap:
+                self.u_cmd = u_cap
+                throttle = float(np.clip(u_cap / self.u_per_thr, 0.0, self.thr_max))
 
         t, s = Float32(), Float32()
         t.data, s.data = throttle, steering

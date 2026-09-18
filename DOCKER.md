@@ -11,7 +11,10 @@ is identical to `devkit_ws/src/autodrive_devkit`.
 # terminal 1: the simulator (pick the scene, then Connect)
 SIM_TAG=2026-iros-compete ./scripts/run.sh sim     # default tag: 2026-iros-practice
 
-# terminal 2: exactly the host command, minus "ros2 launch racer_bringup race.launch.py"
+# terminal 2a: the multi-track race config (M15), log to runs_docker/m16.csv
+./scripts/run.sh race m16
+
+# terminal 2b: or exactly the host command, minus "ros2 launch racer_bringup race.launch.py"
 ./scripts/run.sh racer track:=iros2026 tcp_nodelay:=true loop_hz_cap:=45 log_csv:=run_iros_21.csv
 
 # terminal 3: a second shell in the running container (workspace already sourced)
@@ -58,3 +61,51 @@ behaves differently from a logged host run, check `pp_delay` in the CSV first:
     python3 raceline/analyze_run.py runs_docker/<run>.csv --path raceline/iros2026/<line>.csv
 
 `loop_hz_cap:=28` reproduces the old delay if you need the comparison.
+
+## The multi-track race config (`run.sh race`)
+
+`./scripts/run.sh race [NAME] [extra name:=value ...]` runs what
+`experiments/iros2026/TEAM_IROS2026.md` calls the race config -- M15, 56 clean
+timed laps, first-30 mean 8.963 s (best 8.92, worst 9.03):
+
+| item | value |
+|---|---|
+| raceline | `raceline/iros2026/rl_mt_b05b15w05_ell_L65_B50_v9.0.csv` |
+| dead reckoning | `distance_source:=slip` |
+| `v_max` | 9.0 |
+| `enc_rate_window_s` | 0.10 (`ENC_WIN=` to change) |
+| `exit_guard_*`, `target_lead_s`, `brake_cap_margin`, `drag_ff` | 0 / off |
+| loop | 45 Hz, `warmup_v_max 2.0` for 21 m, hybrid LQR |
+| AMCL | `experiments/iros2026/params/amcl_beams360.yaml` |
+| log | `runs_docker/NAME.csv` on the host (default NAME `race`) |
+
+The **registry default is not this line**: `frames.py` still points `iros2026` at
+`rl_mt_b0.15_a7.0b.csv` at `v_max` 8.5, which M09 measured at 9.10-9.35 s, so
+`./scripts/run.sh racer track:=iros2026 ...` alone does not race the fast config.
+`race` passes every knob explicitly, exactly as `run_mt.sh` does.
+
+Two things this deliberately does **not** copy from `run_mt.sh`:
+
+- `run_mt.sh` uses `bridge:=false` because it raced against the persistent
+  bridge of the dev container (`docker/dev/bridge.sh`). Here the bridge runs in
+  the same container, so the 45 Hz pacing comes from `tcp_nodelay:=true
+  loop_hz_cap:=45`; `HZ_CAP=` overrides it.
+- `experiments/iros2026/scripts/teardown.sh` restarts a container named
+  `rr_bridge`, which is the dev container, not this one. Here the equivalent is
+  Ctrl-C, or `docker rm -f autodrive_roboracer_api`.
+
+Reset and Connect the simulator **by hand** between runs. Never publish
+`/autodrive/reset_command` -- it is a restricted topic.
+
+## Two images, on purpose
+
+| | `Dockerfile` + `scripts/` | `docker/dev/` |
+|---|---|---|
+| what | the stack baked in, `colcon build` at image build | repo bind-mounted, built at run time |
+| for | racing and handing over a fixed artefact | tuning: persistent bridge, experiment sweeps |
+| extras | nav2, slam_toolbox, cyclonedds, scipy | also matplotlib, skimage, quadprog, `trajectory_planning_helpers` |
+| entry | `scripts/run.sh` | `docker/dev/{bridge,race,experiment}.sh`, `tools/tuning/run_experiment.sh` |
+
+`tools/tuning/report.py` and `wall_spots.py` need matplotlib/skimage, which only
+the dev image has; run those on the host or in `docker/dev` after a race.
+`tools/tuning/sim_ctl.py` needs only rclpy and works in both.

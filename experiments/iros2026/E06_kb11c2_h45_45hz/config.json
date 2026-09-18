@@ -1,0 +1,22 @@
+{
+  "id": "E06",
+  "name": "kb11c2_h45_45hz",
+  "date": "2026-09-17",
+  "started": "2026-09-17T19:44:08",
+  "track": "iros2026",
+  "line": "raceline_kb11c2_h45_a45_b45.csv",
+  "laps": 25,
+  "max_contacts": 1,
+  "hz_cap": "45",
+  "overrides": [
+    "enc_window_s:=0.10",
+    "cmd_delay_tick_seed:=1"
+  ],
+  "hypothesis": "E05 with the line moved 0.51 m (was 0.33) from the right-hand wall at the C2 exit (margin zone 12.5:15.5:0.25:R); everything else identical; the C2-exit contact of E04/E05 disappears",
+  "prediction": "0 contacts in 25 laps; min body clearance at s 12.5-15.5 >= 0.15 m; median 10.4-10.6 s (profile 10.25 + ~0.26)",
+  "git_branch": "adil_iros",
+  "git_commit": "5edc136",
+  "git_dirty": true,
+  "verdict": "ACCEPTED as the SAFE FALLBACK. Stopped by hand after 19 clean timed laps (0 contacts): 10.47-10.70 s, mean 10.59, std 0.07, gap to profile 0.33 s. The C2-exit margin zone removed the E04/E05 contact (line 0.51 m from that wall). Hairpins at 0 % lock; C1 worst outward 0.32 m once (median well under 0.15). Min body clearance 0.035 m (comparative metric, IPS anchor). Delay settled 130-140 ms at the 45 Hz cap. Lap times drift 10.47 -> 10.70 over the run: watch loop decay on long runs.",
+  "verdict_short": "SAFE FALLBACK: 19 clean laps, 10.47-10.70 (mean 10.59), 0 contacts; stopped by hand"
+}

@@ -1,0 +1,24 @@
+{
+  "id": "T07",
+  "name": "h70b_hz45_warm30_encwin010",
+  "date": "2026-09-17",
+  "started": "2026-09-17T20:05:29",
+  "track": "iros2026",
+  "line": "raceline_tum_iqp_h7.0_a7.0b.csv",
+  "laps": 25,
+  "max_contacts": 2,
+  "hz_cap": "45",
+  "overrides": [
+    "control_hz:=45",
+    "warmup_v_max:=3.0",
+    "warmup_dist_m:=19.5",
+    "enc_rate_window_s:=0.10"
+  ],
+  "hypothesis": "enc_rate_window_s 0.05 -> 0.10 (~4.5 frames at 45 Hz) removes the braking-zone speed over-read seen in T06 (and E02), so the car reaches hairpin 1 at the planned speed",
+  "prediction": "0 contacts in 25 laps; |v_est - v| p90 < 0.3; hairpin 1 worst outward < 0.35 m; mean 9.6-9.75",
+  "git_branch": "adil_iros",
+  "git_commit": "fc34cdb",
+  "git_dirty": false,
+  "verdict_short": "OUT-LAP contact at hairpin 1: loc -0.82 m along (behind) -> late turn-in, 0.88 wide; encwin untested on timed laps",
+  "verdict": "Out-lap (warmup 3.0 active, car at 3.07 m/s) hit at hairpin 1: estimate 0.82 m BEHIND along-track at entry (T04 was 0.6 AHEAD), turn-in late, e_lat -0.07 -> -0.88, contact; the error collapsed to 0.14 m within ~1 m once the hairpin walls were in view. Out-lap hairpin-1 record on this line: 3 contacts in 8 (T02, T04, T07). enc_rate_window_s 0.10 never reached a timed lap. Next: slower warmup (2.0 over 21 m)."
+}

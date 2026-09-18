@@ -1,0 +1,24 @@
+{
+  "id": "T17",
+  "name": "kb11z3_hp45",
+  "date": "2026-09-17",
+  "started": "2026-09-17T20:32:06",
+  "track": "iros2026",
+  "line": "raceline_kb11z3_hp45_a50_b55_v85.csv",
+  "laps": 25,
+  "max_contacts": 2,
+  "hz_cap": "45",
+  "overrides": [
+    "control_hz:=45",
+    "warmup_v_max:=2.0",
+    "warmup_dist_m:=21.0",
+    "enc_rate_window_s:=0.10"
+  ],
+  "hypothesis": "kappa-1.1 hairpins at 4.5 m/s^2 (the only clean hairpin setting here) on a geometry that keeps >= 0.50 m from all three right-wall contact spots (C2 exit, chevron lane, s-40 bend), teammates' longitudinal budget, control_hz 45 + slow warmup + enc window 0.10: every failure mode seen so far is addressed",
+  "prediction": "0 contacts in 25 laps; hairpins 0 % lock; mean 10.15-10.35",
+  "git_branch": "adil_iros",
+  "git_commit": "94bb8a4",
+  "git_dirty": false,
+  "verdict_short": "1 timed lap 10.64; hairpin-1 contact at LOCK at 1.9-2.05 m/s (kappa 0.8 vs 1.1) while still braking 2.9->1.9 into the turn (brake 5.5 budget) [CONFOUNDED: session loop decay, see T18]",
+  "verdict": "One timed lap 10.638 (slow: loop delay 143-150 ms, laptop hot). Lap 2, hairpin 1: steering 0.47 -> 1.00 from s 17.9 to 18.8, at lock 0.96-1.00 at 1.9-2.05 m/s (plan 2.02), achieved kappa 0.79-0.85 vs 1.10, heading error -17..-19 deg, e_lat -0.46 at the exit, localization 4-7 cm. The car was still decelerating 2.9 -> 1.9 m/s while turning in: the 5.5 m/s^2 brake budget pushes braking into the corner (E05/E06, clean at the same hairpin setting, planned 4.5). Next: brake 4.5 (T18)."
+}

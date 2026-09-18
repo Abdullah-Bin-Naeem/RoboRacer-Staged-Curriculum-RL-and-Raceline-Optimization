@@ -1,0 +1,19 @@
+{
+  "id": "T02",
+  "name": "h70b_baseline_rep",
+  "date": "2026-09-17",
+  "started": "2026-09-17T19:51:59",
+  "track": "iros2026",
+  "line": "raceline_tum_iqp_h7.0_a7.0b.csv",
+  "laps": 20,
+  "max_contacts": 3,
+  "hz_cap": "45",
+  "overrides": [],
+  "hypothesis": "Repeat of T01 (registry defaults on the 9.4 line) to measure its contact rate on this laptop; T01 is one sample",
+  "prediction": "1-3 contacts in 20 laps, all at C3 exit s 37-40; clean laps 9.5-9.7 s",
+  "git_branch": "adil_iros",
+  "git_commit": "89a0f0a",
+  "git_dirty": false,
+  "verdict_short": "3 contacts in out-lap: hairpin 1 understeer at 2.2-2.6 m/s, steer 0.83; respawn detected late -> 2 blind rehits",
+  "verdict": "Out-lap, under the 4 m/s warmup cap: entered hairpin 1 (kappa 1.2) at 2.6 -> 2.2 m/s, steering 0.54 -> 0.83, heading error -24 deg, ran 0.34 -> 0.88 m wide into the exit wall at +8 s; localization 6-10 cm there (0.3-0.6 m along-track on the straight before, as the warmup cap anticipates). The respawn was not flagged for ~1 s (ready stayed 1 with 1.4-2.4 m error) and the car hit twice more. With T01 that is 2/2 runs contacting inside the first lap on this line on this laptop: its hairpins (kappa 1.2 at 7.0 m/s^2, apex 2.4) sit at the understeer limit measured in E00-E03."
+}

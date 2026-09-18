@@ -310,6 +310,7 @@ class PurePursuit(Node):
         # 0.12 puts a straight on that top; a hairpin exit at a_lat 6 gets
         # 0.06, LESS than 0.08, which is what run 14's understeer asked for.
         p('slip_circle', 0.0)
+        p('slip_circle_ref', 0.0)              # lateral reference for the slip circle; 0 = steer_a_lat_max
         # Feed the slip that produces the PLAN's acceleration forward through
         # the inverse tire curve, instead of waiting for a speed error to ask
         # for it: the car delivered 91 % of its plan on run 17. Acceleration
@@ -523,6 +524,7 @@ class PurePursuit(Node):
         self.u_per_thr = float(g('u_per_throttle'))
         self.slip_accel, self.slip_brake = float(g('slip_accel')), float(g('slip_brake'))
         self.slip_circle = float(g('slip_circle'))
+        self.slip_circle_ref = float(g('slip_circle_ref'))
         self.accel_ff = float(g('accel_ff')) > 0.5
         self.drag_ff = float(g('drag_ff')) > 0.0
         self.brake_cap = float(g('brake_cap_margin'))
@@ -1052,7 +1054,13 @@ class PurePursuit(Node):
         # m/s low against legacy's 0.07 (run 5 vs run 4); the same gain, applied
         # to the error at landing time, closes that. The band still bounds the slip.
         if self.slip_circle > 0.0:
-            cap = self.steer_a_lat_max if self.steer_a_lat_max > 0.0 else 7.0
+            # The throttle's slip budget shrinks with the lateral demand against
+            # a reference that used to be the STEERING cap. With that cap at 8.0
+            # to protect the front tire, a 7.4 m/s^2 apex leaves the throttle
+            # 0.03 of slip and drag settles the car 0.15 m/s under the plan at
+            # every apex (true-pose runs, 2026-09-19). slip_circle_ref separates
+            # the two: 0 keeps the old coupling.
+            cap = self.slip_circle_ref if self.slip_circle_ref > 0.0 else (self.steer_a_lat_max if self.steer_a_lat_max > 0.0 else 7.0)
             f = math.sqrt(max(0.0, 1.0 - (a_lat / cap) ** 2))
             s_acc = s_brk = max(self.slip_circle * f, 0.02)
         else:

@@ -125,6 +125,15 @@ class DeadReckoning(Node):
         # rate: fitted on the encoder rate k scattered 0.64-1.2 between runs.
         p('distance_source', 'encoder')
         p('slip_k', 0.27)
+        # The BRAKING side, added after M02 (2026-09-18): with the wheel slower
+        # than the car the encoder UNDER-reads, -6.3..-9.1 % through the hairpin-1
+        # braking zone (s 12.5-17.5) on all eight logs. The straight's over-read
+        # used to cancel it by luck; with that removed the estimate fell 0.2-0.7 m
+        # BEHIND the car into hairpin 1, the car braked late, reached the apex up
+        # to +0.77 m/s fast and ran wide (both M02 contacts). The observer's speed
+        # is right under braking, so the term adds max(v_car - u_cmd, 0) * dt back;
+        # fitted per run 1.03-1.20 on the 45 Hz logs (1.03-1.48 at 20 Hz).
+        p('slip_k_brake', 1.1)
         p('slip_yaw_gate', 0.5)                     # rad/s
         p('u_per_throttle', 25.25)                  # as pure_pursuit.yaml
         # The observer's input rate spans at least this long: a per-sample rate
@@ -175,6 +184,7 @@ class DeadReckoning(Node):
         if self.dist_src not in ('encoder', 'tire', 'slip'):
             raise RuntimeError(f"distance_source must be encoder, tire or slip, not {self.dist_src!r}")
         self.slip_k = float(g('slip_k'))
+        self.slip_k_brake = float(g('slip_k_brake'))
         self.slip_gate = float(g('slip_yaw_gate'))
         self.u_per_thr = float(g('u_per_throttle'))
         self.slip_win = float(g('slip_rate_window_s'))
@@ -217,7 +227,8 @@ class DeadReckoning(Node):
             f'{g("publish_rate"):.0f} Hz, tf +{self.tf_tol * 1e3:.0f} ms, '
             f'extrapolate yaw={self.extrapolate_yaw} pos={self.extrapolate_pos}, '
             f'distance from {self.dist_src}'
-            + (f' (k={self.slip_k}, yaw gate {self.slip_gate} rad/s)' if self.dist_src == 'slip' else ''))
+            + (f' (k={self.slip_k}, k_brake={self.slip_k_brake}, yaw gate {self.slip_gate} rad/s)'
+               if self.dist_src == 'slip' else ''))
 
     def _cb_enc(self, side, msg):
         """position is cumulative wheel angle in RADIANS (measured, not ticks)."""
@@ -281,8 +292,8 @@ class DeadReckoning(Node):
         v_car = self._obs[side].step(u_wheel, dt)
         if abs(self.yaw_rate) >= self.slip_gate:
             return 0.0
-        ds = self.slip_k * max(self._u_cmd - v_car, 0.0) * dt
-        return ds
+        return (self.slip_k * max(self._u_cmd - v_car, 0.0)
+                - self.slip_k_brake * max(v_car - self._u_cmd, 0.0)) * dt
 
     def _cb_thr(self, msg):
         self._u_cmd = max(0.0, float(msg.data)) * self.u_per_thr

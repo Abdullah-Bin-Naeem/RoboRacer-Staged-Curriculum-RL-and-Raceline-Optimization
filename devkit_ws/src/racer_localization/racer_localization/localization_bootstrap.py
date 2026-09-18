@@ -210,6 +210,7 @@ class LocalizationBootstrap(Node):
         p('track', '')                   # which track's registered spawn to check against; '' = RACER_TRACK
         p('throttle', 0.08)              # gentle -- this is a search, not a lap
         p('steer_gain', 0.6)             # wall-centring proportional gain
+        p('gap_gain', 1.0)               # recovery creep: steer per rad toward the most open beam
         p('pos_std_target', 0.15)        # [m]   converged when below this
         p('yaw_std_target', 0.09)        # [rad] ~5 degrees
         p('straight_distance_m', 3.0)    # creep straight this far, then seek a corner
@@ -280,6 +281,7 @@ class LocalizationBootstrap(Node):
         g = lambda n: self.get_parameter(n).value
         self.throttle = g('throttle')
         self.steer_gain = g('steer_gain')
+        self.gap_gain = float(g('gap_gain'))
         self.pos_target = g('pos_std_target')
         self.yaw_target = g('yaw_std_target')
         self.straight_m = g('straight_distance_m')
@@ -718,9 +720,23 @@ class LocalizationBootstrap(Node):
         right = self._beam(math.radians(-90))
         front = self._beam(0.0)
 
+        # Steering is + = LEFT in this sim (+0.7 at hairpin 1 gives +2.3 rad/s yaw)
+        # and the scan is REP-103 (+90 deg = left), so steer toward the side with
+        # MORE room: left - right. It was right - left, which steers toward the
+        # nearer wall and grows any offset -- M01's creep curved left from the
+        # first metre and M02's hit the wall within 1 m, five times over.
         steer = 0.0
         if math.isfinite(left) and math.isfinite(right):
-            steer = self.steer_gain * (right - left) / max(left + right, 0.1)
+            steer = self.steer_gain * (left - right) / max(left + right, 0.1)
+        if self.rec_state == 'creep':
+            # A reset checkpoint on a bend points the car at the outside wall
+            # (s 22.2 on IROS 2026: 0.94 m at +30 deg, 3.8 m at -30), where
+            # side-beam centring alone drives straight on. Head for the most
+            # open direction ahead as well.
+            angles = [math.radians(a) for a in range(-60, 61, 10)]
+            ranges = [min(self._beam(a), 4.0) for a in angles]
+            best = angles[int(np.argmax(ranges))]
+            steer += self.gap_gain * best
 
         # Past the straight phase, bias the steering so the car finds a corner --
         # corridors are ambiguous, corners are not.

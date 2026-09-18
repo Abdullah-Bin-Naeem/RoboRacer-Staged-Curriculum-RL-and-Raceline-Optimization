@@ -1,73 +1,79 @@
 # IROS 2026 — what to run, what worked, what did not
 
-Branch: **`adil_mt`** (off Abdullah’s `multi-track`, **do not merge these race knobs onto `multi-track` without a review**).  
-Headline result: **M15, 56 clean timed laps, first-30 mean 8.963 s** (best 8.92, worst 9.03).
+Branch: **`adil_mt`** (off Abdullah’s `multi-track`, **do not merge these race knobs onto `multi-track` without a review**).
 
-## Race config (copy this)
+**Headline (pace):** M22 / M16 line, `v_max` 10 — after one contact, **30 consecutive timed laps mean 8.852 s** (best 8.77, worst 8.94, **all < 9.0**). That is **−0.11 s vs the M15 config currently on `origin/adil_mt` (first-30 mean 8.963).**
+
+**Fallback (most clean laps):** M15 / M20, `v_max` 9 — 56 / 30+ clean, mean **8.96**.
+
+## Race config — pace (copy this)
 
 | item | value |
 |---|---|
-| raceline | `raceline/iros2026/rl_mt_b05b15w05_ell_L65_B50_v9.0.csv` |
-| what that line is | Abdullah mintime **b0.05** geometry, **b0.15 blended in** at the two tight right-wall zones (s 25–28 and s 37–40, half-weight), speeds re-solved with `enforce_friction_ellipse.py` at a_lat 7.0 / a_long 6.5 / **a_brake 5.0** / v_max 9.0 (paper ~8.80 s) |
+| raceline | `raceline/iros2026/rl_mt_b05b15w05_ell_L70_B55_v10.csv` |
+| what that line is | Same **b0.05 / b0.15 blend** as M15 (tight walls s 25–28 and 37–40). Speeds re-solved with `enforce_friction_ellipse.py` at a_lat **7.0** / a_long **7.0** / a_brake **5.5** / **v_max 10.0** (paper **8.652 s**). M15 was a_long 6.5 / a_brake 5.0 / v_max 9.0 (paper ~8.80). |
 | dead reckoning | `distance_source:=slip` (k=0.27, k_brake=1.1) |
-| `v_max` | **9.0** |
-| `enc_rate_window_s` | **0.10** (this was the missing piece vs M08) |
+| `v_max` | **10.0** (must match the CSV cap; 9.0 clips the straight and you get M15) |
+| `enc_rate_window_s` | **0.10** |
 | `exit_guard_*` | **0** (off) |
 | `target_lead_s` | **0** |
-| `brake_cap_margin` | **0** / unset |
+| `brake_cap_margin` | **0** |
 | `drag_ff` | **0** |
-| loop | 45 Hz, `warmup_v_max 2.0` for 21 m, hybrid LQR as S03 |
-| sim | **fresh AutoDRIVE**, then **Reset + Connect by hand**. Never publish `/autodrive/reset_command`. Stop with `experiments/iros2026/scripts/teardown.sh`. |
+| `controller_mode` | **hybrid_lqr** (do **not** use `kinematic_mpc` — M17 out-lap cascade) |
+| loop | 45 Hz, `warmup_v_max 2.0` for 21 m |
+| sim | **Quit AutoDRIVE and reopen** (or a real Reset with the car **still**). Connect by hand. Never publish `/autodrive/reset_command`. If the car moves on Connect with no `pure_pursuit`, Unity still has last throttle — Disconnect, wait, Reset, Connect. Stop with `teardown.sh` (that restarts `rr_bridge`). |
 
 Launch (inside `rr_bridge`):
+
+```bash
+/root/Documents/roboracer/experiments/iros2026/scripts/run_mt.sh \
+  RUN_NAME rl_mt_b05b15w05_ell_L70_B55_v10.csv slip v_max:=10.0
+```
+
+`run_mt.sh` already defaults `ENC_WIN=0.10` and exit-guard off.
+
+## Conservative fallback (M15)
 
 ```bash
 /root/Documents/roboracer/experiments/iros2026/scripts/run_mt.sh \
   RUN_NAME rl_mt_b05b15w05_ell_L65_B50_v9.0.csv slip v_max:=9.0
 ```
 
-`run_mt.sh` already defaults `ENC_WIN=0.10` and exit-guard off.
+M20 reproduced this on a cold sim: first-30 mean **8.964**, 33 clean then a contact.
 
-## Why this is faster than S03 / M01
+## How the 8.8 was achieved (M16 → M22)
 
-- S03 (our tum_iqp, a_long 6.0): **9.436 s** mean, 43 clean.
-- M01 (Abdullah b0.15 + a_long 6.0 + slip DR): **9.314 s** mean, 41 clean.
-- M06 (tighter b0.05 + ellipse + v_max 9): first **sub-9** laps (8.93–8.98) but hit the right wall at s 26.8 (line too close).
-- Blend + ellipse + v_max 9 + **enc 0.10** (M15): **8.96 s** mean, 56 clean.
+Controller is **the same as M15** (hybrid LQR, slip DR, enc 0.10, 45 Hz). The only pace change is the **speed profile**:
 
-Slip DR takes the long-straight encoder over-read down so AMCL does not sit 0.5 m **ahead** at hairpin 1. Enc window **0.10** (not 0.05) is what made that stable at 45 Hz. The blend keeps M06’s pace without M06’s s26 wall.
+1. Keep M15 **geometry** (blend), do not go back to raw b0.05 (M06 right-wall at s 26).
+2. Re-solve ellipse at **a_long 7.0** (tire peak) and **v_max 10** so the 16 m straight can keep pulling after 9 m/s. M15 peaked 9.05; M16/M22 peak ~9.8.
+3. **Fresh sim, car still at Connect**, **one** `pure_pursuit`. Launching v10 into a dirty sim or a rolling car is how M17–M19 / M21 died on lap 1–2.
+
+M16 (first time): 21 clean, mean **8.852**, then hp1 exit.  
+M22 (repeat, cold, car still): 9 timed 8.79–8.91, **one contact** at `(+5.07, +0.12)`, recovery, then **laps 13–42: 30 consecutive, mean 8.852, every lap < 9**. Best **8.77**.
 
 ## What did **not** work (do not re-enable for pace)
 
 | attempt | why it failed |
 |---|---|
-| `v_max 8.5` (M09) | Clean laps **9.10–9.35**. Global cap eats the straight. |
-| `target_lead_s 0.08` (M10) | ~0.1 s slower, still cut hp1 inside (pose ahead, not late brake). |
-| Hairpin a_lat 6.5 (M11) | **9.14+** and still hit C4 exit. |
-| `exit_guard` 0.08/0.20 (M12) | Lowers `v_target` but slip **accel_ff** still drives; also costs ~0.1 s on every lap. Does nothing for **inside** cuts. |
-| Throttle `u ≤ v` while wide (M13) | First hit was hp1 **inside** (`e_lat +0.37`). Guard is outward-only. |
-| `drag_ff` (M03, M07) | Fed drive into braking / no lap-time gain. Leave off. |
-| `steer_a_lat_max 7.5` (M05) | Raised the throttle ellipse too; hp1 exit contact. |
-| Programmatic `/autodrive/reset_command` | Forbidden. Always ask for a hand Reset+Connect. |
-| Judging a mean on < ~25 laps | M08 looked sub-9 for two laps then fell apart. |
+| `kinematic_mpc` (M17) | Out-lap hp1 at **2 m/s warmup**. Leave unused. |
+| `v_max 9.5` (M21) | Still hit as soon as warmup released. Not a middle ground. |
+| `v_max 8.5` (M09) | Clean laps **9.10–9.35**. |
+| `target_lead_s 0.08` (M10) | ~0.1 s slower; still cut hp1 inside. |
+| Hairpin a_lat 6.5 (M11) | **9.14+**. |
+| `exit_guard` (M12/M13) | Costs ~0.1 s; does not stop **inside** cuts. |
+| `drag_ff` (M03, M07) | Leave off. |
+| Dual `pure_pursuit` / dirty sim | Car moves on Connect with no racer; seed fails; first-lap walls. `teardown.sh` restarts the container. |
+| Programmatic `/autodrive/reset_command` | Forbidden. |
 
 ## Residual (honest)
 
-- Not every lap is < 9.00. M15 first 30: four laps at **9.01–9.03**. Mean/median are under 9.
-- After a long stint, hp1 can still take an **inside** cut when along-track loc spikes (~0.5–0.7 m). M14 did that on lap 29; M15 on lap 57. Next real fix is localization on that straight, not another speed knob.
-- Use a **cold simulator**. Loop delay walking to 0.12 s is OK; 90 min sessions are not.
-
-## Code that landed on this branch (beyond Abdullah’s lines)
-
-- `distance_source:=slip` in `dead_reckoning.py` (k and k_brake).
-- `enforce_friction_ellipse.py` — re-solve speeds so you do not ask for full a_long at a_lat peak (optional `--lat-zones`).
-- `blend_lines.py` — b0.05/b0.15 mix for the two tight walls.
-- `run_mt.sh` + `teardown.sh` — launch/stop without stray `pure_pursuit` nodes.
-- `pure_pursuit.py`: recover-warmup after a wall (2 m/s for 8 m) and an exit-guard **throttle clamp** that is **off** in `run_mt.sh`. Harmless if guard stays 0.
-- Launch tunables: `enc_rate_window_s`, `brake_cap_margin` (keep 0 for race).
+- M22 is **not** 30 clean from the first timed lap. There was **one contact after 9 laps** (`+5.07, +0.12`), then a long 8.8 streak. That corner is the next fix; do not slow the whole line for it.
+- hp1 can still go inside-then-wide when along-track is **ahead** ~0.4–0.7 m on the straight (M16 lap 22, M19 lap 2).
+- M15 remains the “need 50 clean” stack.
 
 ## Per-run reports
 
 Index: `experiments/iros2026/EXPERIMENTS.md`  
-M01–M08 under `experiments/iros2026/M0*_*/report.md`  
-M09–M15: `M09_mt_b05b15w05_B50_v85` … `M15_enc010_repeat`.
+M15: `M15_enc010_repeat` (remote race config until this commit)  
+M16: `M16_blend_L70_v10`  M20: `M20_m15_cold`  M22: `M22_m16_repeat`

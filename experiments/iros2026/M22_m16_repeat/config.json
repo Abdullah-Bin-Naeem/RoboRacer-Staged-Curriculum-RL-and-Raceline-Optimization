@@ -1,0 +1,15 @@
+{
+  "id": "M22",
+  "name": "m16_repeat_still",
+  "line": "rl_mt_b05b15w05_ell_L70_B55_v10.csv",
+  "v_max": 10.0,
+  "controller_mode": "hybrid_lqr",
+  "enc_rate_window_s": 0.10,
+  "first9_mean": 8.846,
+  "post_contact_30_mean": 8.852,
+  "post_contact_30_best": 8.77,
+  "post_contact_30_worst": 8.94,
+  "first_contact": "+5.07,+0.12 after 9 timed",
+  "vs_M15": -0.111,
+  "verdict": "PACE: 8.85 consistent after one contact. New TEAM race config; M15 fallback."
+}

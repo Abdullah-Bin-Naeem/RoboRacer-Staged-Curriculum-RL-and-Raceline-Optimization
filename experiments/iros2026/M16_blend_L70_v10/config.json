@@ -1,0 +1,22 @@
+{
+  "id": "M16",
+  "name": "blend_L70_v10",
+  "line": "rl_mt_b05b15w05_ell_L70_B55_v10.csv",
+  "distance_source": "slip",
+  "v_max": 10.0,
+  "enc_rate_window_s": 0.10,
+  "exit_guard_from": 0.0,
+  "exit_guard_full": 0.0,
+  "target_lead_s": 0.0,
+  "brake_cap_margin": 0.0,
+  "drag_ff": 0.0,
+  "controller_mode": "hybrid_lqr",
+  "paper_s": 8.652,
+  "timed_n": 21,
+  "timed_mean": 8.852,
+  "timed_best": 8.79,
+  "timed_median": 8.84,
+  "timed_worst": 9.04,
+  "first_contact": "hp1 exit s~19.8 e_lat -0.53 heading lag, loc ok, along +0.75 at turn-in",
+  "verdict": "PACE UP vs M15; not 30 clean. Next M17 kinematic_mpc on this line."
+}

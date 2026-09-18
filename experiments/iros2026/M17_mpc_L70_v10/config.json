@@ -1,0 +1,12 @@
+{
+  "id": "M17",
+  "name": "mpc_L70_v10",
+  "line": "rl_mt_b05b15w05_ell_L70_B55_v10.csv",
+  "distance_source": "slip",
+  "v_max": 10.0,
+  "enc_rate_window_s": 0.10,
+  "controller_mode": "kinematic_mpc",
+  "hypothesis": "M16 21 clean mean 8.852 then hp1 EXIT wide after along +0.75 at turn-in and heading lag -0.48. Same line/throttle; delay-horizon kinematic MPC instead of hybrid LQR. Falls back to PP if |e_lat|>0.40 (loc spike).",
+  "fallback": "M16 hybrid_lqr or M15 v9.0",
+  "verdict": "REJECTED: out-lap hp1 at 2 m/s warmup, recovery cascade, no clean timed lap"
+}

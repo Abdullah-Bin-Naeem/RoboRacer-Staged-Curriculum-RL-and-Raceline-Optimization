@@ -1,0 +1,9 @@
+{
+  "id": "M21",
+  "name": "blend_L70_v95",
+  "line": "rl_mt_b05b15w05_ell_L70_B55_v9.5.csv",
+  "v_max": 9.5,
+  "controller_mode": "hybrid_lqr",
+  "enc_rate_window_s": 0.10,
+  "hypothesis": "M20 = M15, 30 clean mean 8.964. M16 v10 was 8.852 but first flying hp1 is a coin flip. Split the difference: same geometry, a_long 7.0, v_max 9.5. No MPC. Fresh sim after M20 teardown."
+}

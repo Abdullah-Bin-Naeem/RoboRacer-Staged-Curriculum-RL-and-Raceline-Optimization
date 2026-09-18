@@ -1,0 +1,6 @@
+# M16 timed laps (sim lap 2–22; lap 1 was warmup 62.44 s)
+8.79 8.84 8.89 8.82 8.85 8.84 8.80 8.82 8.84 9.04
+8.83 8.81 8.79 8.86 8.86 8.83 8.85 8.99 8.80 8.86
+8.88
+# n=21  best 8.79  median 8.84  mean 8.852  worst 9.04
+# contact during the next lap at hp1 exit (s~19.8)

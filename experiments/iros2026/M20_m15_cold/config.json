@@ -1,0 +1,10 @@
+{
+  "id": "M20",
+  "name": "m15_cold_30",
+  "line": "rl_mt_b05b15w05_ell_L65_B50_v9.0.csv",
+  "distance_source": "slip",
+  "v_max": 9.0,
+  "enc_rate_window_s": 0.10,
+  "controller_mode": "hybrid_lqr",
+  "hypothesis": "After v10 first-flying-hp1 deaths (along +0.4 m, inside then wide), go back to the only 30+ clean stack: M15. Target 30 clean at ~8.96. No v10, no MPC."
+}

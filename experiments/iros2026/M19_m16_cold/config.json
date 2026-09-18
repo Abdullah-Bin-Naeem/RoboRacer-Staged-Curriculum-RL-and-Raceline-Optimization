@@ -1,0 +1,10 @@
+{
+  "id": "M19",
+  "name": "m16_cold_repeat",
+  "line": "rl_mt_b05b15w05_ell_L70_B55_v10.csv",
+  "distance_source": "slip",
+  "v_max": 10.0,
+  "enc_rate_window_s": 0.10,
+  "controller_mode": "hybrid_lqr",
+  "hypothesis": "Exact M16 stack on a fully fresh AutoDRIVE. Target 30 clean at ~8.85. No controller change."
+}

@@ -109,3 +109,78 @@ Reset and Connect the simulator **by hand** between runs. Never publish
 `tools/tuning/report.py` and `wall_spots.py` need matplotlib/skimage, which only
 the dev image has; run those on the host or in `docker/dev` after a race.
 `tools/tuning/sim_ctl.py` needs only rclpy and works in both.
+
+## Tuning AMCL (`run.sh truth`)
+
+```bash
+./scripts/run.sh truth base                              # amcl_beams360.yaml (default)
+AMCL_PARAMS=amcl_beams720.yaml ./scripts/run.sh truth b720
+AMCL_PARAMS=amcl_alpha3_025.yaml ./scripts/run.sh truth a3
+AMCL_PARAMS=my_amcl.yaml ./scripts/run.sh truth mine      # any yaml you drop in that dir
+```
+
+`truth` steers on the simulator's ground-truth pose (`drive_on_truth:=true`) on
+`rl_mt_tb10_lat875_b55_L70.csv` + `steer_a_lat_max:=8.0` -- `FINDINGS.md` section
+11, 8.45 s over 22 clean laps.
+
+**It is not race-legal.** `mode:=race` refuses it, the follower prints the
+warning in red, and the line is solved for the 0.09 m worst-case error the
+true-pose car has against AMCL's 0.13 m, so driving it *on AMCL* puts it into
+the right wall at s 38-39. The race-legal best is 8.92 s on
+`rl_mt_lat7.25_hp70_bendz65_L70.csv`; the half-second gap is what localization
+costs.
+
+### Why this is the right rig for tuning AMCL
+
+AMCL still runs, and `race.launch.py` hands `instruments.launch.py` the
+*unforced* `use_tf`, so `map->odom` is published and its error is logged against
+ground truth exactly as in a normal run. Only the follower stops consuming it
+(`race.launch.py:312`). The comment at line 174 puts it plainly: *"the localizer
+still runs, so its error is still logged beside a car that is not using it."*
+
+That means the car drives the **same line every run** no matter how badly AMCL
+is tuned -- no feedback loop where a worse estimate changes the trajectory and
+changes the error you are trying to measure. The AMCL parameters become the only
+variable, and two runs are directly comparable. Tuning on a car that steers on
+AMCL cannot give you that.
+
+Trade-off to keep in mind: it measures AMCL's error along the *true-pose*
+trajectory, which is slightly tighter and faster than the one an AMCL-driven car
+takes. Confirm a winning parameter set with a normal `./scripts/run.sh race`
+before trusting it.
+
+### Reading the result
+
+| what | where |
+|---|---|
+| localizer error beside ground truth | `runs_docker/NAME.csv` (the `log_csv`) |
+| drift plots, position and heading | `tools/localization_drift.sh [SECONDS] [NAME]` while the stack runs |
+
+`localization_drift.sh` records inside the running container (it expects the
+`autodrive_roboracer_api` name `run.sh` already uses) and plots on the host from
+`.venv-plot/`; it writes `logs/drift/NAME.csv` and figures beside it. It holds
+each ground-truth sample and looks the estimate up **at its stamp**, because
+AMCL only publishes `map->odom` after processing a scan -- a "latest" lookup
+reports the car's own motion as error, about 0.2 m at 8 m/s.
+
+The three shipped parameter sets differ in exactly two fields:
+
+| file | `max_beams` | `alpha3` |
+|---|---|---|
+| `amcl_beams360.yaml` (race default) | 360 | 0.10 |
+| `amcl_beams720.yaml` | 720 | 0.10 |
+| `amcl_alpha3_025.yaml` | 180 | 0.25 |
+
+`alpha3` is the odometry rotation noise from translation; `max_beams` is how
+much of the scan AMCL matches per update, and costs CPU at 45 Hz.
+
+Any `name:=value` after the run name is passed through and **wins over the
+built-in value** (last duplicate wins in `ros2 launch`), so a one-off is
+`./scripts/run.sh truth mine v_max:=8.5`. `AMCL_PARAMS`, `V_MAX`, `ENC_WIN`,
+`HZ_CAP` and `RVIZ` do the same for the common knobs.
+
+Changing `run.sh`, a raceline or an AMCL yaml needs **no rebuild**: `raceline/`
+and `experiments/iros2026/params/` are both bind-mounted over the baked copies,
+and `run.sh` runs on the host. Edit the yaml, run again. `MOUNT_PARAMS=0` and
+`MOUNT_RACELINE=0` fall back to what is in the image. Only `devkit_ws/src`
+changes need `./scripts/build.sh`.

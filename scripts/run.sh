@@ -3,12 +3,14 @@
 #
 #     ./scripts/run.sh sim [--headless [BRIDGE_IP]]   the organizers' simulator
 #     ./scripts/run.sh race [NAME] [name:=value ...]  the multi-track race config (M15)
+#     ./scripts/run.sh truth [NAME] [name:=value ...] DIAGNOSTIC: steer on ground truth
 #     ./scripts/run.sh racer [name:=value ...]        race.launch.py with those arguments
 #     ./scripts/run.sh shell                          bash in a racer container, nothing started
 #     ./scripts/run.sh exec                           second bash in the running racer container
 #
 # Example:
 #     ./scripts/run.sh race m16
+#     AMCL_PARAMS=amcl_beams720.yaml ./scripts/run.sh truth t_beams720
 #     ./scripts/run.sh racer track:=iros2026 tcp_nodelay:=true loop_hz_cap:=45 log_csv:=run_iros_21.csv
 #
 # Output: relative log_csv:= paths are written to runs_docker/ in this repo, and
@@ -27,6 +29,42 @@ SIM_TAG="${SIM_TAG:-2026-iros-compete}"
 NAME=autodrive_roboracer_api
 IN=/root/Documents/roboracer
 
+# The launch arguments `race` and `truth` share, in one place so a tuning change
+# cannot drift between them. Everything here is from TEAM_IROS2026.md's race
+# config; the two callers add only what differs.
+#   AMCL_PARAMS  yaml in experiments/iros2026/params/, or an absolute path
+#   V_MAX/ENC_WIN/HZ_CAP/RVIZ  override a single knob without editing this file
+mt_args() {
+  local line="$1" name="$2"
+  local params="${AMCL_PARAMS:-amcl_beams360.yaml}"
+  case "$params" in */*) ;; *) params="$IN/experiments/iros2026/params/$params" ;; esac
+  MT_ARGS=(
+    track:=iros2026 rviz:="${RVIZ:-false}"
+    tcp_nodelay:=true loop_hz_cap:="${HZ_CAP:-45}" control_hz:=45
+    path_csv:="$IN/raceline/iros2026/$line"
+    log_csv:="$IN/runs/${name}.csv"
+    distance_source:=slip v_max:="${V_MAX:-9.0}" enc_rate_window_s:="${ENC_WIN:-0.10}"
+    warmup_v_max:=2.0 warmup_dist_m:=21.0
+    amcl_params_file:="$params"
+    exit_guard_from:=0.0 exit_guard_full:=0.0
+    controller_mode:=hybrid_lqr lqr_k_lat:=0.03 lqr_k_head:=0.05 lqr_k_yaw:=0.0
+    lqr_max_correction_rad:=0.02
+    recover_settle_s:=2.0 recover_creep_s:=3.0
+  )
+}
+
+# First argument is an optional run NAME; anything containing := is already a
+# launch override and must not be eaten. Sets RUN_NAME, and returns 0 only when
+# a name was consumed, so the caller knows whether to shift.
+#   run_name "${1:-}" <default> && shift || true
+run_name() {
+  RUN_NAME="$2"
+  case "${1:-}" in
+    ""|*:=*) return 1 ;;
+    *) RUN_NAME="$1"; return 0 ;;
+  esac
+}
+
 racer_run() {
   mkdir -p "$REPO/runs_docker" "$REPO/logs"
   xhost local:root >/dev/null 2>&1 || true
@@ -35,6 +73,12 @@ racer_run() {
   local mounts=(-v "$REPO/runs_docker:$IN/runs" -v "$REPO/logs:$IN/logs")
   if [ "${MOUNT_RACELINE:-1}" = "1" ]; then
     mounts+=(-v "$REPO/raceline:$IN/raceline")
+  fi
+  # Same reason as raceline/: AMCL tuning is a loop of "edit the yaml, run
+  # again", and the image bakes experiments/, so without this every parameter
+  # change would need a 5 GB rebuild. MOUNT_PARAMS=0 uses the baked copy.
+  if [ "${MOUNT_PARAMS:-1}" = "1" ] && [ -d "$REPO/experiments/iros2026/params" ]; then
+    mounts+=(-v "$REPO/experiments/iros2026/params:$IN/experiments/iros2026/params")
   fi
   # RViz needs the host GPU: without it Mesa's GLX cannot create a render
   # window on an XWayland display ("Invalid parentWindowHandle", rviz2 aborts).
@@ -80,21 +124,31 @@ case "${1:-}" in
     # dev container: the bridge runs in this container, so bridge:=true and the
     # 45 Hz cap comes from tcp_nodelay + loop_hz_cap instead of bridge.sh.
     shift
-    RUN_NAME="${1:-race}"
-    case "$RUN_NAME" in *:=*) RUN_NAME=race ;; *) shift || true ;; esac
-    racer_run \
-      track:=iros2026 rviz:="${RVIZ:-false}" \
-      tcp_nodelay:=true loop_hz_cap:="${HZ_CAP:-45}" control_hz:=45 \
-      path_csv:="$IN/raceline/iros2026/rl_mt_b05b15w05_ell_L65_B50_v9.0.csv" \
-      log_csv:="$IN/runs/${RUN_NAME}.csv" \
-      distance_source:=slip v_max:=9.0 enc_rate_window_s:="${ENC_WIN:-0.10}" \
-      warmup_v_max:=2.0 warmup_dist_m:=21.0 \
-      amcl_params_file:="$IN/experiments/iros2026/params/amcl_beams360.yaml" \
-      exit_guard_from:=0.0 exit_guard_full:=0.0 \
-      controller_mode:=hybrid_lqr lqr_k_lat:=0.03 lqr_k_head:=0.05 lqr_k_yaw:=0.0 \
-      lqr_max_correction_rad:=0.02 \
-      recover_settle_s:=2.0 recover_creep_s:=3.0 \
-      "$@"
+    run_name "${1:-}" race && shift || true
+    mt_args rl_mt_b05b15w05_ell_L65_B50_v9.0.csv "$RUN_NAME"
+    racer_run "${MT_ARGS[@]}" "$@"
+    ;;
+  truth)
+    # DIAGNOSTIC, NOT RACE-LEGAL. Steers on the simulator's ground-truth pose
+    # (drive_on_truth:=true), which race.launch.py refuses in mode:=race and the
+    # follower prints in red. raceline/FINDINGS.md section 11: 8.45 s mean over
+    # 22 clean laps, against 8.92 for the best AMCL line -- that half second is
+    # what localization costs, not a lap time this car can enter a race with.
+    # The line is solved for the 0.09 m worst-case error the true-pose car has
+    # (AMCL has 0.13 m), so driving it ON AMCL puts it into the right wall.
+    #
+    # It is also the AMCL tuning rig. race.launch.py line 174: "the localizer
+    # still runs, so its error is still logged beside a car that is not using
+    # it" -- and instruments.launch.py gets the unforced use_tf, so map->odom is
+    # published and measured either way. The car therefore drives an identical
+    # line whatever AMCL does, which makes the AMCL parameters the only
+    # variable. Sweep them with AMCL_PARAMS= and compare runs/NAME.csv.
+    shift
+    run_name "${1:-}" truth && shift || true
+    mt_args rl_mt_tb10_lat875_b55_L70.csv "$RUN_NAME"
+    echo "[run.sh] DIAGNOSTIC: drive_on_truth -- ground-truth pose, NOT race-legal" >&2
+    echo "[run.sh] amcl params: ${AMCL_PARAMS:-amcl_beams360.yaml}" >&2
+    racer_run "${MT_ARGS[@]}" drive_on_truth:=true steer_a_lat_max:=8.0 "$@"
     ;;
   racer)
     shift
@@ -108,7 +162,7 @@ case "${1:-}" in
     exec docker exec -it "$NAME" bash
     ;;
   *)
-    echo "usage: $0 {sim [--headless [BRIDGE_IP]] | race [NAME] [name:=value ...] | racer name:=value ... | shell | exec}" >&2
+    echo "usage: $0 {sim [--headless [BRIDGE_IP]] | race [NAME] | truth [NAME] | racer name:=value ... | shell | exec}" >&2
     exit 1
     ;;
 esac

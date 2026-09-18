@@ -106,7 +106,7 @@ DEFAULT_MAP_YAML = os.path.join(MAPS_DIR, 'track_clean.yaml')
 # 9.55-9.70 s on a 45 Hz loop; run 18 with slip_circle 0.12 + accel_ff 1.0:
 # 19 clean laps, best 9.45. Body-corner clearance min 0.071 m at s 39.6-40.2.
 # raceline_a7.0_edit_10.csv (the previous default) is still shipped.
-DEFAULT_RACELINE = os.path.join(RACELINE_DIR, 'raceline_tum_usman_4.csv')
+DEFAULT_RACELINE = os.path.join(RACELINE_DIR, 'raceline_tum_usman_3.csv')
 
 # The track's centreline, used by localization_bootstrap to ORDER the
 # checkpoints along the lap after a wall reset. Its s runs AGAINST the lap on

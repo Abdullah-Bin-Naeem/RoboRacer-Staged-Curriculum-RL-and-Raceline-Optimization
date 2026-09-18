@@ -154,7 +154,9 @@ def _launch(context, *args, **kwargs):
     #    follower's odometry even when localizer:=none.
     actions.append(IncludeLaunchDescription(
         src(loc_share, 'chassis.launch.py'),
-        launch_arguments={'dr_distance_source': cfg('dr_distance_source')}.items(),
+        launch_arguments={'dr_distance_source': cfg('dr_distance_source'),
+                          'dr_transform_tolerance': cfg('dr_transform_tolerance'),
+                          'dr_distance_scale': cfg('dr_distance_scale')}.items(),
         condition=IfCondition(LaunchConfiguration('chassis')),
     ))
 
@@ -221,6 +223,14 @@ def generate_launch_description():
             'dr_distance_source', default_value='encoder',
             description="dead reckoning distance: 'encoder' (wheel angle) or 'tire' "
                         '(tire-observer car speed; removes wheelspin/braking slip)'),
+        DeclareLaunchArgument(
+            'dr_transform_tolerance', default_value='0.005',
+            description='seconds the odom -> base transform is post-dated; it only '
+                        'has to cover one 200 Hz publish gap, and the rest is lead'),
+        DeclareLaunchArgument(
+            'dr_distance_scale', default_value='1.0',
+            description='multiplies the dead-reckoned distance; <1 trims the '
+                        'encoders\' systematic over-read under slip'),
         DeclareLaunchArgument('map_yaml', default_value=DEFAULT_MAP_YAML,
                               description='occupancy grid, AMCL only'),
 

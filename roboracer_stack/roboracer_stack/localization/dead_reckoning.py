@@ -98,11 +98,11 @@ class DeadReckoning(Node):
         # newest one. AMCL must look up odom->base AT the scan timestamp to
         # build map->odom. 200 Hz cuts the worst case to 5 ms. Pure resampling
         # of the integrated pose: the rate does not change the distance.
-        p('publish_rate', 200.0)
+        p('publish_rate', 100.0)
         p('publish_tf', True)
         # Post-date the TF stamp so a consumer asking for "now" lands INSIDE the
         # transform window rather than extrapolating past its end.
-        p('transform_tolerance', 0.02)
+        p('transform_tolerance', 0.005)
         # Encoders overread under slip. <1.0 trims the systematic part; AMCL
         # handles what is left.
         p('distance_scale', 1.0)

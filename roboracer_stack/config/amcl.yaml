@@ -52,7 +52,12 @@ amcl:
     laser_model_type: "likelihood_field"
     laser_likelihood_max_dist: 2.0
     laser_min_range: 0.10
-    laser_max_range: 9.50             # just inside the sim lidar's 10 m range_max
+    # The sim lidar's range_max is 10.0 (autodrive_bridge.py, create_laserscan_msg).
+    # On the main straight both walls are parallel, so the ONLY along-track
+    # information is the features at the end of it -- and those are the beams
+    # this cap throws away. Measured: cross-track p90 0.031 m (observable
+    # everywhere) against along-track p90 0.406 m (observable only here).
+    laser_max_range: 9.90
     max_beams: 180                    # subsampled from the devkit's 1080
     # Weights must sum to 1. z_hit dominates because the sim's lidar is clean;
     # z_rand guards against the unknown infield returning nothing useful.

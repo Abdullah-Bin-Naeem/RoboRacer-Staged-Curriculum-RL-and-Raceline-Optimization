@@ -1281,8 +1281,30 @@ class PurePursuit(Node):
             delta_lqr = -(self.lqr_k_lat * e_lat_now
                           + self.lqr_k_head * yaw_error
                           + self.lqr_k_yaw * yaw_error_rate)
-            delta_lqr = float(np.clip(delta_lqr, -self.lqr_max_correction, self.lqr_max_correction))
+            bound = self.lqr_max_correction
+            if self.controller_mode == 'ff_lqr' and self.steer_a_lat_max > 0.0:
+                # Authority scaled by the tire left over from the path's own
+                # lateral demand, like the throttle's slip circle: the full
+                # bound on a straight or when rejoining the line (second ff
+                # run: parked 0.4 m off the line after a reset, a 0.03 rad
+                # bound drove parallel to it into the next wall), a floor at the
+                # apex where any extra steering tips the front tire past its
+                # peak (first ff run, 0.12 rad at the apex: yaw rate 1.5
+                # against 2.8, 0.57 m wide).
+                a_now = self.speed ** 2 * abs(float(self.kappa[near]))
+                room = math.sqrt(max(0.0, 1.0 - (a_now / self.steer_a_lat_max) ** 2))
+                bound = max(0.02, self.lqr_max_correction * room)
+            delta_lqr = float(np.clip(delta_lqr, -bound, bound))
             kappa_cmd += math.tan(delta_lqr) / self.wheelbase
+            if self.controller_mode == 'ff_lqr' and self.steer_a_lat_max > 0.0 and self.speed > 0.5:
+                # The cap above ran before the correction was added, so the LQR
+                # bypassed it: first ff_lqr run, S-bend at s 26 at 7 m/s, 0.19 m
+                # left of the line, the correction asked for kappa 0.43 against
+                # a tire good for ~0.2 and the car understeered into the wall.
+                # More steering past the tire's peak is the wrong sign (see the
+                # cap's comment); the TOTAL command is what must stay under it.
+                k_cap = self.steer_a_lat_max / (self.speed ** 2)
+                kappa_cmd = max(-k_cap, min(k_cap, kappa_cmd))
         delta = math.atan(kappa_cmd * self.wheelbase)          # bicycle model
         if self.steer_excess_rad > 0.0:
             # feed-forward angle from the path curvature at the lookahead point (same

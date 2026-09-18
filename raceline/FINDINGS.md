@@ -414,3 +414,26 @@ with `warmup_dist_m:=28` so lap 1 accelerates after the right-wall zone. That
 run also exposed a recovery bug: after two contacts the re-seed picked the
 wrong checkpoint (estimate 12 m and 27 m off) and the run never came back.
 One contact should cost 10 s, not the session.
+
+### 11.1 Controller experiment: curvature feed-forward + LQR (`controller_mode:=ff_lqr`)
+
+Tried on the true pose against the 8.45 s pursuit baseline, three runs on
+2026-09-18/19. The idea: steer the path's own curvature at the landing point
+instead of the pursuit chord, so the hairpins are not cut 0.13 m wide.
+
+- Run 1: LQR at its design bound (0.12 rad) bypassed the steering cap and
+  tipped the front tire past its peak at the apex (yaw rate 1.5 against 2.8,
+  0.57 m wide). Cap now applies to the total command.
+- Run 2: bound 0.03 rad could not rejoin the line after a reset (drove parallel
+  0.4 m off into the next wall) and could not catch the exit understeer.
+- Run 3: bound scaled by the tire's remaining lateral room. 20 laps at
+  **8.495 s** against 8.450: the apexes sit on the line either way, the corner
+  EXITS run the same 0.1 m wide either way (that is the tire under combined
+  load, not steering geometry), and on the straights the LQR chatters
+  (|e_lat| p90 0.12 m against 0.04, steering std 0.06 against 0.01).
+
+Verdict: shelved. The mode stays in the code as an opt-in experiment; the
+defaults and the other two modes are untouched. The 0.13 m the hairpins run
+wide is the tire at the exit, so it will not yield to a steering law that
+still asks the same lateral demand; the remaining ways in are the profile at
+the exits (less combined demand) or a controller that knows the tire.

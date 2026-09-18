@@ -235,6 +235,12 @@ class PurePursuit(Node):
         # gentler acceleration until it has seen one.
         p('warmup_v_max', 0.0)
         p('warmup_dist_m', 0.0)
+        # After a wall reset the follower used to resume at full race speed on a
+        # pose that is still on the duct. M11: 9 recoveries in ~20 s, every one
+        # a re-hit within 1 s of "follower resumes". Cap the target for a few
+        # metres after /localization_ready returns; 0 dist disables.
+        p('recover_warmup_v_max', 2.0)
+        p('recover_warmup_dist_m', 8.0)
         # ---- speed source ---------------------------------------------
         # 'tire' (default), 'fused' or 'encoder'. See the module docstring: the
         # encoder is the throttle echo in this simulator, so 'tire' runs the
@@ -474,6 +480,11 @@ class PurePursuit(Node):
         self._warm_dist = 0.0        # metres driven since the follower first moved
         self._warm_t = None          # previous control tick, for that integral
         self._warm_done = not (self.warm_v > 0.0 and self.warm_d > 0.0)
+        self.rec_warm_v = float(g('recover_warmup_v_max'))
+        self.rec_warm_d = float(g('recover_warmup_dist_m'))
+        self._rec_warm = False
+        self._rec_warm_dist = 0.0
+        self._rec_warm_t = None
         self.hz = float(g('control_hz'))
         self.a_long_launch = float(g('a_long_launch'))
         self.a_long_launch_v = float(g('a_long_launch_v'))
@@ -939,6 +950,16 @@ class PurePursuit(Node):
 
     def _cb_ready(self, msg):
         if msg.data and not self.ready:
+            # A re-confirm after a wall reset (initial warmup already finished)
+            # must not resume at 9 m/s on the duct. Initial seed uses the
+            # ordinary warmup cap instead.
+            if self._warm_done and self.rec_warm_v > 0.0 and self.rec_warm_d > 0.0:
+                self._rec_warm = True
+                self._rec_warm_dist = 0.0
+                self._rec_warm_t = None
+                self.get_logger().info(
+                    f'localization re-confirmed after reset: speed cap {self.rec_warm_v:.2f} m/s '
+                    f'for {self.rec_warm_d:.1f} m')
             self.ready = True
             self.get_logger().info('localization converged, taking over')
         elif not msg.data and self.ready:
@@ -1314,9 +1335,27 @@ class PurePursuit(Node):
             else:
                 v_target = min(v_target, self.warm_v)
 
+        if self._rec_warm:
+            if self._rec_warm_t is not None:
+                dt_r = now - self._rec_warm_t
+                if 0.0 < dt_r < 0.5:
+                    self._rec_warm_dist += max(self.speed, 0.0) * dt_r
+            self._rec_warm_t = now
+            if self._rec_warm_dist >= self.rec_warm_d:
+                self._rec_warm = False
+                self.get_logger().info(
+                    f'recover warmup released after {self._rec_warm_dist:.1f} m')
+            else:
+                v_target = min(v_target, self.rec_warm_v)
+
         # Corner-exit guard: while the car is outward of the line in a corner and
         # the profile is asking for MORE speed, give it only the part of that
         # increase it has earned back. Reduces the demand, never raises it.
+        #
+        # Lowering v_target alone is not enough in slip mode: accel_ff still
+        # commands u > v from the plan's a_long, so the car keeps driving while
+        # wide (M12, hp1 exit, e_lat -0.10 -> -0.50 with throttle 0.09 -> 0.14).
+        outward = 0.0
         if self.exit_guard_full > 0.0 and abs(float(self.kappa[near])) > 1e-3:
             outward = -math.copysign(e_lat_now, float(self.kappa[near]))
             if outward > self.exit_guard_from and v_target > self.speed:
@@ -1324,8 +1363,12 @@ class PurePursuit(Node):
                 fraction = 1.0 if span <= 0.0 else min(1.0, (outward - self.exit_guard_from) / span)
                 v_target = self.speed + (v_target - self.speed) * (1.0 - fraction)
 
+        a_plan_use = float(self.path_a[near])
+        if outward > self.exit_guard_from:
+            a_plan_use = min(a_plan_use, 0.0)
+
         if self.throttle_mode == 'slip':
-            throttle = self._throttle_slip(v_target, float(self.path_a[near]),
+            throttle = self._throttle_slip(v_target, a_plan_use,
                                            max(self.speed, 0.0) ** 2 * abs(float(self.kappa[near])))
         else:
             v_target = self._limit_accel(v_target)
@@ -1333,6 +1376,14 @@ class PurePursuit(Node):
             throttle = float(np.clip(self.ff * v_target + self.kp * err, 0.0, self.thr_max))
             self.u_cmd = throttle * self.u_per_thr
             self.v_land = max(self.speed, 0.0)
+
+        if self.exit_guard_full > 0.0 and outward > self.exit_guard_from:
+            u_cap = self.speed
+            if outward >= self.exit_guard_full:
+                u_cap = max(0.0, self.speed - 0.4)
+            if self.u_cmd > u_cap:
+                self.u_cmd = u_cap
+                throttle = float(np.clip(u_cap / self.u_per_thr, 0.0, self.thr_max))
 
         t, s = Float32(), Float32()
         t.data, s.data = throttle, steering

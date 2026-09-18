@@ -39,16 +39,37 @@ def load(path):
     return header, a
 
 
-def solve(s, kappa, a_lat, a_long, a_brake, v_max, p=2.0, v_seed=None, iters=50):
+def parse_lat_zones(spec):
+    """'s0:s1:a,...' -> list of (s0, s1, a_lat). Empty string -> []."""
+    out = []
+    for z in (spec or '').split(','):
+        z = z.strip()
+        if not z:
+            continue
+        s0, s1, a = (float(x) for x in z.split(':'))
+        out.append((s0, s1, a))
+    return out
+
+
+def a_lat_on_s(s, a_lat, lat_zones):
+    alat = np.full(len(s), float(a_lat))
+    for s0, s1, a in lat_zones:
+        alat[(s >= s0) & (s <= s1)] = a
+    return alat
+
+
+def solve(s, kappa, a_lat, a_long, a_brake, v_max, p=2.0, v_seed=None, iters=50,
+          lat_zones=()):
     n = len(s)
     lap = s[-1] + (s[-1] - s[-2])
     ds = np.diff(np.append(s, lap))                       # ds[i]: i -> i+1 (wraps)
     k = np.abs(kappa)
-    v_cap = np.minimum(v_max, np.sqrt(a_lat / np.maximum(k, 1e-6)))
+    alat = a_lat_on_s(s, a_lat, lat_zones)
+    v_cap = np.minimum(v_max, np.sqrt(alat / np.maximum(k, 1e-6)))
     v = v_cap.copy() if v_seed is None else np.minimum(v_seed, v_cap)
 
-    def room(vi, ki):
-        u = min(1.0, (vi * vi * ki) / a_lat)
+    def room(vi, ki, ai):
+        u = min(1.0, (vi * vi * ki) / ai)
         return (1.0 - u ** p) ** (1.0 / p)
 
     for _ in range(iters):
@@ -60,7 +81,8 @@ def solve(s, kappa, a_lat, a_long, a_brake, v_max, p=2.0, v_seed=None, iters=50)
                 j = (i + 1) % n
                 vj = v[j]
                 for _ in range(4):
-                    a = a_long * min(room(v[i], k[i]), room(vj, k[j])) - DRAG_LIN * v[i]
+                    a = a_long * min(room(v[i], k[i], alat[i]),
+                                     room(vj, k[j], alat[j])) - DRAG_LIN * v[i]
                     vj = min(v[j], math.sqrt(max(v[i] ** 2 + 2.0 * ds[i] * a, 0.0)))
                 v[j] = vj
         for _pass in range(2):                            # backward
@@ -68,7 +90,8 @@ def solve(s, kappa, a_lat, a_long, a_brake, v_max, p=2.0, v_seed=None, iters=50)
                 j = (i + 1) % n
                 vi = v[i]
                 for _ in range(4):
-                    a = a_brake * min(room(vi, k[i]), room(v[j], k[j])) + DRAG_LIN * v[j]
+                    a = a_brake * min(room(vi, k[i], alat[i]),
+                                      room(v[j], k[j], alat[j])) + DRAG_LIN * v[j]
                     vi = min(v[i], math.sqrt(v[j] ** 2 + 2.0 * ds[i] * a))
                 v[i] = vi
         if np.max(np.abs(v - before)) < 1e-6:
@@ -94,22 +117,39 @@ def main():
     ap.add_argument('--a-brake', type=float, default=5.5)
     ap.add_argument('--v-max', type=float, default=8.5)
     ap.add_argument('--p', type=float, default=2.0, help='ellipse exponent (2 = ellipse)')
+    ap.add_argument('--lat-zones', default='',
+                    help='s0:s1:a_lat,... overrides --a-lat inside those s-ranges')
     a = ap.parse_args()
 
     header, arr = load(a.csv)
     s, kappa, v_in = arr[:, 0], arr[:, 4], arr[:, 7]
+    zones = parse_lat_zones(a.lat_zones)
     lap_in = float(np.sum(np.diff(np.append(s, s[-1] + s[-1] - s[-2])) * 2.0 / (v_in + np.roll(v_in, -1))))
-    v, t = solve(s, kappa, a.a_lat, a.a_long, a.a_brake, a.v_max, a.p)
+    v, t = solve(s, kappa, a.a_lat, a.a_long, a.a_brake, a.v_max, a.p, lat_zones=zones)
     u_in = usage(s, kappa, v_in, a.a_lat, a.a_long, a.a_brake)
     u_out = usage(s, kappa, v, a.a_lat, a.a_long, a.a_brake)
     out = arr.copy()
     out[:, 7] = v
+    note = (f'# ellipse a_lat {a.a_lat} lat_zones [{a.lat_zones}] '
+            f'a_long {a.a_long} a_brake {a.a_brake} v_max {a.v_max} -> {t:.3f} s\n')
     with open(a.out, 'w') as f:
-        f.writelines(header)
+        if header:
+            f.writelines(header)
+        else:
+            f.write('# s_m,x_m,y_m,psi_rad,kappa_radpm,w_right_m,w_left_m,v_mps\n')
+        f.write(note)
         np.savetxt(f, out, delimiter=',', fmt='%.5f')
     print(f'{a.csv}: lap {lap_in:.3f} s, ellipse usage max {u_in.max():.2f} ({np.sum(u_in > 1.02)} pts > 1.02)')
     print(f'{a.out}: lap {t:.3f} s, ellipse usage max {u_out.max():.2f} ({np.sum(u_out > 1.02)} pts > 1.02), '
           f'v min {v.min():.2f} max {v.max():.2f}, max drop {np.max(v_in - v):.2f} m/s at s {s[np.argmax(v_in - v)]:.2f}')
+    if zones:
+        for s0, s1, az in zones:
+            m = (s >= s0) & (s <= s1)
+            if not np.any(m):
+                continue
+            i = np.argmax(np.abs(kappa[m]))
+            ss, kk, vv = s[m][i], kappa[m][i], v[m][i]
+            print(f'  zone {s0:.1f}-{s1:.1f} a_lat {az}: apex s {ss:.2f} k {kk:.2f} v {vv:.2f}')
 
 
 if __name__ == '__main__':

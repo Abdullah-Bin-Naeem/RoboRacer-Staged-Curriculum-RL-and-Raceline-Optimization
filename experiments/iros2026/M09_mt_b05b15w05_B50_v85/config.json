@@ -1,0 +1,21 @@
+{
+  "id": "M09",
+  "name": "mt_b05b15w05_B50_v85",
+  "date": "2026-09-18",
+  "track": "iros2026",
+  "line": "rl_mt_b05b15w05_ell_L65_B50_v8.5.csv",
+  "laps": 30,
+  "hz_cap": "45",
+  "overrides": [
+    "distance_source:=slip",
+    "v_max:=8.5",
+    "target_lead_s:=0.08",
+    "brake_cap_margin:=0.2",
+    "enc_rate_window_s:=0.05"
+  ],
+  "hypothesis": "v_max 8.5 + target_lead 0.08 + brake_cap 0.2 hold hairpin-1.",
+  "prediction": "9.00-9.05 if clean; first-lap contact expected if sim is hot",
+  "git_branch": "adil_mt",
+  "git_commit": "274ac86",
+  "verdict_short": "REJECTED: first timed lap hp1 EXIT understeer; clean wraps 9.10-9.35 (v_max 8.5 too slow); hot sim"
+}

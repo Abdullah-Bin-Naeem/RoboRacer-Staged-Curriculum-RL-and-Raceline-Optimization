@@ -330,6 +330,15 @@ class PurePursuit(Node):
         # (ICRA run 18), and a car already ABOVE its target must be allowed to
         # fall back to it rather than hold speed against drag.
         p('drag_ff', 0.0)
+        # Braking: never command a wheel more than this above the TARGET. Below the
+        # band the wheel is placed relative to the observer's speed (v_land - s_brk
+        # * den), and the observer runs 0.4-0.9 m/s HIGH at hairpin turn-in on every
+        # IROS run (it has no cornering drag), exactly where the friction circle
+        # also shrinks s_brk to its 0.02 floor -- so the "brake" wheel sat above the
+        # real car and DROVE it into the apex (M03 hp2, M08 hp1: +0.95 m/s, IMU
+        # +2.6 m/s2 while braking). Capping against the target cannot be fooled by
+        # the observer. Only ever lowers u, only when braking. 0 = off.
+        p('brake_cap_margin', 0.0)
         # Loop delay from publishing a throttle to seeing it on the wheel. MEASURED
         # 0.15 s (see _throttle_slip). Everything in the band is predicted this far
         # ahead with the observer's acceleration. 0 = the old behaviour.
@@ -505,6 +514,7 @@ class PurePursuit(Node):
         self.slip_circle = float(g('slip_circle'))
         self.accel_ff = float(g('accel_ff')) > 0.5
         self.drag_ff = float(g('drag_ff')) > 0.0
+        self.brake_cap = float(g('brake_cap_margin'))
         # mu is monotone on [0, S_PEAK]: tabulate it once for the inverse.
         self._s_tab = np.linspace(0.0, TIRE_S_PEAK, 151)
         self._mu_tab = np.array([self._mu(float(S)) for S in self._s_tab])
@@ -1054,6 +1064,8 @@ class PurePursuit(Node):
         else:
             u = v_target + self.slip_kp * (v_target - v_land)
         u = min(max(u, v_land - s_brk * den), v_land + s_acc * den)
+        if self.brake_cap > 0.0 and v_target < v_land:
+            u = min(u, v_target + self.brake_cap)
         if v_target > v and u < self.u_launch:
             u = self.u_launch
         self.v_land = v_land

@@ -456,7 +456,11 @@ lap (run 15); with the rate spanning 50 ms, run 16 did 8 clean laps at
 Two follower changes tried at the fast loop were worse and are off:
 `steer_excess_rad` (a slip-angle limiter; it throttles turn-in and the car
 runs 0.3 m wide out of the hairpins) and `lookahead_min:=0.6`. The
-organizers say the evaluation machine runs 40-50 Hz. `loop_hz_cap:=45` (with
+organizers said the evaluation machine runs 40-50 Hz; the Phase 1 qualification
+bag they returned (`qualification_data/`, our stack on their machine) shows every
+bridge topic at **130 Hz** and the follower's throttle-to-wheel delay at 28-41 ms
+against 120-125 ms here, so constants tuned here are the slow end (FINDINGS 11.3).
+`loop_hz_cap:=45` (with
 `tcp_nodelay:=true`) paces the bridge's replies so the loop runs at that rate
 here; the simulator only emits in reply, so the cap holds the whole loop. The
 devkit is untouched; it is the process's environment. The `.so` must exist in the container (`gcc -shared

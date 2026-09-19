@@ -3,6 +3,7 @@ build/
 install/
 log/
 *.egg-info/
+/qualification_data
 
 # ---- Python ----------------------------------------------------------------
 __pycache__/

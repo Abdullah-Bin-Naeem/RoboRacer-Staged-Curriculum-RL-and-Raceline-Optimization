@@ -85,7 +85,8 @@ def _nodes(context, *args, **kwargs):
                  'use_tf_pose': cfg('use_tf_pose').lower() == 'true',
                  'wait_for_ready': cfg('wait_for_ready').lower() == 'true',
                  'bootstrap_seconds': float(cfg('bootstrap_seconds')),
-                 'dev_lap_telemetry': cfg('dev_lap_telemetry').lower() == 'true'},
+                 'dev_lap_telemetry': cfg('dev_lap_telemetry').lower() == 'true',
+                 'publish_viz': cfg('publish_viz').lower() == 'true'},
                 overrides,
             ],
         ),
@@ -112,6 +113,10 @@ def generate_launch_description():
             description='/amcl_pose for the race-legal estimate; the devkit odom '
                         'is ground truth and RESTRICTED at race time'),
         DeclareLaunchArgument('dev_lap_telemetry', default_value='false'),
+        DeclareLaunchArgument(
+            'publish_viz', default_value='true',
+            description='publish ~/status, ~/path and ~/lookahead for RViz and the '
+                        'offline logger; race.launch.py sets false'),
         DeclareLaunchArgument(
             'use_tf_pose', default_value='false',
             description='read the pose from TF map->roboracer_1 (continuous) '

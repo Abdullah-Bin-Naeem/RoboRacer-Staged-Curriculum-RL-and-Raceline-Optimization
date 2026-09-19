@@ -188,7 +188,13 @@ class LocalizationV2(Node):
         p('odom_spin_margin', 0.4)
         p('beam_sigma_m', 0.03)                # per-beam endpoint noise: puts `info` in 1/m^2
         p('info_scale', 1.0)
+        # Diagnostics. Both are OFF in config/localization_v2.yaml, which is what
+        # races: nothing subscribes to ~/status there and nothing reads the line,
+        # so a clean race prints its startup banner and then stays silent.
+        #   status_every  scans between ~/status messages; 0 = never
+        #   log_every     scans between the INFO line;     0 = never
         p('status_every', 1)
+        p('log_every', 200)
 
         g = lambda n: self.get_parameter(n).value  # noqa: E731
         track = str(g('track')) or None
@@ -202,7 +208,8 @@ class LocalizationV2(Node):
         self.tf_tol = float(g('transform_tolerance'))
         self.stride = int(g('beam_stride'))
         self.max_use = float(g('max_use_m'))
-        self.status_every = max(1, int(g('status_every')))
+        self.status_every = max(0, int(g('status_every')))
+        self.log_every = max(0, int(g('log_every')))
 
         t0 = time.time()
         self.field = LikelihoodField(map_yaml)
@@ -398,7 +405,9 @@ class LocalizationV2(Node):
         self.tfb.sendTransform(tf)
 
     def _publish_status(self, out, reject, t_start):
-        if self._n % self.status_every:
+        want_pub = self.status_every and self._n % self.status_every == 0
+        want_log = self.log_every and self._n and self._n % self.log_every == 0
+        if not (want_pub or want_log):
             return
         if out is None:                       # no odometry yet: an empty status with the reason
             out = dict.fromkeys(STATUS_FIELDS, 0.0)
@@ -406,10 +415,11 @@ class LocalizationV2(Node):
             out['resid_m'] = -1.0
             out['reject'] = float(REJECT_CODES.index(reject))
             out['compute_ms'] = (time.perf_counter() - t_start) * 1e3
-        msg = Float32MultiArray()
-        msg.data = self.filt.status_list(out)
-        self.pub_status.publish(msg)
-        if self._n % 200 == 0 and self._n:
+        if want_pub:
+            msg = Float32MultiArray()
+            msg.data = self.filt.status_list(out)
+            self.pub_status.publish(msg)
+        if want_log:
             self.get_logger().info(
                 f'{MODES[int(out["mode"])]:14s} info al {out["along_info"]:6.1f} cr {out["cross_info"]:6.1f} | '
                 f'meas ({out["dx_meas"]:+.3f},{out["dy_meas"]:+.3f}) appl ({out["dx_appl"]:+.3f},'

@@ -441,6 +441,11 @@ class PurePursuit(Node):
         p('wheel_radius', 0.0581)
         # Lap topics are RESTRICTED during racing. Development telemetry only.
         p('dev_lap_telemetry', False)
+        # ~/status, ~/path and ~/lookahead: RViz and the offline logger, both of
+        # which are development-only. race.launch.py sets this false, so in the
+        # submission container nothing is built or published for an absent
+        # subscriber -- the 435-pose Path in particular.
+        p('publish_viz', True)
         # Stay silent until localization_bootstrap says the pose has converged.
         # Driving a raceline off an unconverged pose just chases a moving guess.
         p('wait_for_ready', False)
@@ -582,6 +587,7 @@ class PurePursuit(Node):
                 f'match. (Before this check the clamp returned max for EVERY speed.)')
             self.ld_min = self.ld_max
         self.dev_lap = g('dev_lap_telemetry')
+        self.pub_viz = bool(g('publish_viz'))
         self.wait_for_ready = g('wait_for_ready')
         self.ready = not self.wait_for_ready
         self.bootstrap_s = float(g('bootstrap_seconds'))
@@ -705,7 +711,8 @@ class PurePursuit(Node):
         self.pub_status = self.create_publisher(Float32MultiArray, '~/status', 1)
 
         self.create_timer(1.0 / g('control_hz'), self._control)
-        self.create_timer(2.0, self._publish_path)
+        if self.pub_viz:
+            self.create_timer(2.0, self._publish_path)
 
     # ---- callbacks -------------------------------------------------------
 
@@ -1164,6 +1171,8 @@ class PurePursuit(Node):
         self.cmd_delay += 0.3 * (best - self.cmd_delay)
 
     def _publish_status(self, values):
+        if not self.pub_viz:
+            return
         m = Float32MultiArray()
         m.data = [float(v) for v in values]
         self.pub_status.publish(m)
@@ -1499,6 +1508,8 @@ class PurePursuit(Node):
         self.pub_path.publish(msg)
 
     def _publish_target(self, tx, ty):
+        if not self.pub_viz:
+            return
         m = Marker()
         m.header.frame_id = self.viz_frame
         m.header.stamp = self.get_clock().now().to_msg()

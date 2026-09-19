@@ -170,4 +170,8 @@ localization_v2:
     k_accel: 0.0096
     accel_tau_s: 0.25
     info_scale: 1.0               # extra trust multiplier on top; 1 = the field is the truth
-    status_every: 1
+    # Diagnostics OFF for the race: nothing in race.launch.py subscribes to
+    # ~/status and nothing reads the INFO line, so the node is silent after its
+    # startup banner. Set status_every: 1 / log_every: 200 to get them back.
+    status_every: 0               # scans between ~/status messages; 0 = never
+    log_every: 0                  # scans between the INFO line;     0 = never

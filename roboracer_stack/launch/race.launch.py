@@ -169,6 +169,7 @@ def _launch(context, *args, **kwargs):
         'pose_topic': POSE_TOPIC,
         'use_tf_pose': 'true',
         'dev_lap_telemetry': 'false',
+        'publish_viz': 'false',
         'wait_for_ready': ready_latched,
         'bootstrap_seconds': '0.0',
     }

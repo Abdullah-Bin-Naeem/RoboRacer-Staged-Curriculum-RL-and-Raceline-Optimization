@@ -83,7 +83,7 @@ CHECKPOINTS = [
 # after the launch corner (28 m), the steering cap matched to the planned
 # hairpin budget (7.5), and a 1.0 m lookahead floor, which took the hairpin-1
 # exit slide to zero. They are the launch defaults in launch/race.launch.py.
-RACELINE = 'rl_mt_tb10_lat875_hp725_b55_L70.csv'
+RACELINE = 'rl_mt_tb07_z9_L70.csv'
 
 # Follower arguments this track was validated with. race.launch.py applies each
 # unless the same name was given explicitly on the command line.

@@ -482,7 +482,14 @@ class ScanMatcher:
             step_m = abs(float(np.array([tx, ty]) @ evec[:, 1]))
         else:
             step_m = math.hypot(tx, ty)
-        if step_m > self.max_step_m:
+        # ...unless the fit is clean: inliers 0.95+ at half the residual bound
+        # is not divergence, it is a wrong prior. lv_L750_warm (2026-09-19):
+        # the recovery seed was 1.07 m from the car, every scan asked for the
+        # 1.05 m step with inliers 1.00 and residual 0.01, and this gate
+        # refused it for 2.3 s until the creep moved the car. The filter's
+        # per-axis clamp still paces how much of it lands per scan.
+        clean = inlier >= 0.95 and resid <= 0.5 * self.max_resid_m
+        if step_m > self.max_step_m and not (clean and step_m <= 3.0 * self.max_step_m):
             r.reason = f'step {step_m:.2f} m > {self.max_step_m:.2f}'
         elif inlier < self.min_inlier_frac:
             r.reason = f'inliers {inlier:.2f} < {self.min_inlier_frac:.2f}'

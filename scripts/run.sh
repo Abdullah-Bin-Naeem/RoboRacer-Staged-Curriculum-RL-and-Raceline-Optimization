@@ -34,28 +34,49 @@ IN=/root/Documents/roboracer
 # cannot drift between them. Everything here is from TEAM_IROS2026.md's race
 # config; the two callers add only what differs.
 #   AMCL_PARAMS  yaml in experiments/iros2026/params/, or an absolute path
-#   LOCALIZER    amcl (default) | v2 | slam -- which node owns map->odom
+#   LOCALIZER    v2 (default) | amcl | slam -- which node owns map->odom.
+#                v2 races the promoted tb10 line (39 clean laps at 8.50-8.55,
+#                my_run_5, 2026-09-19); amcl keeps the M15 config below.
 #   SCAN_DUMP    with a NAME, also save every scan to runs/NAME.npz for
 #                tools/replay_localization_v2.py (SCAN_DUMP=1)
 #   V_MAX/ENC_WIN/HZ_CAP/RVIZ  override a single knob without editing this file
+#   CMD_DELAY    preset the follower's command-delay estimate [s]. It starts at
+#                the 0.175 tuned on the host and learns ~0.125 in here over the
+#                first two laps, so laps 1-2 run 2-4 cm wider through the
+#                corners (2026-09-19, every docker run). 0.125 is what it
+#                measures every time; unset keeps the follower's own default.
 mt_args() {
   local line="$1" name="$2"
   local params="${AMCL_PARAMS:-amcl_beams360.yaml}"
   case "$params" in */*) ;; *) params="$IN/experiments/iros2026/params/$params" ;; esac
+  # localization_v2 confirms a recovery seed on its first scan and does not
+  # tighten on motion, so the AMCL recovery's 2 s settle and 3 s lidar creep
+  # only cost time -- and the creep drove the car into the wall at hairpin 2
+  # (v2_L775_w28) and twelve times in a row at s 21.6 (v2_L850_w28).
+  local rec=(recover_settle_s:=2.0 recover_creep_s:=3.0) warm=21.0
+  # v2: the cap is released after the launch corner (28 m; 21 lifted it 5 m
+  # before the corner and lap 1 hit there on every localized run).
+  [ "${LOCALIZER:-v2}" = v2 ] && rec=(recover_settle_s:=1.0 recover_creep_s:=0.0) && warm=28
   MT_ARGS=(
-    track:=iros2026 rviz:="${RVIZ:-false}" localizer:="${LOCALIZER:-amcl}"
+    track:=iros2026 rviz:="${RVIZ:-false}" localizer:="${LOCALIZER:-v2}"
     tcp_nodelay:=true loop_hz_cap:="${HZ_CAP:-45}" control_hz:=45
     path_csv:="$IN/raceline/iros2026/$line"
     log_csv:="$IN/runs/${name}.csv"
-    scan_dump:="$( [ "${SCAN_DUMP:-0}" = "1" ] && echo "$IN/runs/${name}.npz" )"
     distance_source:=slip v_max:="${V_MAX:-9.0}" enc_rate_window_s:="${ENC_WIN:-0.10}"
-    warmup_v_max:=2.0 warmup_dist_m:=21.0
+    warmup_v_max:=2.0 warmup_dist_m:="${warm}"
     amcl_params_file:="$params"
     exit_guard_from:=0.0 exit_guard_full:=0.0
     controller_mode:=hybrid_lqr lqr_k_lat:=0.03 lqr_k_head:=0.05 lqr_k_yaw:=0.0
     lqr_max_correction_rad:=0.02
-    recover_settle_s:=2.0 recover_creep_s:=3.0
+    "${rec[@]}"
   )
+  [ -n "${CMD_DELAY:-}" ] && MT_ARGS+=(cmd_delay_s:="${CMD_DELAY}")
+  # Only with SCAN_DUMP=1: an empty scan_dump:= is a malformed launch argument,
+  # and the `[ ... ] && echo` that used to build it inside the array returned 1
+  # with SCAN_DUMP unset, which set -e turned into a silent exit. Every run
+  # before 2026-09-19 had passed SCAN_DUMP=1, so neither was ever seen.
+  [ "${SCAN_DUMP:-0}" = "1" ] && MT_ARGS+=(scan_dump:="$IN/runs/${name}.npz")
+  return 0
 }
 
 # First argument is an optional run NAME; anything containing := is already a
@@ -92,7 +113,7 @@ racer_run() {
   if [ "${GPUS:-1}" = "1" ] && command -v nvidia-smi >/dev/null 2>&1; then
     gpu=(--gpus all -e NVIDIA_DRIVER_CAPABILITIES=all)
   fi
-  exec docker run --name "$NAME" --rm -it \
+  exec docker run --name "$NAME" --rm ${DOCKER_RUN_FLAGS:--it} \
     --network=host --ipc=host \
     -v /tmp/.X11-unix:/tmp/.X11-unix:rw --env DISPLAY \
     "${gpu[@]}" "${mounts[@]}" \
@@ -108,13 +129,13 @@ case "${1:-}" in
     if [ "${2:-}" = "--headless" ]; then
       BRIDGE_IP="${3:-${BRIDGE_IP:-127.0.0.1}}"
       echo "[run.sh] headless sim -> bridge at ${BRIDGE_IP}:4567" >&2
-      exec docker run --name "$SIM_NAME" --rm -it --entrypoint /bin/bash \
+      exec docker run --name "$SIM_NAME" --rm ${DOCKER_RUN_FLAGS:--it} --entrypoint /bin/bash \
         --network=host --ipc=host \
         -v /tmp/.X11-unix:/tmp/.X11-unix:rw --env DISPLAY --privileged --gpus all \
         "$SIM_IMAGE" \
         -lc "./AutoDRIVE\\ Simulator.x86_64 -batchmode -nographics -ip ${BRIDGE_IP} -port 4567"
     fi
-    exec docker run --name "$SIM_NAME" --rm -it --entrypoint /bin/bash \
+    exec docker run --name "$SIM_NAME" --rm ${DOCKER_RUN_FLAGS:--it} --entrypoint /bin/bash \
       --network=host --ipc=host \
       -v /tmp/.X11-unix:/tmp/.X11-unix:rw --env DISPLAY --privileged --gpus all \
       "$SIM_IMAGE"
@@ -130,7 +151,19 @@ case "${1:-}" in
     # 45 Hz cap comes from tcp_nodelay + loop_hz_cap instead of bridge.sh.
     shift
     run_name "${1:-}" race && shift || true
-    mt_args rl_mt_b05b15w05_ell_L65_B50_v9.0.csv "$RUN_NAME"
+    if [ "${LOCALIZER:-v2}" = v2 ]; then
+      # The promoted v2 config (2026-09-19, my_run_5: 39 timed laps at
+      # 8.50-8.55 s, zero contacts; FINDINGS section 13). The line and the
+      # three follower arguments that made it hold -- warmup released after
+      # the launch corner, steering cap matched to the hairpin budget, 1.0 m
+      # lookahead floor -- plus the command delay this container measures
+      # every run and a post-recovery cap long enough to clear s 36-39.
+      mt_args rl_mt_tb10_lat875_hp725_b55_L70.csv "$RUN_NAME"
+      MT_ARGS+=(steer_a_lat_max:=7.5 lookahead_min:=1.0 recover_warmup_dist_m:=14)
+      [ -n "${CMD_DELAY:-}" ] || MT_ARGS+=(cmd_delay_s:=0.125)
+    else
+      mt_args rl_mt_b05b15w05_ell_L65_B50_v9.0.csv "$RUN_NAME"
+    fi
     racer_run "${MT_ARGS[@]}" "$@"
     ;;
   truth)

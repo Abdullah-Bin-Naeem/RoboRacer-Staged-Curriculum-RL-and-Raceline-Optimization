@@ -51,7 +51,9 @@ MATCHER_KEYS = ('sigma', 'sigma_start', 'max_iters', 'inlier_m', 'min_inlier_fra
 FILTER_KEYS = ('q_along', 'q_cross', 'p_init', 'blind_along_info', 'gain_along', 'gain_cross',
                'rate_m_s', 'mode_hysteresis_m', 'beam_sigma_m', 'info_scale', 'min_clearance_m',
                'gate_sigma', 'gate_floor_m', 'p_floor_along_m', 'p_floor_cross_m',
-               'est_scale', 'q_scale', 'p_scale_init', 'scale_max', 'scale_init')
+               'est_scale', 'q_scale', 'p_scale_init', 'scale_max', 'scale_init',
+               'k_accel', 'accel_tau_s', 'accel_max', 'rate_cross_m_s', 'rate_cross_gap_m',
+               'odom_accel_max', 'odom_speed_window_s', 'odom_spin_margin')
 
 
 

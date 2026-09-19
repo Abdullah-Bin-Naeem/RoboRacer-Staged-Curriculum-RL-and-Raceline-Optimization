@@ -98,7 +98,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from rclpy.time import Time
 from sensor_msgs.msg import LaserScan
-from std_msgs.msg import Float32MultiArray
+from std_msgs.msg import Bool, Float32MultiArray
 from std_srvs.srv import Empty
 
 from racer_common import frames
@@ -164,16 +164,28 @@ class LocalizationV2(Node):
         p('gain_along', [1.0, 1.0, 1.0, 1.0])   # measured: forcing 0 on the blind straight is worse
         p('gain_cross', [1.0, 1.0, 1.0, 1.0])
         p('rate_m_s', [1.00, 1.00, 1.00, 1.00])  # uniform, measured; see the yaml
+        p('rate_cross_m_s', [0.20, 0.20, 0.20, 0.20])   # the cross axis is slower; see the yaml
+        p('rate_cross_gap_m', 0.06)                     # ...except when relocalising
         p('mode_hysteresis_m', 0.30)
         p('gate_sigma', 4.0)                   # innovation clamp: gate_sigma*sigma + gate_floor, per axis
         p('gate_floor_m', 0.12)
         p('p_floor_along_m', 0.03)             # the filter never claims better than this
         p('p_floor_cross_m', 0.025)
+        # True = estimate the scale from corner fixes. False now FREEZES it at
+        # scale_init and STILL APPLIES it; it used to disable the compensation
+        # altogether, so scale_init had no effect in that mode (2.77 % and
+        # 3.50 % scored identically, both = none, gt_dist along p90 0.333
+        # against 0.173 with it). Frozen-at-measured is the useful safe mode
+        # and offline it matches the estimator (0.173 vs 0.174).
         p('est_scale', True)                   # estimate the odometry scale error; see v2_filter
         p('q_scale', 2e-7)
         p('p_scale_init', 0.03 ** 2)
         p('scale_max', 0.030)   # the top of the measured DR over-read; it binds, see v2_filter
         p('scale_init', 0.025)     # measured DR over-read; the estimator starts here
+        p('k_accel', 0.0096)       # accel-dependent slip; replayed 2026-09-19, see yaml
+        p('odom_accel_max', 0.0)   # wheelspin cap [m/s^2], OFF: replay rejected it, see v2_filter
+        p('odom_speed_window_s', 0.10)
+        p('odom_spin_margin', 0.4)
         p('beam_sigma_m', 0.03)                # per-beam endpoint noise: puts `info` in 1/m^2
         p('info_scale', 1.0)
         p('status_every', 1)
@@ -205,14 +217,19 @@ class LocalizationV2(Node):
             q_along=float(g('q_along')), q_cross=float(g('q_cross')), p_init=float(g('p_init')),
             blind_along_info=float(g('blind_along_info')),
             gain_along=[float(v) for v in g('gain_along')], gain_cross=[float(v) for v in g('gain_cross')],
-            rate_m_s=[float(v) for v in g('rate_m_s')], mode_hysteresis_m=float(g('mode_hysteresis_m')),
+            rate_m_s=[float(v) for v in g('rate_m_s')],
+            rate_cross_m_s=[float(v) for v in g('rate_cross_m_s')],
+            rate_cross_gap_m=float(g('rate_cross_gap_m')),
+            mode_hysteresis_m=float(g('mode_hysteresis_m')),
             beam_sigma_m=float(g('beam_sigma_m')), info_scale=float(g('info_scale')),
             min_clearance_m=float(g('min_clearance_m')),
             gate_sigma=float(g('gate_sigma')), gate_floor_m=float(g('gate_floor_m')),
             p_floor_along_m=float(g('p_floor_along_m')), p_floor_cross_m=float(g('p_floor_cross_m')),
             est_scale=bool(g('est_scale')), q_scale=float(g('q_scale')),
             p_scale_init=float(g('p_scale_init')), scale_max=float(g('scale_max')),
-            scale_init=float(g('scale_init')))
+            scale_init=float(g('scale_init')), k_accel=float(g('k_accel')),
+            odom_accel_max=float(g('odom_accel_max')), odom_speed_window_s=float(g('odom_speed_window_s')),
+            odom_spin_margin=float(g('odom_spin_margin')))
         self.get_logger().info(
             f'map {os.path.basename(map_yaml)} {self.field.w}x{self.field.h} @ {self.field.res} m, '
             f'field built in {time.time() - t0:.2f} s; stride {self.stride}, sigma {g("sigma")}'
@@ -246,6 +263,10 @@ class LocalizationV2(Node):
             self.pub_map.publish(self._grid_msg())
         self.create_subscription(LaserScan, str(g('scan_topic')), self._cb_scan, QOS)
         self.create_subscription(PoseWithCovarianceStamped, '/initialpose', self._cb_initialpose, QOS)
+        # The bootstrap's latch. Low = the follower is held (startup, or a
+        # recovery after a wall contact): the rate limiter steps aside so the
+        # estimate the bootstrap confirms is the filter's, not a lagged copy.
+        self.create_subscription(Bool, '/localization_ready', self._cb_ready, QOS_MAP)
         self.create_service(Empty, '/request_nomotion_update', self._srv_nudge)
         self.create_service(Empty, '/reinitialize_global_localization', self._srv_global)
         self.create_timer(1.0 / float(g('publish_rate')), self._tick_tf)
@@ -292,6 +313,9 @@ class LocalizationV2(Node):
             f'seeded: map->odom ({self.filt.c[0]:+.3f}, {self.filt.c[1]:+.3f}) std {std:.2f} m; the '
             f'seed yaw {math.degrees(yaw_from_quat(msg.pose.pose.orientation)):+.1f} deg is ignored '
             '(odom carries the IMU heading)')
+
+    def _cb_ready(self, msg):
+        self.filt.held = not bool(msg.data)
 
     def _srv_nudge(self, req, res):
         return res                                       # every scan is already a match

@@ -100,6 +100,29 @@ localization_v2:
     gain_along: [1.0, 1.0, 1.0, 1.0]
     gain_cross: [1.0, 1.0, 1.0, 1.0]
     rate_m_s:   [1.00, 1.00, 1.00, 1.00]   # was [0.30, 0.60, 0.25, 0.50]
+    # THE CROSS AXIS IS RATE-LIMITED SEPARATELY, and much slower. The limiter
+    # used to scale the whole correction VECTOR by step_max/|gap|, which ties
+    # the two axes together: the along gap is the big one (0.1-0.3 m off the
+    # blind straight) and it decided the step for both. Splitting them lets the
+    # along axis keep the 1.0 m/s it needs to dump the straight's drift before
+    # the braking point, while cross -- the axis the wall margin and the
+    # follower's steering actually feel, and which is already at its geometric
+    # floor -- gets a tenth of the innovation noise.
+    #
+    # Measured offline over nine recorded runs (replay_localization_v2), all
+    # else equal, 1.00 -> 0.20 m/s on cross:
+    #     err_cross p90     0.032 -> 0.025 m, better on 8 of 9 runs (-18 %)
+    #     cross per-sample step p90  16.9 -> 6.6 mm, max 35-51 -> 8-11 mm
+    #     err_along         UNCHANGED to 3 decimals on every run
+    # 0.10 over-throttles (cross p90 0.043); 0.35+ gives most of the noise back.
+    rate_cross_m_s: [0.20, 0.20, 0.20, 0.20]
+    # ...but the slow rate is for STEADY STATE. Above this cross gap the along
+    # rate applies instead, so a genuine relocalisation (a wall reset leaves
+    # tens of centimetres) is not throttled to 0.20 m/s. Without the escape
+    # hatch the two runs containing resets got WORSE (lv_L750 cross p90 0.035
+    # -> 0.047, lv_fast_1 cross max 0.185 -> 0.240); at 0.06 m both are better
+    # than the coupled limiter (0.030 and 0.184).
+    rate_cross_gap_m: 0.06
     mode_hysteresis_m: 0.30       # travel before a table mode change is honoured
     # Per-axis innovation clamp, in the car frame: an innovation larger than
     # gate_sigma*sigma + gate_floor is CLAMPED, never dropped, so a big error
@@ -118,5 +141,33 @@ localization_v2:
     # is 0.025: 0.03. The first synthetic replay had this missing and took 2 %
     # of a correction the matcher had right.
     beam_sigma_m: 0.03
+    # ACCELERATION-DEPENDENT SLIP, off by default. Throttle commands a WHEEL
+    # speed, so the encoder reads the wheel; the wheel leads the ground by the
+    # slip ratio, and slip ratio is what makes tyre force, so it tracks
+    # longitudinal acceleration. Measured on 13059 noise-immune chords over
+    # gt_dist + lv_race_2 + lv_slow_dist:
+    #     k(%) = 0.961*a + 2.766   R2 0.486
+    #     braking a<-3: -1.1 %   steady |a|<1: +2.1 %   accel a>+3: +6.6 %
+    # consistent to +-0.5 points across all three runs. The physics is real and
+    # this is the reason the single scale state always runs to whatever bound
+    # it is given. It is NOT a net win here and that is why it ships at 0:
+    # over a closed lap the correction integrates to k1*(v^2)/2, which
+    # cancels, so it redistributes error rather than removing drift, and on
+    # THIS track the blind straight is the part the car is NOT accelerating on
+    # (a ~ -0.2 at s 34-42; the acceleration is at s 26-32 where the scan still
+    # sees along). Offline it helps gt_dist/lv_slow_dist/lv_L750_warm and hurts
+    # lv_race_2/lv_shadow_1, net zero. Set 0.0096 to enable on a track whose
+    # blind section IS the accelerating one.
+    #
+    # ON since 2026-09-19 (later the same day). Replayed over six recorded runs
+    # including the three tb10 runs, which launch from 4.7 to 8.9 m/s down the
+    # start straight (raceline s 1-8, blind, along_info 0.4-5) -- exactly the
+    # accelerating blind stretch the paragraph above said this track lacks; it
+    # was reading the centreline's s, which runs against the lap. Along p90,
+    # 0 -> 0.0096: lv_fast_19_1 0.348 -> 0.299, lv_L750_scale 0.295 -> 0.245,
+    # lv_L750_warm 0.308 -> 0.284, lv_slow_dist 0.166 -> 0.153, gt_dist
+    # 0.174 -> 0.173, lv_race_2 0.149 -> 0.157 (the one loss). Cross unchanged.
+    k_accel: 0.0096
+    accel_tau_s: 0.25
     info_scale: 1.0               # extra trust multiplier on top; 1 = the field is the truth
     status_every: 1

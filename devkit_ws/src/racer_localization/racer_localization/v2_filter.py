@@ -64,12 +64,14 @@ class V2Filter:
     def __init__(self, field, segments, *, matcher_kwargs=None, q_along=0.06 ** 2,
                  q_cross=0.005 ** 2, p_init=0.30 ** 2, blind_along_info=5.0,
                  gain_along=(1.0, 1.0, 1.0, 1.0), gain_cross=(1.0, 1.0, 1.0, 1.0),
-                 rate_m_s=(1.00, 1.00, 1.00, 1.00), mode_hysteresis_m=0.30,
+                 rate_m_s=(1.00, 1.00, 1.00, 1.00), rate_cross_m_s=None,
+                 rate_cross_gap_m=0.06, mode_hysteresis_m=0.30,
                  beam_sigma_m=0.03, info_scale=1.0, min_clearance_m=0.18,
                  gate_sigma=4.0, gate_floor_m=0.12,
                  p_floor_along_m=0.03, p_floor_cross_m=0.025,
                  est_scale=True, q_scale=2e-7, p_scale_init=0.03 ** 2, scale_max=0.030,
-                 scale_init=0.025):
+                 scale_init=0.025, k_accel=0.0, accel_tau_s=0.25, accel_max=12.0,
+                 odom_accel_max=0.0, odom_speed_window_s=0.10, odom_spin_margin=0.4):
         self.field = field
         self.matcher = ScanMatcher(field, **(matcher_kwargs or {}))
         self.segments = segments
@@ -79,6 +81,10 @@ class V2Filter:
         self.gain_along = [float(v) for v in gain_along]
         self.gain_cross = [float(v) for v in gain_cross]
         self.rate = [float(v) for v in rate_m_s]
+        # None = the same limit on both axes: decoupling alone, no retune.
+        self.rate_cross = ([float(v) for v in rate_cross_m_s]
+                           if rate_cross_m_s is not None else list(self.rate))
+        self.rate_cross_gap = float(rate_cross_gap_m)
         self.hyst_m = float(mode_hysteresis_m)
         # UNITS. The matcher's `info` is sum(w g.g) with |g| ~ 1: a count of
         # beams pinning each axis, dimensionless. P is in m^2. Adding a count to
@@ -126,7 +132,68 @@ class V2Filter:
         # 2.0-3.4 % on every logged run (o2b vs truth, six runs), so 2.2 % is a
         # far better prior than 0, and the filter refines it from there.
         self.k_scale = float(np.clip(scale_init, -self.scale_max, self.scale_max))
+        # SLIP IS NOT A CONSTANT -- it is linear in longitudinal acceleration,
+        # and that is why the scalar above always ran to whatever bound it was
+        # given. Throttle commands a WHEEL speed, so the encoder reads the
+        # wheel; the wheel leads the ground by the slip ratio, and slip ratio
+        # is what generates tyre force, so it is proportional to a. Measured on
+        # 13059 noise-immune chords over gt_dist + lv_race_2 + lv_slow_dist:
+        #
+        #     k(%) = 0.961 * a + 2.766      R2 0.486
+        #     braking a<-3: -1.1 %   steady |a|<1: +2.1 %   accel a>+3: +6.6 %
+        #
+        # An 8-point swing, consistent to +-0.5 pt across all three runs. It is
+        # also exactly backwards for a single scalar: the along axis is
+        # observable at the CORNERS, where the car is braking and k is ~-1 %,
+        # and the error has to be spent on the STRAIGHT, where the car is at
+        # full throttle and k is ~+6.6 %. The estimator learned the corner
+        # value, applied it to the straight, and saturated trying to split the
+        # difference. k_accel carries the known slope so the estimated state
+        # only has to carry the steady-state intercept (drag balance, ~2.8 %).
+        # k_accel=0 restores the old constant-scale behaviour exactly.
+        self.k_accel = float(k_accel)
+        self.accel_tau = float(accel_tau_s)
+        self.accel_max = float(accel_max)
+        self._v_prev = None
+        self._accel = 0.0
+        # WHEELSPIN CAP. The car cannot accelerate faster than the tire's peak
+        # longitudinal force allows (VEHICLE_MODEL: 4.55 m/s^2 robust, ~5 at
+        # the peak), but the encoder reads the WHEEL, which the throttle spins
+        # up as fast as it likes. On v2_L850h725 lap 2 (2026-09-19) the launch
+        # out of hairpin 1 read 20-30 % more distance than the car covered for
+        # 0.25 s -- 0.24 m of along error in a stretch where the scan cannot
+        # see along -- and the car hit the wall at s 27.4 with the estimate
+        # 0.39 m ahead. So the odometry-implied speed, smoothed over
+        # odom_speed_window_s (a per-scan rate scatters +-15 %), may not rise
+        # faster than odom_accel_max: the excess is wheelspin and is not
+        # integrated. Braking and steady speed are untouched. 0 disables.
+        #
+        # OFF (0) BY DEFAULT: replayed over seven recorded runs it fixed the
+        # run it was built on (v2_L875h725 along p90 0.220 -> 0.178) and
+        # WRECKED four others (gt_dist 0.173 -> 1.65, lv_slow_dist 0.153 ->
+        # 1.59, lv_race_2 0.157 -> 0.74) at 5, 6 and 7 m/s^2, with and without
+        # the noise margin. The windowed wheel speed is not a clean enough
+        # signal to gate on; the per-scan increments scatter 2x at 45 Hz
+        # (pure_pursuit's enc_rate_window_s finding). Kept so the idea is
+        # measured rather than remembered; do not enable without a replay
+        # that passes on every run.
+        self.odom_accel_max = float(odom_accel_max)
+        self.odom_win = float(odom_speed_window_s)
+        # Only an excess beyond this margin [m/s] is treated as spin: the
+        # windowed wheel speed still scatters a few percent, and clipping that
+        # scatter under-reads the whole lap (replayed: p90 along 0.17 -> 1.7 m
+        # on gt_dist with no margin).
+        self.odom_spin_margin = float(odom_spin_margin)
+        self._ds_hist = []             # (ds, dt) of recent scans, for the windowed speed
+        self._v_lim = None             # the ramp-limited car speed
+        self.spin_m = 0.0              # metres of odometry discarded as wheelspin (for the log)
 
+        # While /localization_ready is low the follower is not driving, so
+        # the published correction may jump: the rate limit exists to protect
+        # the steering, and during a recovery it only delays the pose the
+        # bootstrap is trying to confirm (lv_fast_19_1: 1.85 m owed, paid at
+        # 1 m/s). The node sets this from the bootstrap's latch.
+        self.held = False
         self.c = None                  # None until seeded
         # 3x3: [cx, cy, k_scale]
         self.P = np.diag([self.p_init, self.p_init, self.p_scale_init])
@@ -181,19 +248,50 @@ class V2Filter:
 
         # -- predict: the prior grows along the heading with distance travelled
         ds = 0.0 if self._last_o is None else math.hypot(o[0] - self._last_o[0], o[1] - self._last_o[1])
+        ds_raw = ds
+        if self.odom_accel_max > 0.0 and dt > 1e-4:
+            self._ds_hist.append((ds, dt))
+            while len(self._ds_hist) > 1 and sum(h[1] for h in self._ds_hist) > self.odom_win:
+                self._ds_hist.pop(0)
+            v_win = sum(h[0] for h in self._ds_hist) / max(sum(h[1] for h in self._ds_hist), 1e-4)
+            if self._v_lim is None:
+                self._v_lim = v_win
+            self._v_lim = min(v_win, self._v_lim + self.odom_accel_max * dt)
+            if v_win > self._v_lim + self.odom_spin_margin:
+                ds = ds * (self._v_lim + self.odom_spin_margin) / v_win
+                self.spin_m += ds_raw - ds
         R = rot(o[2])
         u = np.array([math.cos(o[2]), math.sin(o[2])])
         # Odometry advanced ds*(1+k) while the car moved ds, so map->odom must
         # give back k*ds along the heading. F carries that dependence into the
         # covariance, which is what makes k observable from position fixes.
-        if self.est_scale and ds > 0.0:
-            self.c = self.c - self.k_scale * ds * u
+        # Longitudinal acceleration from the odometry itself (race-legal: the
+        # same encoder stream dead_reckoning already integrates), low-passed
+        # because a per-sample difference at 22 ms is mostly noise.
+        if dt > 1e-4:
+            v_now = ds / dt
+            if self._v_prev is not None:
+                a_raw = float(np.clip((v_now - self._v_prev) / dt, -self.accel_max, self.accel_max))
+                w = min(1.0, dt / max(self.accel_tau, 1e-3))
+                self._accel += w * (a_raw - self._accel)
+            self._v_prev = v_now
+        # APPLY the scale correction always; ESTIMATE it only when asked. These
+        # used to be one flag, so est_scale:=false silently turned off slip
+        # compensation altogether instead of freezing it at the measured value
+        # (scale_init had no effect at all in that mode -- 2.77 % and 3.50 %
+        # scored identically). Frozen-at-measured is the useful safe mode: the
+        # compensation without the estimator's dynamics.
+        k_eff = self.k_scale + self.k_accel * self._accel
+        if ds_raw > 0.0:
+            # odom advanced ds_raw; the car moved ds*(1-k_eff): give the rest back
+            self.c = self.c - (k_eff * ds + (ds_raw - ds)) * u
         F = np.eye(3)
-        F[0, 2] = -ds * u[0]
-        F[1, 2] = -ds * u[1]
+        if self.est_scale:
+            F[0, 2] = -ds * u[0]
+            F[1, 2] = -ds * u[1]
         Q = np.zeros((3, 3))
         Q[:2, :2] = R @ np.diag([self.q_along, self.q_cross]) @ R.T * ds
-        Q[2, 2] = self.q_scale * ds
+        Q[2, 2] = self.q_scale * ds if self.est_scale else 0.0
         self.P = F @ self.P @ F.T + Q
         self._last_o = o
 
@@ -296,15 +394,43 @@ class V2Filter:
         # -- rate-limit the published correction toward c; carry the rest
         if self.pub is None:
             self.pub = self.c.copy()
+        # PER AXIS, in the car frame, so the two axes can carry DIFFERENT rates.
+        # Scaling the whole vector by step_max/|gap| forced one rate on both,
+        # and the along gap (0.1-0.3 m off the blind straight) always decided
+        # it. Note what the measurement did NOT show: decoupling ALONE, at
+        # equal rates, is slightly WORSE on cross (p90 0.030 -> 0.032), because
+        # the shared limit was incidentally smoothing cross. The win is the
+        # separate, slower cross rate that decoupling makes possible -- see
+        # rate_cross_m_s in the yaml for the nine-run table.
         gap = self.c - self.pub
         n = float(np.linalg.norm(gap))
-        step_max = self.rate[self.mode] * dt if dt > 0 else n
+        u = np.array([math.cos(o[2]), math.sin(o[2])])
+        v = np.array([-u[1], u[0]])
         appl = np.zeros(2)
         if n > 1e-9:
-            appl = gap if n <= step_max else gap * (step_max / n)
+            if self.held:
+                appl = gap
+            elif dt > 0:
+                lim_al = self.rate[self.mode] * dt
+                g_al = float(gap @ u)
+                g_cr = float(gap @ v)
+                # The slow cross rate is for STEADY-STATE smoothness, where the
+                # cross gap is a couple of centimetres. It must not also throttle
+                # a genuine relocalisation: after a wall reset the gap is tens of
+                # centimetres and 0.20 m/s would take a second to close it, which
+                # is what made the two runs containing resets (lv_L750,
+                # lv_fast_1) worse when the slow rate was applied unconditionally.
+                # Above rate_cross_gap_m the along rate applies instead.
+                lim_cr = (self.rate[self.mode] if abs(g_cr) > self.rate_cross_gap
+                          else self.rate_cross[self.mode]) * dt
+                appl = (max(-lim_al, min(lim_al, g_al)) * u
+                        + max(-lim_cr, min(lim_cr, g_cr)) * v)
+            else:
+                appl = gap
             self.pub = self.pub + appl
         sa, sc = self.sigmas(o[2])
         out['k_scale'] = self.k_scale
+        out['spin_m'] = self.spin_m
         out.update(dx_appl=float(appl[0]), dy_appl=float(appl[1]),
                    reject=float(REJECT_CODES.index(reject)),
                    pending_m=max(n - float(np.linalg.norm(appl)), 0.0),

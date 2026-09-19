@@ -140,6 +140,19 @@ class DeadReckoning(Node):
         # at 45 Hz scatters 2x and runs the observer low (pure_pursuit's
         # enc_rate_window_s, same finding).
         p('slip_rate_window_s', 0.05)
+        # A STOPPED WHEEL GETS NO SLIP CORRECTION. The braking term adds
+        # max(v_car - u_cmd, 0) * dt back, with v_car the tire observer; after
+        # a wall contact the simulator teleports the car and zeroes its
+        # velocity, the follower is held and the command drops to 0, the
+        # wheel reads 0 -- and the observer, which only knows the wheel, decays
+        # from 6 m/s over about a second. That decay was integrated as travel:
+        # 3.3 m of phantom motion along the heading while the car sat still
+        # (lv_fast_19_1, 2026-09-19, 14.35-15.45 s), which dragged the
+        # localizer's estimate 2.2 m off and cost the first recovery seed.
+        # Below this wheel speed the slip model has nothing to say (it was
+        # fitted on a rolling wheel inside the follower's slip band; a locked
+        # wheel at speed is never commanded), so the encoder is taken as is.
+        p('slip_wheel_min_m_s', 0.3)
         p('tire_rise_slope', 3.0)                   # as pure_pursuit.yaml
         p('v_slip_den', 4.0)
         p('distance_scale', 1.0)
@@ -188,6 +201,7 @@ class DeadReckoning(Node):
         self.slip_gate = float(g('slip_yaw_gate'))
         self.u_per_thr = float(g('u_per_throttle'))
         self.slip_win = float(g('slip_rate_window_s'))
+        self.slip_wheel_min = float(g('slip_wheel_min_m_s'))
         self._obs = {s: TireSpeedObserver(rise_slope=float(g('tire_rise_slope')),
                                           v_slip_den=float(g('v_slip_den'))) for s in ('l', 'r')}
         self._hist = {'l': deque(maxlen=16), 'r': deque(maxlen=16)}
@@ -290,7 +304,7 @@ class DeadReckoning(Node):
             return 0.0
         u_wheel = abs(ang - a0) / (t - t0) * self.wheel_r
         v_car = self._obs[side].step(u_wheel, dt)
-        if abs(self.yaw_rate) >= self.slip_gate:
+        if abs(self.yaw_rate) >= self.slip_gate or u_wheel < self.slip_wheel_min:
             return 0.0
         return (self.slip_k * max(self._u_cmd - v_car, 0.0)
                 - self.slip_k_brake * max(v_car - self._u_cmd, 0.0)) * dt

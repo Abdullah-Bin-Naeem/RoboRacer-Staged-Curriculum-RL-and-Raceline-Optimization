@@ -223,7 +223,18 @@ TRACKS = {
         # /localization_ready drops, tracking p90 0.435 / 0.262 m against
         # 0.145. Drive it deliberately instead:
         #   path_csv:=raceline/iros2026/rl_mt_max_a7.0b_edit2.csv v_max:=9.5
-        'raceline': 'rl_mt_b0.15_a7.0b.csv',
+        # PROMOTED 2026-09-19 (my_run_5, localizer v2): 39 timed laps at
+        # 8.50-8.55 s, zero contacts, on rl_mt_tb10_lat875_hp725_b55_L70 --
+        # the tb10 geometry, lateral 8.75, hairpins 7.25, brake 5.5 -- with the
+        # follower arguments below. Three of them are what made it hold and
+        # each was measured on the car (raceline/FINDINGS.md section 13):
+        # warmup released after the launch corner (28 m), the steering cap
+        # matched to the planned hairpin budget (7.5), and a 1.0 m lookahead
+        # floor, which took the hairpin-1 exit slide (one pass in 10-15 on
+        # every faster line, steering peaking 0.82-0.89) to zero in 40 passes
+        # with the steering peaking 0.75. Previous default rl_mt_b0.15_a7.0b
+        # (9.10-9.35 s on AMCL) is kept in the directory.
+        'raceline': 'rl_mt_tb10_lat875_hp725_b55_L70.csv',
         'margin_zones': '',
         'lat_zones': '',
         # Porto/ICRA follower values as the starting point. target_lead_s 0.0:
@@ -247,9 +258,11 @@ TRACKS = {
         # v_max 8.5 is this line's own ceiling; pass v_max:=9.5 with the
         # rl_mt_max lines, whose profile runs to 9.51 and which the follower
         # would otherwise clip on the straight.
-        'follower': {'v_max': '8.5', 'target_lead_s': '0.0',
+        'follower': {'v_max': '9.0', 'target_lead_s': '0.0',
                      'slip_circle': '0.12', 'accel_ff': '1.0',
-                     'warmup_v_max': '4.0', 'warmup_dist_m': '19.0'},
+                     'warmup_v_max': '2.0', 'warmup_dist_m': '28.0',
+                     'steer_a_lat_max': '7.5', 'lookahead_min': '1.0',
+                     'cmd_delay_s': '0.125', 'recover_warmup_dist_m': '14.0'},
         # Reset poses seen in logged runs 1-14 (2026-09-16/17), ordered along
         # the lap; annotated with centerline_full.csv's s, which on this track
         # runs AGAINST the lap (the bootstrap reverses it). Spacing is 3.0 m
@@ -271,7 +284,15 @@ TRACKS = {
                         ('2.500', '-6.660', '1.571'),      # s 13.8
                         ('2.500', '-4.653', '1.574'),      # s 11.7
                         ('3.525', '-1.396', '1.047'),      # s 8.2   (run 13)
-                        ('5.070', '0.121', '1.573')],      # s 6.1   (once, run 13, 0.29 m off)
+                        ('5.070', '0.121', '1.573'),       # s 6.1   (once, run 13, 0.29 m off)
+                        # Two more from the docker v2 runs of 2026-09-19, read off
+                        # ground truth while the car sat on the checkpoint after
+                        # the reset (stationary for 4 s, so exact). Without them
+                        # the bootstrap seeded 2.3 m (lv_margin_2) and 1.1 m
+                        # (lv_L750_warm) away and the matcher's step gate held
+                        # the wrong pose for seconds.
+                        ('3.323', '2.124', '2.397'),       # s 3.5   before hairpin 2 (lv_margin_1, lv_margin_2)
+                        ('0.884', '4.715', '-2.511')],     # s 46.0  hairpin 2 exit, onto the start straight (lv_L750_warm)
     },
 }
 

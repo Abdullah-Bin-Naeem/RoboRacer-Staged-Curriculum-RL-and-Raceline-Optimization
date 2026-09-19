@@ -62,11 +62,18 @@ behaves differently from a logged host run, check `pp_delay` in the CSV first:
 
 `loop_hz_cap:=28` reproduces the old delay if you need the comparison.
 
-## The multi-track race config (`run.sh race`)
+## The race config (`run.sh race`)
 
-`./scripts/run.sh race [NAME] [extra name:=value ...]` runs what
-`experiments/iros2026/TEAM_IROS2026.md` calls the race config -- M15, 56 clean
-timed laps, first-30 mean 8.963 s (best 8.92, worst 9.03):
+Since 2026-09-19 `./scripts/run.sh race [NAME] [extra name:=value ...]` runs
+the promoted **localizer v2** config: `rl_mt_tb10_lat875_hp725_b55_L70.csv`
+with `warmup_dist_m:=28 steer_a_lat_max:=7.5 lookahead_min:=1.0
+recover_warmup_dist_m:=14 cmd_delay_s:=0.125` on top of the M15 arguments
+below -- 39 timed laps at 8.50-8.55 s, zero contacts (`my_run_5`,
+`raceline/FINDINGS.md` section 13). It is also the iros2026 registry default,
+so `race.launch.py track:=iros2026 localizer:=v2` alone races it.
+`LOCALIZER=amcl` still runs what `experiments/iros2026/TEAM_IROS2026.md`
+calls the race config -- M15, 56 clean timed laps, first-30 mean 8.963 s
+(best 8.92, worst 9.03):
 
 | item | value |
 |---|---|
@@ -96,6 +103,18 @@ Two things this deliberately does **not** copy from `run_mt.sh`:
 
 Reset and Connect the simulator **by hand** between runs. Never publish
 `/autodrive/reset_command` -- it is a restricted topic.
+
+Unattended (2026-09-19): `DOCKER_RUN_FLAGS=-d` makes `run.sh` start the sim
+or the racer detached instead of `-it`. The headless sim is a socket.io
+CLIENT that retries until a bridge is on 4567, so start it first and restart
+it per run to put the car back on the spawn. Stop the racer with
+`docker kill -s SIGINT autodrive_roboracer_api` and wait ~8 s: `docker rm -f`
+kills log_localization before it writes the `SCAN_DUMP=1` `.npz`. With
+`LOCALIZER=v2`, `race`/`truth`/`shadow` pass `recover_settle_s:=1.0
+recover_creep_s:=0.0` (v2 confirms on its first scan; the lidar creep hit
+walls), and `CMD_DELAY=0.125` presets the follower's delay estimate to what it
+measures in here every time, so laps 1-2 are not run 2-4 cm wide on the
+0.175 it starts from.
 
 ## Two images, on purpose
 

@@ -600,3 +600,179 @@ table's blind threshold is 20 while the live guard stays at 5.
   passed cleanly at a HIGHER speed on every subsequent lap. `frames.py` states
   the rule -- release where the profile is already slower than the cap -- and
   36 m satisfies it on that line.
+
+## 13. Running the fast lines on localizer v2 (2026-09-19, afternoon)
+
+Goal set by the user: ten clean laps at about 8.5 s, race-legal, on v2. Every
+run below is the docker stack (`scripts/run.sh race`, 45 Hz loop), a fresh
+headless simulator per run, `warmup_dist_m:=28`, `steer_a_lat_max:=8.0`.
+Ground-truth baselines are the same command with `truth`. Contacts are read
+off the log with the localizer's error at the last moving sample before the
+teleport, which is the number that says whether the estimate put the car there.
+
+### The first contacts were never the localizer
+
+| run | line | where | car, true | v2 cross | v2 along |
+|---|---|---|---|---|---|
+| lv_fast_19_1, 19_2, lv_fast_2, 3, lv_L750, lv_L750_scale | tb10 (any rung), warmup 21 | lap 1, s 26.2, exit of the left after the cap lifts | 0.20-0.22 m wide | <= 0.022 | <= 0.13 |
+| gt_dist (ground truth) | tb10 lat875 | same corner, lap 1 | 0.211 m wide, survived by ~3 cm | | |
+| gt_dist laps 2-9 | | | 0.10-0.12 | | |
+
+The lap-1 launch out of the 21 m warmup cap goes straight into the s 21-27
+sequence at full throttle; the true-pose car clears that corner by 3 cm on
+lap 1 and by 10 cm afterwards. Every localized run hit it. `warmup_dist_m:=28`
+moves the launch past it: `v2_L750_w28` then ran 9 clean laps at 8.70 flat,
+exactly the ground-truth car's 8.70-8.75 on the same line (`b_truth_L750`).
+
+### What the localizer does cost, measured
+
+Same corners, per-lap worst wide error, ground truth vs v2, later laps:
+
+| zone | truth | v2 |
+|---|---|---|
+| hairpin-1 exit (s 18.5-20.8) | -0.11..-0.13 | -0.13..-0.15 |
+| s 36-40 | -0.11 | -0.12..-0.13 |
+| launch corner (s 24-27.5) | -0.11..-0.12 | -0.12..-0.14 |
+
+Two centimetres, everywhere, which is v2's cross error (p90 0.027-0.030 m
+on every run today; the map cell is 0.025). At the hairpin-1 exit it is a
+**fixed -2.2 cm bias**: replayed offline with sigma 0.08/0.12/0.16, beam
+stride 2/3, range cut 6/9.5 m and the cross rate limit off, the bias does not
+move by a millimetre, so it is the SLAM map's wall at that spot, not the
+matcher. The follower's own lateral error under v2 disagrees with the truth
+by 4-5 cm at the apex (1 cm when driving on truth): the bias plus the
+estimate's noise. A time-shift fit finds no extra latency in the TF path
+(both minimise at the same 25 ms).
+
+### Where the localized car slides, and why
+
+At the grip limit those centimetres decide. Hairpin-1 exit passes on v2, by
+hairpin budget (`lat_zones` 16.5-21):
+
+| hairpin a_lat, rest of lap | passes | slides (>= 0.25 m wide) | runs |
+|---|---|---|---|
+| 7.0, lat 6.5 (the race line) | 20 | 0 | lv_race_2, lv_slow_dist |
+| 7.25, lat 7.5 | 17 | 0 (one at 0.18) | v2_L750_w28, v2_L750_w21 |
+| 7.0, lat 8.75 | 39 | 2 | v5_L875h700a (15 clean, then one), v5_L875h700b (9 + 10 clean) |
+| 7.25, lat 8.0-8.75 | 31 | 3 | L800h725, L850h725, L875h725 (10 clean at 8.50-8.55, then one) |
+| 7.25, lat 8.75, exit guard on | 12 | 3 | v3_L875h725 |
+| 7.25, lat 8.75, exit drive budget 5.5 / 4.5 | 14 / 13 | 2 / 3 | v4_L875s55, v4_L875s45 |
+| 7.25, lat 8.75, exit geometry 3-8 cm inside | 37 | 5 | v7_x725a (12 clean, then two), v7_x725b |
+| 7.5 | 16 | 2 | v2_L775_w28, v2_L800_w28 |
+| 7.75 | 10 | 2 | v2_L825_w28 |
+| 8.0 | 5 | 2 | v2_L850_w28 |
+| 8.0 / 7.25, ground truth | 18 | 0 | gt_dist, b_truth_L750 |
+
+A slide is the car going from -0.13 to -0.30..-0.53 m in 0.3 s under
+acceleration at s 19.2-19.8, pose right to 1-3 cm every time. The inputs of a
+sliding pass are not distinguishable before it starts (apex speed 2.28-2.40 vs
+2.23-2.28, throttle within the normal range); it is a marginal-grip event with
+about a one-in-ten incidence per pass at 7.25 and rising above.
+
+Levers tried, in the sim:
+
+- **Exit guard** (`exit_guard_from:=0.15 exit_guard_full:=0.25`): three
+  slides in 12 laps and 0.05 s slower. It trims speed after the car is wide.
+- **Drive budget lowered over the first 1.6 m of each exit**
+  (`enforce_friction_ellipse.py --long-zones 18.3:19.9:5.5,41.8:43.23:5.5`,
+  new option): worse, 2 and 3 slides in 14 and 13 laps at 8.60-8.65. On
+  every sliding pass the car is 0.15-0.25 m/s OVER its profile at s 19.5
+  whatever the profile says there; lowering it only widens that gap.
+- **Hairpins at 7.0 instead of 7.25** (`rl_mt_tb10_lat875_hp700_b55_L70`):
+  0.08 s slower (8.55-8.65) and still one slide per 19-20 passes.
+- **The race line's exit geometry blended in** over s 18.6-22.0
+  (`rl_mt_tb10x_*`, 3-8 cm inside, 5-9 cm more room to the outside wall):
+  12 clean laps at 8.55-8.60, then two slides; the repeat slid five times. A
+  slide that starts at -0.13 m ends at -0.35..-0.53 m and in the wall with
+  0.77 m of room, so room does not save it.
+- **Command-delay preset** (`cmd_delay_s:=0.125`): the estimator starts at
+  the host's 0.175 and learns 0.125 over laps 1-2 in the container; preset,
+  lap 1 stopped hitting the s 39 corner (three lap-1 contacts there before).
+- **Wheelspin cap in v2** (`odom_accel_max`): built for v2_L850h725 lap 2,
+  where the launch out of hairpin 1 read 20-30 % more odometry than the car
+  covered for 0.25 s and the car hit at s 27.4 with the estimate 0.39 m ahead.
+  Fixed that run offline, wrecked four others (the windowed wheel speed is
+  too noisy to gate on). Ships disabled.
+
+### Recovery, fixed
+
+Before today a contact cost more than 10 s: `lv_fast_19_1` spent 7.2 s
+recovering and hit twice more. Four causes, all in the log:
+
+1. **Phantom odometry.** After the reset the wheel reads 0 but the tire
+   observer decays from 6 m/s over a second, and the `slip` source integrated
+   that as 3.3 m of travel while the car sat still; the first seed was rejected
+   2.2 m off. `slip_wheel_min_m_s`: no slip term from a stopped wheel.
+2. **A reset neither signature saw** (heading step 8.8 deg, encoder reading the
+   command): the follower drove on with 0.6 m of error and hit again a second
+   later. Signature 3, `reset_scan_jump_m`: a teleport moves every beam.
+3. **Wrong or missing checkpoint.** Two added from ground truth
+   ((3.323, 2.124), (0.884, 4.715)); adjacent checkpoints a metre apart are
+   ambiguous to the centimetre (the trigger fires when the body enters), so a
+   scan-confirmed estimate that settled off the prior is accepted
+   (`recover_offprior_m`) and the matcher lets a clean fit take a step above
+   `max_step_m` instead of refusing the right pose for 2.3 s.
+4. **The held car drove on.** The bridge keeps the last command; the follower
+   published nothing when held and the bootstrap's single zero lost the race
+   once: 0.17 throttle, 0.9 -> 4.2 m/s, into the hairpin-2 wall. Both now
+   publish an explicit zero, every tick while holding.
+
+With v2 the lidar creep after confirmation is pure exposure (it drove into
+the wall at hairpin 2 and twelve times in a row at s 21.6): `run.sh` passes
+`recover_creep_s:=0.0 recover_settle_s:=1.0` for `LOCALIZER=v2`. Recovery is
+now 3-5 s with the seed confirmed on the first attempt at 2-12 cm.
+
+### The slide, solved on the follower side (runs 1-5, evening)
+
+With the user driving the runs and the analysis coming back per run:
+
+- **Run 1** (delay preset only): 11 laps at 8.55-8.60, a hairpin-1 slide, and
+  a second contact 8 s later at s 39. The second one was the follower's delay
+  estimator: through the reset its correlation window held a standstill and a
+  launch and it read 0.114 -> 0.043 s in 4 s, so the car led by a third of the
+  real delay and arrived at s 35-37 0.4-0.6 m/s over target. Fixed: the
+  estimator is frozen while the follower is held and for one window after
+  (`pure_pursuit._delay_hold_until`); it has read 105-125 ms ever since.
+- **Runs 2-3**: same slides (hairpin 2 too), pose right to 1 cm every time.
+  Sample by sample, a sliding pass differs from a clean one in ONE thing: the
+  heading error keeps growing past -0.25 rad at s 18.7 (-0.36, -0.45) while
+  the steering sits at 0.84-0.89 against 0.72-0.82 on clean passes. That is
+  front-limit understeer, and pure pursuit answers it with more steering. A
+  slide-onset guard that coasts the wheel (`exit_slide_rate_m_s`, new,
+  off) fired on every slide and stopped none.
+- **Run 4**: steering cap `steer_a_lat_max` 8.0 -> 7.5 (matched to the 7.25
+  hairpins instead of the truth car's 8.0). 30 laps at 8.55-8.65, steering
+  peaks down 0.04, slides still on 3 of 32 hairpin-1 passes and 3 of 32
+  hairpin-2 passes: not the controller asking for more than the plan.
+- **Run 5**: `lookahead_min` 0.80 -> 1.0 m. The lookahead sat on its floor
+  through both hairpins, so the follower chased the apex with the tightest
+  geometry it had. **39 timed laps at 8.50-8.55 s, zero contacts.** Over 40
+  hairpin-1 passes: worst 0.173 m wide (median 0.149), steering peak 0.75
+  (median 0.70), heading error never below -0.28; hairpin 2 worst 0.065 m.
+  The apex moved 5 cm inward (+0.09 vs +0.04, 1.19 m of room there), the
+  exit straightened, and the lap time did not move.
+
+The 2 cm map bias at the hairpin exit is still there; the follower no longer
+sits close enough to the tire's peak for it to matter.
+
+### The recipe (promoted; registry default and `run.sh race` since 2026-09-19)
+
+| item | value |
+|---|---|
+| localizer | v2 (`localizer:=v2`; `run.sh` default) |
+| line | `raceline/iros2026/rl_mt_tb10_lat875_hp725_b55_L70.csv` (tb10 geometry, lat 8.75, hairpins 7.25, brake 5.5, predicts 8.415) |
+| warmup | `warmup_v_max:=2.0 warmup_dist_m:=28` (released after the launch corner) |
+| steering cap | `steer_a_lat_max:=7.5` |
+| lookahead floor | `lookahead_min:=1.0` |
+| command delay | `cmd_delay_s:=0.125` (`CMD_DELAY=`), estimator frozen through recoveries |
+| recovery | `recover_settle_s:=1.0 recover_creep_s:=0.0 recover_warmup_dist_m:=14` |
+| loop | 45 Hz (`tcp_nodelay:=true loop_hz_cap:=45 control_hz:=45`), slip dead reckoning, hybrid LQR as M15 |
+| image | `autodrive_racer:multi-track` built from this tree (`./scripts/build.sh`) |
+
+    ./scripts/run.sh sim            # then
+    ./scripts/run.sh race NAME      # exactly my_run_5's configuration
+
+Measured: my_run_5, 354 s, 39 timed laps 8.50-8.55 (best 8.50, profile
+8.42), zero contacts, tracking p90 0.147 m max 0.231, v2 cross p90 0.026,
+along p90 0.160, encoder/true 1.024. Before it the same line without the
+lookahead floor: one hairpin-1 slide per 10-15 laps in six runs.

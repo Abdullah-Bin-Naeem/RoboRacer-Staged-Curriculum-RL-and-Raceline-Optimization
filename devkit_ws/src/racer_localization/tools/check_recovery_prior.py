@@ -29,6 +29,15 @@ CASES = [
     ('iros2026', (3.70, -12.26), (3.018, -13.624)),   # run 20, after hairpin 1
     ('iros2026', (5.52, -11.49), (5.047, -11.480)),   # run 20, after the chicane
     ('iros2026', (0.52, 3.89), (0.800, 3.653)),       # run 19, hairpin 2 exit
+    # docker v2 runs, 2026-09-19 (contact = last moving ground-truth pose)
+    ('iros2026', (3.71, -9.34), (3.728, -9.942)),     # lv_fast_19_1, launch-corner exit
+    ('iros2026', (3.92, 2.08), (3.323, 2.124)),       # lv_margin_2, before hairpin 2 (new checkpoint)
+    # AMBIGUOUS: 9 cm from run 19's contact above, but the simulator reset it to
+    # the checkpoint 1.1 m behind instead of the one 0.3 m ahead (its trigger
+    # fires when the body enters). The picker cannot tell them apart; the
+    # bootstrap's recover_offprior_m accepts the localizer where it settles.
+    ('iros2026', (0.53, 3.98), [(0.800, 3.653), (0.884, 4.715)]),   # lv_L750_warm
+    ('iros2026', (2.35, -15.20), (1.713, -15.770)),   # lv_fast_19_1, hairpin 1 exit after recovery
 ]
 
 
@@ -71,7 +80,8 @@ def main():
             # Within 5 cm: the same physical checkpoint is logged to the
             # millimetre by different runs, and the registry keeps one reading.
             got = (round(best[1], 3), round(best[2], 3)) if best else None
-            ok = best is not None and math.hypot(best[1] - expect[0], best[2] - expect[1]) < 0.05
+            alts = expect if isinstance(expect, list) else [expect]
+            ok = best is not None and any(math.hypot(best[1] - e[0], best[2] - e[1]) < 0.05 for e in alts)
             print(f'{"ok  " if ok else "FAIL"} contact {contact} -> {got}, '
                   f'{best[0]:+.1f} m behind   (expected {expect})')
             if not ok:

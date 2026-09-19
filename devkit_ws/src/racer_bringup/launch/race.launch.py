@@ -86,7 +86,7 @@ from racer_common.frames import TRACK
 TUNABLES = ('lookahead_min', 'lookahead_max', 'lookahead_k', 'lookahead_curv_gain', 'lookahead_sag_frac',
             'lookahead_delay_ref', 'derate_delay_from', 'derate_delay_to', 'derate_a_lat',
             'steer_a_lat_max', 'steer_excess_rad',
-            'exit_guard_from', 'exit_guard_full',
+            'exit_guard_from', 'exit_guard_full', 'exit_slide_rate_m_s', 'exit_slide_hold_s',
             'lqr_k_lat', 'lqr_k_head', 'lqr_k_yaw', 'lqr_max_correction_rad',
             'v_max', 'a_lat_max', 'throttle_max', 'steering_gain',
             'warmup_v_max', 'warmup_dist_m',

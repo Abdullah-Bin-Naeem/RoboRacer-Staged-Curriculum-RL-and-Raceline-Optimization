@@ -232,13 +232,38 @@ the shared half of the two localizers was copy-pasted into both.
   `v2_*` columns, and `scan_dump:=x.npz` records every scan so
   `tools/replay_localization_v2.py x.npz [--set k=v]` re-runs the SAME filter
   offline in seconds — tune there, not in the sim.
-  (`tools/synth_v2_dataset.py` makes a sim-free dataset.)
+  (`tools/synth_v2_dataset.py` makes a sim-free dataset.) The dump is written
+  at shutdown: stop the stack with SIGINT (`docker kill -s SIGINT`), a hard
+  `docker rm -f` loses it. `k_accel` (acceleration-dependent slip) is ON since
+  2026-09-19: replayed on six runs it cuts along p90 on five, the start
+  straight IS the accelerating blind stretch in raceline s (the earlier note
+  read the centreline's s, which runs against the lap).
 
   Traps, all found the expensive way: the matcher's information is a beam
   count, so `beam_sigma_m` must turn it into 1/m² before it meets `P⁻¹`; a
   fixed whole-step gate rejects a perfect match whose *unobservable* component
   is large and takes the good component with it; and the distance transform
   must be signed to the wall **face**, not zero at occupied cell centres.
+
+  **What v2 cannot fix, measured 2026-09-19 (FINDINGS §13).** At every first
+  contact on the tb10 lines v2's pose was right to 1-3 cm; the car was 0.20 m
+  wide where the true-pose car runs 0.21 on lap 1. v2's cross error is a
+  **fixed 2 cm bias tied to the SLAM map** at the hairpin-1 exit (invariant to
+  sigma, stride, range cut, rate limit in replay), and at the grip limit that
+  is enough: a localized car slides out of hairpin 1 about once in ten passes
+  at any lateral rung above 7.5 (hairpins 7.0 or 7.25 alike), where the
+  true-pose car does not. It was front-limit understeer at the apex, and the
+  follower fixed it, not the estimate: `lookahead_min` 0.80 -> 1.0 m (the
+  floor the hairpins sit on) and `steer_a_lat_max` 7.5 (matched to the
+  planned hairpins). **Promoted config: `rl_mt_tb10_lat875_hp725_b55_L70` on
+  v2, 39 timed laps at 8.50-8.55 s, zero contacts (my_run_5, 2026-09-19)**;
+  it is the iros2026 registry default and what `./scripts/run.sh race` runs.
+  Measured and rejected for that slide: the follower's exit guard and a
+  slide-onset coasting guard (`exit_slide_rate_m_s`, kept, off), a lower
+  drive budget over the exit (`enforce_friction_ellipse.py --long-zones`,
+  new option, made it worse), the race line's exit geometry blended in,
+  hairpins 7.0, and a wheelspin cap in v2 (`odom_accel_max`, fixed one run
+  and wrecked four in replay, ships at 0). FINDINGS §13 has the pass counts.
 
 - `racer_control/` — `pure_pursuit`, `calibrate_steering`. Control only; the
   name is now true. `pure_pursuit` estimates the car's speed by running the
@@ -419,17 +444,29 @@ its velocity; the rules add 10 s per contact and say localization "will have
 to be robust against this re-setting action". Before this, dead reckoning kept
 integrating from the old pose, AMCL's particles no longer explained the scan and
 the follower drove blind (runs 14 and 24). Now the bootstrap stays alive after
-the first handover and watches two legal signatures, the encoder speed
-collapsing to zero in one sample and an IMU heading step the yaw rate cannot
+the first handover and watches three legal signatures: the encoder speed
+collapsing to zero in one sample, an IMU heading step the yaw rate cannot
 explain (10 deg; on IROS 2026 at 45 Hz the encoder did not collapse through
-either reset of run 14, it kept reading the command, so the heading step is
-the only signature there). On either it drops `/localization_ready` (the follower stops and
-publishes nothing), re-seeds AMCL at the **checkpoint behind the last trusted
-pose** with the IMU heading, confirms the estimate against the seed, creeps for
-a second on lidar so the filter tightens on motion, and latches ready again;
-if the prior is not adopted it falls back to the global search, and if that
-times out it resumes on the current estimate rather than park for the rest of
-the race. The checkpoints are measured, not guessed: `frames.TRACKS[...]
+either reset of run 14, it kept reading the command), and -- added 2026-09-19
+after a reset fired neither (checkpoint heading 8.8 deg from the car's,
+lv_margin_2) -- **the scan jumping**: the median beam changes 0.5-0.7 m in
+one tick through a teleport against 0.02-0.06 driving (`reset_scan_jump_m`).
+On any of them it drops `/localization_ready`, and BOTH the follower and the
+bootstrap publish an explicit zero command: the bridge holds the last
+command, and "publish nothing" once left 0.17 throttle on an unsteered car
+that then hit the next hairpin at 4.2 m/s (v2_L875_w28). It re-seeds the
+localizer at the **checkpoint behind the last trusted pose** with the IMU
+heading, confirms the estimate against the seed -- or, since two checkpoints
+can sit a metre apart and the simulator's trigger fires when the BODY enters
+it, accepts a scan-confirmed estimate that settled off the prior
+(`recover_offprior_m`) -- creeps on lidar so a particle filter tightens on
+motion (v2 needs none: `run.sh` passes `recover_creep_s:=0` for it, the creep
+drove into the wall twice), and latches ready again; if the prior is not
+adopted it falls back to the global search, and if that times out it resumes
+on the current estimate rather than park for the rest of the race. Dead
+reckoning's `slip` source takes no slip correction from a stopped wheel
+(`slip_wheel_min_m_s`): the tire observer decaying from 6 m/s after a reset
+was integrated as 3.3 m of phantom travel while the car sat still. The checkpoints are measured, not guessed: `frames.TRACKS[...]
 ['checkpoints']` holds the reset poses seen in logged runs (three on ICRA 2026,
 repeatable to the centimetre, on the centreline), ordered along the lap by the
 centreline's arc length, and the bootstrap prints any reset it cannot match so

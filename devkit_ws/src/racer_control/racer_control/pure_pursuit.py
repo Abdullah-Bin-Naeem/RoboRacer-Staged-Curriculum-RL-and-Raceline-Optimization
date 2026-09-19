@@ -182,6 +182,19 @@ class PurePursuit(Node):
         # wide, so it mitigates rather than prevents.
         p('exit_guard_from', 0.0)
         p('exit_guard_full', 0.0)
+        # SLIDE-ONSET guard, on the RATE rather than the offset. A hairpin-1
+        # exit slide on localizer v2 goes -0.13 -> -0.30..-0.53 m in 0.3 s, and
+        # by the time the offset guard above fires at 0.15 m it is over; the
+        # onset itself is an outward lateral velocity of 0.5 m/s in a corner,
+        # against +-0.1 m/s of ordinary tracking. While the car moves outward
+        # faster than exit_slide_rate_m_s in a corner (|kappa| > 0.2) the wheel
+        # is commanded to the car's speed -- no drive slip, no brake slip --
+        # for exit_slide_hold_s, so the fronts keep their lateral grip. The
+        # rate comes from the follower's own lateral error, which on v2 moves
+        # in 21 mm steps; AMCL's 0.46 m jumps would false-trigger it, so it is
+        # OFF (0) unless the localizer is v2. (2026-09-19, FINDINGS section 13)
+        p('exit_slide_rate_m_s', 0.0)
+        p('exit_slide_hold_s', 0.3)
         p('steer_excess_rad', 0.0)
         # What the excess is measured against: 'gyro' = the turn the car is ACTUALLY
         # making now, atan(L * yaw_rate / v) -- a real slip-angle limiter, the
@@ -462,6 +475,11 @@ class PurePursuit(Node):
             raise RuntimeError(f'controller_mode must be pure_pursuit, hybrid_lqr or ff_lqr, not {self.controller_mode!r}')
         self.exit_guard_from = float(g('exit_guard_from'))
         self.exit_guard_full = float(g('exit_guard_full'))
+        self.slide_rate = float(g('exit_slide_rate_m_s'))
+        self.slide_hold = float(g('exit_slide_hold_s'))
+        self._elat_hist = []            # (t, e_lat_now) over the last ~0.1 s
+        self._slide_until = 0.0
+        self.slide_events = 0
         if self.exit_guard_from < 0.0 or self.exit_guard_full < self.exit_guard_from:
             raise RuntimeError('exit_guard_full must be >= exit_guard_from >= 0')
         self.steer_excess_rad = float(g('steer_excess_rad'))
@@ -510,6 +528,14 @@ class PurePursuit(Node):
         self.enc_win = float(g('enc_rate_window_s'))
         self.delay_auto = bool(g('cmd_delay_auto'))
         self.delay_win = float(g('cmd_delay_window_s'))
+        # The delay estimator is FROZEN through a recovery and for one window
+        # after it: the stop-and-restart of a wall reset puts a standstill and a
+        # launch into its correlation window, and it read 0.114 -> 0.043 s
+        # within 4 s of a reset (my_run_1, 2026-09-19). The follower then led
+        # by a third of the real delay, arrived at s 35-37 0.4-0.6 m/s over its
+        # target, ran 0.17 m wide at s 39 and hit again 8 s after the first
+        # contact. The true delay does not change through a reset.
+        self._delay_hold_until = 0.0
         self.delay_every = float(g('cmd_delay_update_s'))
         self._thr_hist = []             # (t, throttle published)
         self._enc_hist = []             # (t, wheel speed measured)
@@ -961,6 +987,7 @@ class PurePursuit(Node):
                     f'localization re-confirmed after reset: speed cap {self.rec_warm_v:.2f} m/s '
                     f'for {self.rec_warm_d:.1f} m')
             self.ready = True
+            self._delay_hold_until = self.get_clock().now().nanoseconds * 1e-9 + self.delay_win
             self.get_logger().info('localization converged, taking over')
         elif not msg.data and self.ready:
             # The bootstrap detected a wall reset and is re-localizing; it owns
@@ -969,6 +996,19 @@ class PurePursuit(Node):
             self.ready = False
             self.v_est = 0.0
             self._pose_hist.clear()
+            # STOP, explicitly. The bridge holds the last command, so "publish
+            # nothing" means "keep the last throttle": the bootstrap's own
+            # (0, 0) is one message that can land BEFORE this node's last
+            # control tick, and then the unsteered car drives on at the old
+            # throttle. v2_L875_w28 (2026-09-19): held at 0.17 throttle, the
+            # car went 0.9 -> 4.2 m/s in a second and hit the hairpin-2 wall.
+            # Published from here, after the control tick can no longer run,
+            # the zero is the last word from this node.
+            z = Float32()
+            z.data = 0.0
+            self.pub_t.publish(z)
+            self.pub_s.publish(z)
+            self._delay_hold_until = float('inf')      # until ready returns, plus a window
             self.get_logger().warn('localization lost after a reset: holding until it is re-confirmed')
 
     def _limit_accel(self, v_target):
@@ -1106,6 +1146,8 @@ class PurePursuit(Node):
         if self._delay_next is not None and now < self._delay_next:
             return
         self._delay_next = now + self.delay_every
+        if now < self._delay_hold_until:
+            return
         t_min = now - self.delay_win
         self._thr_hist = [p for p in self._thr_hist if p[0] >= t_min - 0.5]
         self._enc_hist = [p for p in self._enc_hist if p[0] >= t_min]
@@ -1378,6 +1420,27 @@ class PurePursuit(Node):
         if outward > self.exit_guard_from:
             a_plan_use = min(a_plan_use, 0.0)
 
+        # Slide onset: outward lateral velocity in a corner (see the parameter).
+        sliding = False
+        if self.slide_rate > 0.0:
+            self._elat_hist.append((now, e_lat_now))
+            while len(self._elat_hist) > 1 and now - self._elat_hist[0][0] > 0.12:
+                self._elat_hist.pop(0)
+            t0, e0 = self._elat_hist[0]
+            kap = float(self.kappa[near])
+            if now - t0 >= 0.04 and abs(kap) > 0.2:
+                out_rate = -math.copysign((e_lat_now - e0) / (now - t0), kap)
+                if out_rate > self.slide_rate and now >= self._slide_until:
+                    self._slide_until = now + self.slide_hold
+                    self.slide_events += 1
+                    self.get_logger().warn(
+                        f'slide onset at s {float(self.s[near]):.1f}: outward {out_rate:.2f} m/s, '
+                        f'e_lat {e_lat_now:+.3f}; coasting {self.slide_hold:.1f} s')
+            sliding = now < self._slide_until
+            if sliding:
+                v_target = min(v_target, max(self.speed, 0.0))
+                a_plan_use = min(a_plan_use, 0.0)
+
         if self.throttle_mode == 'slip':
             throttle = self._throttle_slip(v_target, a_plan_use,
                                            max(self.speed, 0.0) ** 2 * abs(float(self.kappa[near])))
@@ -1388,6 +1451,9 @@ class PurePursuit(Node):
             self.u_cmd = throttle * self.u_per_thr
             self.v_land = max(self.speed, 0.0)
 
+        if sliding and self.u_cmd > max(self.speed, 0.0):
+            self.u_cmd = max(self.speed, 0.0)
+            throttle = float(np.clip(self.u_cmd / self.u_per_thr, 0.0, self.thr_max))
         if self.exit_guard_full > 0.0 and outward > self.exit_guard_from:
             u_cap = self.speed
             if outward >= self.exit_guard_full:

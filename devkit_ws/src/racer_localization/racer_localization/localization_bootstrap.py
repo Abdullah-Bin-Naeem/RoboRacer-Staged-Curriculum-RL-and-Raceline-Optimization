@@ -271,12 +271,31 @@ class LocalizationBootstrap(Node):
         # the residual after subtracting rate*dt is under 2 deg at any tick, the encoder
         # did NOT collapse through either reset in that run (it reads the command), so
         # the heading step is the only signature that fires there.
+        # Reset signature 3, the one that needs neither the heading nor the
+        # encoder: a teleport moves EVERY beam. Between two consecutive scans
+        # the median |range change| is 0.02-0.06 m while driving (45 Hz, up to
+        # 9 m/s on the straight, 3 deg/tick of yaw in the hairpins) and 0.5-0.7 m
+        # through a reset (lv_margin_2, lv_fast_19_1). lv_margin_2's first reset
+        # (2026-09-19) fired NEITHER of the two signatures above -- the checkpoint
+        # heading was 8.8 deg from the car's, under the 10 deg step, and the
+        # encoder kept reading the command -- so the follower drove on with a
+        # 0.6 m error and hit again a second later. 0 disables.
+        p('reset_scan_jump_m', 0.30)
         p('reset_speed_from', 1.0)          # encoder speed collapsing from >= this ...
         p('reset_speed_to', 0.3)            # ... to <= this between two samples is a reset
         p('recover_use_checkpoints', True)  # False forces the no-data tier, to test it where truth exists
         p('recover_local_back_m', 0.9)      # no-data tier: seed this far back along the last pose (mean of 9 resets)
         p('recover_local_std_m', 1.0)       # ... with this much position uncertainty (resets spread 0.15-2.8 m)
         p('recover_std_ok_m', 0.30)         # a recovery seed counts as adopted only if AMCL's own pos std is under this
+        # Two registered checkpoints can sit a metre apart and a contact between
+        # them is ambiguous to the centimetre: the simulator's trigger fires when
+        # the BODY enters it, so (0.52, 3.89) reset to the checkpoint 0.3 m ahead
+        # (run 19) and (0.53, 3.98) to the one 1.1 m behind (lv_L750_warm). When
+        # the prior is the wrong one of the pair the localizer moves off it with a
+        # clean fit; that used to fail the seed tolerance three times and end in
+        # the global search. Within this distance of the prior, a scan-confirmed,
+        # converged estimate is accepted where it settled instead.
+        p('recover_offprior_m', 3.0)
 
         g = lambda n: self.get_parameter(n).value
         self.throttle = g('throttle')
@@ -315,10 +334,12 @@ class LocalizationBootstrap(Node):
         self.recover_creep = float(g('recover_creep_s'))
         self.reset_yaw_step = math.radians(float(g('reset_yaw_step_deg')))
         self.reset_v_from, self.reset_v_to = float(g('reset_speed_from')), float(g('reset_speed_to'))
+        self.reset_scan_jump = float(g('reset_scan_jump_m'))
         self.recover_use_cps = bool(g('recover_use_checkpoints'))
         self.recover_back = float(g('recover_local_back_m'))
         self.recover_local_std = float(g('recover_local_std_m'))
         self.recover_std_ok = float(g('recover_std_ok_m'))
+        self.recover_offprior = float(g('recover_offprior_m'))
         self.checkpoints = frames.checkpoints(str(g('track')) or None)
         # The centreline orders the lap: "the checkpoint behind the car" is the
         # one with the largest arc length not exceeding the car's, wrapping at
@@ -504,7 +525,17 @@ class LocalizationBootstrap(Node):
     # ---- callbacks -------------------------------------------------------
 
     def _cb_scan(self, msg):
-        self.scan = msg
+        prev, self.scan = self.scan, msg
+        if prev is None or self.reset_scan_jump <= 0.0 or len(prev.ranges) != len(msg.ranges):
+            return
+        a = np.asarray(prev.ranges, dtype=float)
+        b = np.asarray(msg.ranges, dtype=float)
+        ok = np.isfinite(a) & np.isfinite(b) & (a > msg.range_min) & (b > msg.range_min)
+        if ok.sum() < 100:
+            return
+        jump = float(np.median(np.abs(a[ok] - b[ok])))
+        if jump > self.reset_scan_jump:
+            self._flag_reset(f'scan jumped {jump:.2f} m at the median beam in one tick')
 
     def _cb_ips(self, msg):
         self.truth_pos = (msg.x, msg.y)
@@ -838,6 +869,13 @@ class LocalizationBootstrap(Node):
                     f'(pos std {std}). Tracking is now lidar + map + dead '
                     'reckoning only.')
                 return
+            if (self.rec_state == 'seed' and gap > self.tol_m and gap <= self.recover_offprior
+                    and dyaw <= self.tol_yaw and scan_ok and self._recover_ok()):
+                self._finish(
+                    f'{scan_text}. recovery seed CONVERGED OFF THE PRIOR on attempt {self.attempts}: '
+                    f'the localizer settled {gap:.2f} m from the checkpoint prior (pos std '
+                    f'{self.pos_std:.3f} m) -- an adjacent checkpoint; accepted where it settled')
+                return
             agrees = gap <= self.tol_m and dyaw <= self.tol_yaw
             failed = [n for n, ok in (('position', agrees), (scan_text, scan_ok),
                                       (f'pos std {self.pos_std} > {self.recover_std_ok}', self._recover_ok()))
@@ -1028,6 +1066,11 @@ class LocalizationBootstrap(Node):
                 f'{math.degrees(yaw):+.0f} deg) -- {why}')
             return
         if self.rec_state == 'seed':
+            # Parked while the seed is confirmed, and SAID so every tick: the
+            # bridge keeps the last command, and a single zero at the flag lost
+            # a race against the follower's final control tick (v2_L875_w28:
+            # 0.17 throttle held, 4.2 m/s into the hairpin-2 wall).
+            self._send(0.0, 0.0)
             self._tick_truth(now)             # seed -> confirm -> _finish/_fail, intercepted above
             return
         if self.rec_state == 'global':

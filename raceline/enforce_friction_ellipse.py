@@ -59,12 +59,19 @@ def a_lat_on_s(s, a_lat, lat_zones):
 
 
 def solve(s, kappa, a_lat, a_long, a_brake, v_max, p=2.0, v_seed=None, iters=50,
-          lat_zones=()):
+          lat_zones=(), long_zones=()):
     n = len(s)
     lap = s[-1] + (s[-1] - s[-2])
     ds = np.diff(np.append(s, lap))                       # ds[i]: i -> i+1 (wraps)
     k = np.abs(kappa)
     alat = a_lat_on_s(s, a_lat, lat_zones)
+    # Per-point DRIVE budget. The hairpin exits are where the localized car
+    # slides: it is accelerating while still turning, and on this all-wheel
+    # driven chassis drive slip spends the fronts' lateral grip. A lower
+    # a_long over the exit alone starts the throttle later without touching
+    # the rest of the lap (2026-09-19, v2 runs: 1 slide in ~10 passes at
+    # a_long 7.0 whatever the hairpin's a_lat).
+    along = a_lat_on_s(s, a_long, long_zones)
     v_cap = np.minimum(v_max, np.sqrt(alat / np.maximum(k, 1e-6)))
     v = v_cap.copy() if v_seed is None else np.minimum(v_seed, v_cap)
 
@@ -81,8 +88,8 @@ def solve(s, kappa, a_lat, a_long, a_brake, v_max, p=2.0, v_seed=None, iters=50,
                 j = (i + 1) % n
                 vj = v[j]
                 for _ in range(4):
-                    a = a_long * min(room(v[i], k[i], alat[i]),
-                                     room(vj, k[j], alat[j])) - DRAG_LIN * v[i]
+                    a = along[i] * min(room(v[i], k[i], alat[i]),
+                                       room(vj, k[j], alat[j])) - DRAG_LIN * v[i]
                     vj = min(v[j], math.sqrt(max(v[i] ** 2 + 2.0 * ds[i] * a, 0.0)))
                 v[j] = vj
         for _pass in range(2):                            # backward
@@ -119,19 +126,23 @@ def main():
     ap.add_argument('--p', type=float, default=2.0, help='ellipse exponent (2 = ellipse)')
     ap.add_argument('--lat-zones', default='',
                     help='s0:s1:a_lat,... overrides --a-lat inside those s-ranges')
+    ap.add_argument('--long-zones', default='',
+                    help='s0:s1:a_long,... overrides --a-long (the DRIVE budget) inside those s-ranges')
     a = ap.parse_args()
 
     header, arr = load(a.csv)
     s, kappa, v_in = arr[:, 0], arr[:, 4], arr[:, 7]
     zones = parse_lat_zones(a.lat_zones)
     lap_in = float(np.sum(np.diff(np.append(s, s[-1] + s[-1] - s[-2])) * 2.0 / (v_in + np.roll(v_in, -1))))
-    v, t = solve(s, kappa, a.a_lat, a.a_long, a.a_brake, a.v_max, a.p, lat_zones=zones)
+    v, t = solve(s, kappa, a.a_lat, a.a_long, a.a_brake, a.v_max, a.p, lat_zones=zones,
+                 long_zones=parse_lat_zones(a.long_zones))
     u_in = usage(s, kappa, v_in, a.a_lat, a.a_long, a.a_brake)
     u_out = usage(s, kappa, v, a.a_lat, a.a_long, a.a_brake)
     out = arr.copy()
     out[:, 7] = v
     note = (f'# ellipse a_lat {a.a_lat} lat_zones [{a.lat_zones}] '
-            f'a_long {a.a_long} a_brake {a.a_brake} v_max {a.v_max} -> {t:.3f} s\n')
+            f'a_long {a.a_long}' + (f' long_zones [{a.long_zones}]' if a.long_zones else '')
+            + f' a_brake {a.a_brake} v_max {a.v_max} -> {t:.3f} s\n')
     with open(a.out, 'w') as f:
         if header:
             f.writelines(header)

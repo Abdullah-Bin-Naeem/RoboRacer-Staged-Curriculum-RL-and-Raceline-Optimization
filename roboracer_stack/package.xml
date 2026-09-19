@@ -3,20 +3,22 @@
 <package format="3">
 
   <name>roboracer_stack</name>
-  <version>0.1.0</version>
+  <version>0.2.0</version>
   <description>Autonomous racing stack for the AutoDRIVE RoboRacer: encoder+IMU
-  dead reckoning, map-relative localization (nav2 AMCL), and pure pursuit
-  along a pre-optimized minimum-curvature raceline. The Porto map and the
-  racing line ship inside this package.
+  dead reckoning, segmented scan-to-map localization against a pre-built
+  occupancy grid, and pure pursuit with a bounded LQR correction along a
+  pre-optimized raceline. The IROS 2026 map and the racing line ship inside
+  this package.
 
   A separate package from autodrive_roboracer, which is used unmodified, as the
   competition rules require.</description>
 
-  <maintainer email="abdullahbinnaeempro@gmail.com">Abdullah Bin Naeem</maintainer>
+  <maintainer email="muawan2001@gmail.com">Muhammad Usman</maintainer>
   <license>BSD</license>
 
   <exec_depend>rclpy</exec_depend>
-  <!-- frames.py resolves the map and raceline directories through the ament index -->
+  <!-- frames.py resolves the map, raceline and tools directories through the
+       ament index -->
   <exec_depend>ament_index_python</exec_depend>
 
   <exec_depend>geometry_msgs</exec_depend>
@@ -26,21 +28,18 @@
   <exec_depend>std_srvs</exec_depend>
   <exec_depend>visualization_msgs</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
-  <!-- Needed by localization/bootstrap.py, which polls AMCL's lifecycle state. -->
+  <!-- localization/bootstrap.py can poll a lifecycle localizer's state. Not
+       the path this branch races (the localizer is a plain node), but the
+       import is unconditional and lifecycle_msgs is in the base image. -->
   <exec_depend>lifecycle_msgs</exec_depend>
 
-  <!-- Launched by launch/amcl.launch.py. None of
-       these are in the base image; the Dockerfile apt-installs them. -->
-  <exec_depend>nav2_amcl</exec_depend>
-  <exec_depend>nav2_map_server</exec_depend>
-  <exec_depend>nav2_lifecycle_manager</exec_depend>
+  <!-- No nav2. The localizer reads the occupancy grid itself, so there is no
+       map server and no lifecycle manager to bring up. scipy is the one
+       addition the Dockerfile makes for it (the distance transform), plus
+       rmw_cyclonedds_cpp, which every measured lap time was recorded on. -->
 
   <!-- The devkit bridge, composed by launch/bridge.launch.py and never modified. -->
   <exec_depend>autodrive_roboracer</exec_depend>
-
-  <!-- test/ is the flake8 gate only. ament_copyright and ament_pep257 are the
-       other two the devkit template ships; this codebase carries no copyright
-       headers and its docstring style is its own, so they are not gates here. -->
 
   <export>
     <build_type>ament_python</build_type>

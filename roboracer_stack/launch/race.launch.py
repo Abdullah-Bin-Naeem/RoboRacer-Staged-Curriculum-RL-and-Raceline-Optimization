@@ -1,32 +1,44 @@
 """Everything except the simulator, in one command.
 
-    ros2 launch roboracer_stack race.launch.py mode:=race    # the submission
-    ros2 launch roboracer_stack race.launch.py               # dev mode
+    ros2 launch roboracer_stack race.launch.py
 
-This is the ONLY file that composes others. Everything it starts is a
+This is the only launch file that composes others. Everything it starts is a
 subsystem that owns itself and nothing else:
 
-    launch/bridge.launch.py     devkit bridge, ground-truth TF remapped off /tf
-    launch/chassis.launch.py    odom -> roboracer_1 -> lidar (dead reckoning)
-    launch/amcl.launch.py       map -> odom (nav2 AMCL + localization_bootstrap)
-    launch/follower.launch.py   pure pursuit
+    launch/bridge.launch.py    devkit bridge, ground-truth TF remapped off /tf
+    launch/chassis.launch.py   odom -> roboracer_1 -> lidar
+    launch/v2.launch.py        map -> odom, the localizer
+    launch/follower.launch.py  pure pursuit along the shipped line
 
-THE mode ARGUMENT
------------------
-`mode:=race` (what the entrypoint runs) makes the run legal with one switch:
+THE DEFAULTS ARE THE SUBMISSION
+-------------------------------
+Run with no arguments and the car races the promoted configuration: the tb10
+line, the localizer seeded from the measured spawn, and the follower arguments
+in roboracer_stack.common.frames.FOLLOWER. 39 timed laps at 8.50-8.55 s with
+zero contacts. Every argument below exists so one of those can be moved without
+a rebuild; none of them has to be passed.
 
-    - dev_lap_telemetry off      (lap topics are restricted)
-    - bootstrap_seconds:=0       (no ground-truth driving phase)
-    - use_tf_pose:=true          (steer on the estimate, not on /odom)
+RACE MODE IS THE ONLY MODE
+--------------------------
+The development branch has a `mode` argument, because there it also has the
+things mode:=race exists to switch off: a CSV logger that reads ground truth
+continuously, lap and collision telemetry, a scan dump, and a diagnostic that
+steers on the simulator's own pose. None of that is on this branch at all, so
+there is no switch and nothing to leave in the wrong position.
 
-`mode:=dev` keeps those development conveniences; any node that reads a
-restricted topic says so at startup (common/restricted.py).
+What that means concretely, and what a steward can check in `rqt_graph`:
 
-bootstrap_mode is not forced by mode. The default, `spawn`, seeds AMCL from the
-measured spawn constant (common/frames.SPAWN_*) plus the IMU heading and reads
-no restricted topic at all. `truth` reads /ips once inside the warm-up lap
-(organizer-confirmed) and destroys the subscription; `global` starts AMCL with
-no prior and pays a convergence phase.
+  - no node subscribes to /ips, /odom, /tf or any lap or collision topic
+  - the devkit's ground-truth TF is remapped to /tf_ground_truth by
+    bridge.launch.py, so nothing publishes /tf but our own dead reckoning and
+    the localizer (that remap is also what keeps roboracer_1 from having two
+    parents and breaking the TF tree)
+  - the follower steers on the localizer's map->roboracer_1 correction
+  - the initial pose is the measured spawn constant plus the IMU heading; no
+    restricted topic is read to obtain it
+
+See roboracer_stack/common/restricted.py, which every node checks itself
+against at startup.
 """
 
 import os
@@ -38,153 +50,138 @@ from launch.actions import (DeclareLaunchArgument, IncludeLaunchDescription,
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
-from roboracer_stack.common.frames import (
-    DEFAULT_MAP_YAML, DEFAULT_RACELINE, SPAWN_X, SPAWN_Y, SPAWN_YAW)
+from roboracer_stack.common import frames
+from roboracer_stack.common.frames import TRACK
 
-# Passed straight through to pure_pursuit when given.
+# Passed straight through to pure_pursuit when given, and otherwise left to
+# frames.FOLLOWER and then to config/pure_pursuit.yaml.
+#
 # curvature_preview_m matters more than it looks: with no v_mps column in the
 # CSV, speed is derived from the worst curvature within this distance. Braking
 # 8.0 -> 1.8 m/s takes ~6 m, so a 1 m preview means the car meets the corner at
-# full speed. Irrelevant when the path carries its own velocity profile.
+# full speed. Irrelevant when the path carries its own velocity profile, which
+# the shipped line does.
 #
-# KEEP IN STEP with launch/follower.launch.py: a name here that it
-# does not declare is dropped silently on the way through.
+# KEEP IN STEP with launch/follower.launch.py: a name here that it does not
+# declare is dropped silently on the way through.
 TUNABLES = ('lookahead_min', 'lookahead_max', 'lookahead_k', 'lookahead_curv_gain', 'lookahead_sag_frac',
             'lookahead_delay_ref', 'derate_delay_from', 'derate_delay_to', 'derate_a_lat',
-            'steer_a_lat_max',
+            'steer_a_lat_max', 'steer_excess_rad',
+            'exit_guard_from', 'exit_guard_full', 'exit_slide_rate_m_s', 'exit_slide_hold_s',
+            'lqr_k_lat', 'lqr_k_head', 'lqr_k_yaw', 'lqr_max_correction_rad',
             'v_max', 'a_lat_max', 'throttle_max', 'steering_gain',
+            'warmup_v_max', 'warmup_dist_m',
+            'recover_warmup_v_max', 'recover_warmup_dist_m',
             'curvature_preview_m',
             # Slip throttle and fused speed estimate (pure_pursuit.py docstring).
             # Tunable from the command line for the same reason as the rest:
             # limits are measured on the car, and a rebuild per attempt is tedious.
             'slip_accel', 'slip_brake', 'u_launch', 'u_per_throttle', 'v_slip_den', 'tire_rise_slope',
-            'cmd_delay_s', 'slip_kp', 'target_lead_s',
-            # control loop rate; 20 matches the 17.5 Hz sim tick seen here, raise it
-            # with the tick (headless sim, faster machine) so the loop is not the limit
+            'observer_wheels', 'slip_circle', 'accel_ff', 'drag_ff', 'brake_cap_margin',
+            'cmd_delay_s', 'slip_kp', 'target_lead_s', 'enc_rate_window_s',
             'control_hz',
             'pose_speed_window', 'pose_speed_gain', 'pose_corr_max', 'imu_lever_arm', 'latency_comp_s',
-            'speed_source', 'throttle_mode',
+            'speed_source', 'throttle_mode', 'steer_excess_ref', 'controller_mode',
             # legacy launch ramp (throttle_mode:=legacy only)
             'a_long_launch', 'a_long_launch_v')
 
-# Everything that is specific to the localizer, in one table. Adding another
-# localizer means adding a row here and one launch file -- not editing
-# conditionals scattered through this function.
-LOCALIZERS = {
-    'amcl': dict(
-        launch='amcl.launch.py',
-        # AMCL only publishes /amcl_pose when the filter resamples, so it is
-        # low-rate and steps discontinuously. Kept as the follower's fallback.
-        pose_topic='/amcl_pose',
-        # AMCL's bootstrap latches /localization_ready; the follower waits on it.
-        has_ready=True,
-    ),
-}
+# Published by localization_v2 every scan, with the posterior covariance. The
+# follower reads TF rather than this topic (use_tf_pose), which is continuous
+# rather than update-triggered; the topic is what the bootstrap verifies
+# against.
+POSE_TOPIC = '/localization_v2/pose'
 
 
 def _launch(context, *args, **kwargs):
-    cfg = lambda n: LaunchConfiguration(n).perform(context)
+    cfg = lambda n: LaunchConfiguration(n).perform(context)   # noqa: E731
 
-    localizer = cfg('localizer').lower()
-    if localizer not in LOCALIZERS and localizer != 'none':
-        raise RuntimeError(
-            f"localizer:={localizer} is not one of "
-            f"{sorted(LOCALIZERS) + ['none']}")
-    spec = LOCALIZERS.get(localizer)
+    # Track assets resolve from the package share unless a path was given.
+    # Empty defaults rather than module constants, so an override is honoured.
+    track = cfg('track')
+    path_csv = cfg('path_csv') or frames.raceline(track)
+    map_yaml = cfg('map_yaml') or frames.map_yaml(track)
+    spawn = frames.spawn(track)
+    initial = [cfg(n) or spawn[i] for i, n in
+               enumerate(('initial_x', 'initial_y', 'initial_yaw'))]
 
-    race_mode = cfg('mode').lower() == 'race'
-    # In race mode the legal value wins over whatever was passed, so that a
-    # stale flag on the command line cannot quietly make the run illegal.
-    dev_lap = 'false' if race_mode else cfg('dev_lap_telemetry')
-    bootstrap_seconds = '0.0' if race_mode else cfg('bootstrap_seconds')
-    use_tf_pose = 'true' if race_mode else cfg('use_tf_pose')
-    # NOT forced. bootstrap_mode:=truth is race-legal: the first lap is a warmup
-    # and the timer starts after it, so the one-shot /ips read that seeds the
-    # localizer happens inside the permitted window, and localization_bootstrap
-    # destroys the subscription the moment the seed resolves. See
-    # common/restricted.py, THE WARMUP WINDOW.
-    #
-    # Forcing 'global' would only cost a convergence phase; the seed is legal,
-    # so it is not forced.
-    bootstrap_mode = cfg('bootstrap_mode').lower()
-    if bootstrap_mode not in ('spawn', 'truth', 'global'):
-        raise RuntimeError(
-            f"bootstrap_mode:={bootstrap_mode} is not one of ['spawn', 'truth', 'global']")
-
-    loc_share = get_package_share_directory('roboracer_stack')
-    ctl_share = get_package_share_directory('roboracer_stack')
-    own_share = get_package_share_directory('roboracer_stack')
-    src = lambda share, name: PythonLaunchDescriptionSource(
+    share = get_package_share_directory('roboracer_stack')
+    src = lambda name: PythonLaunchDescriptionSource(   # noqa: E731
         os.path.join(share, 'launch', name))
 
-    banner = (f'mode={cfg("mode")}  localizer={localizer}  '
-              f'bootstrap={bootstrap_mode}')
-    if race_mode:
-        seeding = cfg('bootstrap').lower() == 'true'
-        if seeding and bootstrap_mode == 'truth':
-            how = ('; the initial pose is seeded once from /ips inside the warmup '
-                   'window (organizer-confirmed), then released')
-        elif seeding and bootstrap_mode == 'spawn':
-            how = ('; the initial pose is seeded from the measured spawn constant '
-                   '+ IMU heading -- no ground truth at all')
-        else:
-            how = '; no ground truth at all'
-        banner += '  -- RACE MODE: nothing reads ground truth continuously' + how
+    bootstrap_mode = cfg('bootstrap_mode')
+    seed = ('the measured spawn constant' if bootstrap_mode == 'spawn'
+            else 'a map-wide search, no prior')
+    actions = [LogInfo(msg=(
+        f'[race] track={track}  localizer=v2  line={os.path.basename(path_csv)}  '
+        f'initial pose from {seed}'))]
+    actions.append(LogInfo(msg=(
+        '[race] RACE MODE: no node reads /ips, /odom, /tf or any lap or '
+        'collision topic, and nothing is logged to disk')))
 
-    actions = [LogInfo(msg=f'[race] {banner}')]
-
-    # 1. bridge
+    # 1. bridge -- the devkit's, unmodified, with its ground-truth TF remapped.
     actions.append(IncludeLaunchDescription(
-        src(own_share, 'bridge.launch.py'),
+        src('bridge.launch.py'),
         condition=IfCondition(LaunchConfiguration('bridge')),
+        launch_arguments={'tcp_nodelay': cfg('tcp_nodelay'),
+                          'loop_hz_cap': cfg('loop_hz_cap')}.items(),
     ))
 
-    # 2. chassis -- odom -> base -> lidar. Needed by every localizer, and by the
-    #    follower's odometry even when localizer:=none.
+    # 2. chassis -- odom -> base -> lidar. The localizer builds on it and the
+    #    follower's odometry comes through it.
     actions.append(IncludeLaunchDescription(
-        src(loc_share, 'chassis.launch.py'),
+        src('chassis.launch.py'),
+        launch_arguments={'distance_source': cfg('distance_source')}.items(),
         condition=IfCondition(LaunchConfiguration('chassis')),
     ))
 
-    # 3. the chosen localizer -- map -> odom
-    if spec is not None:
-        # The seed handshake is now common to both localizers; only the map
-        # format differs.
-        loc_args = {'initial_x': cfg('initial_x'),
-                    'initial_y': cfg('initial_y'),
-                    'initial_yaw': cfg('initial_yaw'),
-                    'bootstrap': cfg('bootstrap'),
-                    'bootstrap_mode': bootstrap_mode,
-                    'require_convergence': cfg('require_convergence')}
-        loc_args['map_yaml'] = cfg('map_yaml')
+    # 3. the localizer -- map -> odom
+    actions.append(IncludeLaunchDescription(
+        src('v2.launch.py'),
+        launch_arguments={
+            'track': track,
+            'map_yaml': map_yaml,
+            'segments_csv': cfg('segments_csv'),
+            'v2_params_file': (cfg('v2_params_file') or
+                               os.path.join(share, 'config', 'localization_v2.yaml')),
+            'initial_x': initial[0],
+            'initial_y': initial[1],
+            'initial_yaw': initial[2],
+            'bootstrap': cfg('bootstrap'),
+            'bootstrap_mode': bootstrap_mode,
+            'require_convergence': cfg('require_convergence'),
+            'recover': cfg('recover'),
+            'recover_use_checkpoints': cfg('recover_use_checkpoints'),
+            'recover_settle_s': cfg('recover_settle_s'),
+            'recover_creep_s': cfg('recover_creep_s'),
+        }.items(),
+        condition=IfCondition(LaunchConfiguration('localization')),
+    ))
 
-        actions.append(IncludeLaunchDescription(
-            src(loc_share, spec['launch']),
-            launch_arguments=loc_args.items(),
-            condition=IfCondition(LaunchConfiguration('localization')),
-        ))
+    # /localization_ready is latched by the bootstrap, so it appears only when
+    # the bootstrap is running. Anything that waits on it must agree, or it
+    # waits forever.
+    ready_latched = 'true' if cfg('bootstrap').lower() == 'true' else 'false'
 
-    # /localization_ready is latched by the bootstrap node, so it appears only
-    # when a localizer that HAS one is running AND the bootstrap is enabled.
-    # Anything that waits on it must agree, or it waits forever.
-    ready_latched = ('true' if (spec and spec['has_ready']
-                                and cfg('bootstrap').lower() == 'true')
-                     else 'false')
-
-    # 4. follower, on a delay so the localizer is publishing before it asks
+    # 4. follower, on a delay so the localizer is publishing before it asks.
+    #    With the bootstrap running it waits for /localization_ready instead.
     follower_args = {
-        'path_csv': cfg('path_csv'),
-        'pose_topic': spec['pose_topic'] if spec else cfg('pose_topic'),
-        'use_tf_pose': use_tf_pose,
-        'dev_lap_telemetry': dev_lap,
+        'path_csv': path_csv,
+        'pose_topic': POSE_TOPIC,
+        'use_tf_pose': 'true',
+        'dev_lap_telemetry': 'false',
         'wait_for_ready': ready_latched,
-        'bootstrap_seconds': bootstrap_seconds,
+        'bootstrap_seconds': '0.0',
     }
     follower_args.update({n: cfg(n) for n in TUNABLES if cfg(n) != ''})
+    # The validated follower arguments (frames.FOLLOWER), each unless the same
+    # name was given explicitly on the command line.
+    for name, value in frames.follower_args(track).items():
+        if name in TUNABLES and cfg(name) == '':
+            follower_args[name] = value
     actions.append(TimerAction(
         period=float(cfg('follower_delay')),
         actions=[IncludeLaunchDescription(
-            src(ctl_share, 'follower.launch.py'),
+            src('follower.launch.py'),
             launch_arguments=follower_args.items(),
             condition=IfCondition(LaunchConfiguration('follower')),
         )],
@@ -196,15 +193,21 @@ def _launch(context, *args, **kwargs):
 def generate_launch_description():
     args = [
         DeclareLaunchArgument(
-            'localizer', default_value='amcl',
-            description="which map->odom source: 'amcl' or 'none'"),
+            'track', default_value=TRACK,
+            description='the only track this branch ships; here so the nodes '
+                        'that take it are passed something explicit'),
         DeclareLaunchArgument(
-            'mode', default_value='dev',
-            description="'race' refuses every restricted topic and forces the "
-                        "legal settings; 'dev' keeps the conveniences"),
-        DeclareLaunchArgument('path_csv', default_value=DEFAULT_RACELINE),
-        DeclareLaunchArgument('map_yaml', default_value=DEFAULT_MAP_YAML,
-                              description='occupancy grid, AMCL only'),
+            'path_csv', default_value='',
+            description="raceline CSV; empty = the shipped line"),
+        DeclareLaunchArgument(
+            'map_yaml', default_value='',
+            description='occupancy grid; empty = the shipped one'),
+        DeclareLaunchArgument(
+            'segments_csv', default_value='',
+            description='track segmentation; empty = the shipped one'),
+        DeclareLaunchArgument(
+            'v2_params_file', default_value='',
+            description='localizer yaml; empty = config/localization_v2.yaml'),
 
         # Turn pieces off when running them yourself.
         DeclareLaunchArgument('bridge', default_value='true'),
@@ -212,44 +215,60 @@ def generate_launch_description():
         DeclareLaunchArgument('localization', default_value='true'),
         DeclareLaunchArgument('follower', default_value='true'),
 
-        # --- development-only; all forced off by mode:=race ---
-        DeclareLaunchArgument('dev_lap_telemetry', default_value='true'),
+        # The bridge. Both default to the race setting: without TCP_NODELAY the
+        # simulator loop runs at 10-20 Hz on any machine, and the cap is what
+        # the stack is tuned at (the organizers quote 40-50 Hz).
+        DeclareLaunchArgument(
+            'tcp_nodelay', default_value='true',
+            description='TCP_NODELAY and a QUICKACK re-arm on the bridge '
+                        'websocket via LD_PRELOAD; see bridge.launch.py'),
+        DeclareLaunchArgument(
+            'loop_hz_cap', default_value='45',
+            description='pace the bridge replies so the simulator loop runs at '
+                        'most this many Hz (0 = uncapped)'),
+
+        # Dead reckoning. 'slip' is the measured one: the encoders report the
+        # throttle command rather than the wheel's travel, so distance has to
+        # come from the tire observer with the wheelspin taken out.
+        DeclareLaunchArgument(
+            'distance_source', default_value='slip',
+            description="dead reckoning distance source: 'slip', 'tire' or "
+                        "'encoder'; see localization/dead_reckoning.py"),
+
+        # The localizer's seed and its recovery after a wall contact.
         DeclareLaunchArgument('bootstrap', default_value='true'),
         DeclareLaunchArgument(
             'bootstrap_mode', default_value='spawn',
-            description="'spawn' seeds from the measured spawn constant + IMU "
-                        "heading and reads no restricted topic (RACE DEFAULT); "
-                        "'truth' seeds once from /ips in the warm-up lap "
-                        "(organizer-confirmed); 'global' searches with no prior"),
-        DeclareLaunchArgument(
-            'bootstrap_seconds', default_value='0.0',
-            description='DIAGNOSTIC: drive on ground truth this long before '
-                        'switching to the estimate. 0 = steer on the estimate '
-                        'from the first command (the normal case).'),
-
-        DeclareLaunchArgument(
-            'use_tf_pose', default_value='true',
-            description='follower reads TF map->roboracer_1 rather than the '
-                        "localizer's pose topic. Measured better for AMCL "
-                        '(0.177 m vs 0.192 m mean).'),
-        DeclareLaunchArgument(
-            'pose_topic', default_value='/amcl_pose',
-            description='only consulted when localizer:=none; otherwise the '
-                        'localizer table picks it'),
+            description="'spawn' seeds from the measured spawn constant and the "
+                        'IMU heading, reading no restricted topic; '
+                        "'global' runs the map-wide search with no prior"),
         DeclareLaunchArgument(
             'require_convergence', default_value='true',
             description='park the follower rather than drive on a pose that was '
                         'never confirmed'),
         DeclareLaunchArgument(
+            'recover', default_value='true',
+            description='re-localize after a wall reset; see localization/bootstrap.py'),
+        DeclareLaunchArgument(
+            'recover_use_checkpoints', default_value='true',
+            description='false forces the no-data recovery tier'),
+        DeclareLaunchArgument('recover_settle_s', default_value='1.0',
+                              description='pause after a reset seed before creep'),
+        DeclareLaunchArgument('recover_creep_s', default_value='0.0',
+                              description='gentle lidar creep after recovery; this '
+                                          'localizer needs none and the creep used to '
+                                          'drive the car into the wall at hairpin 2'),
+
+        DeclareLaunchArgument(
             'follower_delay', default_value='2.0',
-            description='fallback delay; with an AMCL bootstrap the follower '
+            description='fallback delay; with the bootstrap running the follower '
                         'waits for /localization_ready instead'),
-        DeclareLaunchArgument('initial_x', default_value=SPAWN_X),
-        DeclareLaunchArgument('initial_y', default_value=SPAWN_Y),
-        DeclareLaunchArgument('initial_yaw', default_value=SPAWN_YAW),
+        DeclareLaunchArgument('initial_x', default_value=''),
+        DeclareLaunchArgument('initial_y', default_value=''),
+        DeclareLaunchArgument('initial_yaw', default_value=''),
     ]
     args += [DeclareLaunchArgument(n, default_value='',
-                                   description='override the pure_pursuit value')
+                                   description='override the validated value')
              for n in TUNABLES]
 
     return LaunchDescription(args + [OpaqueFunction(function=_launch)])

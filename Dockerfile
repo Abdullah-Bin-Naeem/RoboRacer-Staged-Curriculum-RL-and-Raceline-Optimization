@@ -1,6 +1,6 @@
-# Qualification 1 submission image: AMCL + pure pursuit on the Porto track.
+# IROS 2026 final submission image: localizer v2 + pure pursuit.
 #
-#     docker build -t <you>/roboracer:qualification-1 .
+#     docker build -t <you>/roboracer:iros-2026-final .
 #     (or just: ./scripts/build.sh)
 #
 # The rules require the submission to derive from the official devkit image and
@@ -17,19 +17,20 @@
 ARG BASE_TAG=2026-iros-practice
 FROM autodriveecosystem/autodrive_roboracer_api:${BASE_TAG}
 
-# The base image has Python 3.10, numpy and opencv, and no nav2. Everything
-# below is a localizer dependency:
+# The base image has Python 3.10, numpy and opencv. Two additions, and no nav2:
 #
-#   nav2-amcl              the localizer this branch is qualified on
-#   nav2-map-server        serves maps/track_clean.pgm to it
-#   nav2-lifecycle-manager amcl and map_server are lifecycle nodes; without the
-#                          manager they come up UNCONFIGURED and silently do
-#                          nothing
-#   rmw-cyclonedds-cpp     every lap time on this branch was measured on cyclone
+#   python3-scipy       the localizer's likelihood field is a distance
+#                       transform of the occupancy grid. scan_matcher.py has a
+#                       pure-numpy fallback for development hosts, but scipy is
+#                       what every measured lap time ran on.
+#   rmw-cyclonedds-cpp  likewise: every lap time on this branch was measured on
+#                       cyclone, and the base image ships only fastrtps.
+#
+# NO nav2. The previous submission ran AMCL, which needs a map server and a
+# lifecycle manager to go with it. This localizer reads the PGM itself and is a
+# plain node, so three packages and their dependency trees leave the image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ros-humble-nav2-amcl \
-        ros-humble-nav2-map-server \
-        ros-humble-nav2-lifecycle-manager \
+        python3-scipy \
         ros-humble-rmw-cyclonedds-cpp \
     && rm -rf /var/lib/apt/lists/*
 
@@ -44,6 +45,16 @@ COPY roboracer_stack /home/autodrive_devkit/src/roboracer_stack
 RUN bash -c 'source /opt/ros/humble/setup.bash \
     && cd /home/autodrive_devkit \
     && colcon build --packages-select roboracer_stack'
+
+# The LD_PRELOAD shim bridge.launch.py preloads into the devkit bridge, built
+# into the same share directory frames.NODELAY_SHIM points at. It sets
+# TCP_NODELAY on the bridge's websocket and re-arms TCP_QUICKACK after every
+# recv AND every send: without it Nagle's algorithm and the receiver's delayed
+# ACK hold the request/reply loop at 10-20 Hz, whatever the machine. Measured
+# here on the lidar topic: 18.6 Hz off, 77.3 Hz on.
+RUN gcc -shared -fPIC -O2 \
+        -o /home/autodrive_devkit/install/roboracer_stack/share/roboracer_stack/tools/libnodelay.so \
+        /home/autodrive_devkit/install/roboracer_stack/share/roboracer_stack/tools/nodelay.c -ldl
 
 # DDS settings as image environment rather than shell startup files. Every
 # process in the container inherits them, `docker exec` shells included, which

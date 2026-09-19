@@ -19,7 +19,7 @@ The steering command follows from the competition's published vehicle spec
 
 Note this is NOT linear in kappa -- a single gain would be wrong near full lock.
 `steering_gain` is a trim multiplier for whatever the model does not capture;
-verify it with control/calibrate_steering.py.
+verified with the steering calibration on the development branch.
 
 SPEED AND THROTTLE (raceline/VEHICLE_MODEL.md, read out of the simulator's
 source): the sim spins each wheel to u = 25.25 * throttle m/s within a
@@ -63,18 +63,17 @@ DEVELOPMENT tool -- for validating a path and a controller offline. Point
 `pose_topic` at an online-SLAM or particle-filter pose to make it raceable.
 """
 
+import collections
 import math
-from collections import deque
 
 import numpy as np
 import rclpy
 import tf2_ros
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry, Path
+from roboracer_stack.common import restricted
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
-from roboracer_stack.common import restricted
-from roboracer_stack.planning.raceline import load_raceline
 from sensor_msgs.msg import Imu, JointState
 from std_msgs.msg import Bool, Float32, Float32MultiArray, Int32
 from visualization_msgs.msg import Marker
@@ -83,8 +82,7 @@ NS = '/autodrive/roboracer_1'
 
 # ~/status: one Float32MultiArray per control tick, fields in this order.
 # log_localization records them as pp_<name> columns; raceline/analyze_run.py
-# reads them back; tools/rate_monitor.py reads 'delay' and 'v_est' by index.
-# Keep the four in step.
+# reads them back. Keep the three in step.
 STATUS_FIELDS = ('v_est', 'v_enc', 'v_pose', 'v_target', 'u_cmd', 'throttle', 'steering',
                  'ld', 'e_lat', 'e_head', 'kappa', 's', 'slip', 'a_imu', 'delay')
 
@@ -95,6 +93,7 @@ TIRE_S_PEAK, TIRE_MU_PEAK = 0.15, 0.72
 TIRE_S_ASYM, TIRE_MU_ASYM = 0.25, 0.464
 DRAG_LIN = 0.273
 G = 9.81
+TRACK_WIDTH = 0.236                     # [m] between left and right contact patches (VEHICLE_MODEL 2)
 
 # What the launch ramp releases towards. It only shapes the tail of the ramp
 # between standstill and a_long_launch_v -- above that speed the limit is off
@@ -121,15 +120,6 @@ class PurePursuit(Node):
         p('path_csv', '')
         p('pose_topic', f'{NS}/odom')          # or an AMCL PoseWithCovarianceStamped
         p('control_hz', 20.0)
-        # Follow the simulator's tick instead of assuming it. A fixed 20 Hz was
-        # right when the tick WAS 17.5 Hz, but on the 40 Hz evaluation machine
-        # it throws away every second frame and adds up to 25 ms of command
-        # staleness on top of the round trip. Clamped: never below the proven
-        # 20 Hz, never above hz_max. Retuned from a 1 s timer, not from inside
-        # _control, so the timer is never destroyed from its own callback.
-        p('control_hz_auto', True)
-        p('control_hz_min', 20.0)
-        p('control_hz_max', 50.0)
         # Pose arrives in /odom's frame, which the devkit calls 'world'.
         p('viz_frame', 'world')
 
@@ -158,18 +148,62 @@ class PurePursuit(Node):
         p('lookahead_k', 0.35)                 # Ld = k * speed, then clamped
         p('lookahead_curv_gain', 0.67)         # Ld /= (1 + gain * max |kappa| within Ld); 0 = off
         p('steer_a_lat_max', 7.0)              # cap |kappa_cmd| at this / v^2 [m/s^2]; 0 = off
+        # Cap the steering EXCESS over the path's own kinematic steering angle. The
+        # sideways force peaks at ~0.6 deg of front slip; the slip angle is roughly
+        # (steer angle - atan(L * kappa_actual)), so what saturates the tyre is not
+        # a_lat but how far the command sits past the path's curvature. Measured
+        # iros2026: mid corners at steer 0.4 (slip ~0) hold 7 m/s^2; hairpin exits
+        # at steer 0.72 (slip ~7.5 deg) get 4.5 and run 0.4-0.5 m wide. A flat
+        # steer_a_lat_max cannot express that (5.0 fixed the hairpins and lost the
+        # 6 m/s right-hander). 0.06 rad = 3.4 deg of excess. 0 = off.
+        # ---- ported from the adil_iros branch ------------------------------
+        # 'hybrid_lqr' layers a BOUNDED LQR correction on pure pursuit: pure
+        # pursuit still supplies the path-curvature feedforward, the LQR only
+        # corrects measured lateral, heading and yaw-rate error, and the clamp
+        # means stale localization cannot replace the proven fallback. Adil's
+        # A03: 38 laps, zero contacts, median 9.600 against 9.550 for the same
+        # line without it -- i.e. clean but not faster, so it is an option.
+        p('controller_mode', 'pure_pursuit')
+        p('lqr_k_lat', 0.18)
+        p('lqr_k_head', 0.70)
+        p('lqr_k_yaw', 0.035)
+        p('lqr_max_correction_rad', 0.12)
+        # Corner-exit guard. When the car is running OUTWARD in a corner and the
+        # profile wants to accelerate, hold the speed increase back in proportion
+        # to how far out it is. It can only ever REDUCE the demand. This is aimed
+        # at the failure that has ended most runs on IROS 2026: the car runs wide
+        # on a hairpin exit and the profile feeds it more speed while it is still
+        # off-line. 0 disables.
+        # OFF by default (0.0). Adil's branch ships 0.15, i.e. active, but this
+        # stack has 63 clean laps behind it and a default-on change would be a
+        # silent one. Measured here on the 7.0/10 line: tracking p90 0.198 ->
+        # 0.142 and the s-38.6 contact gone, but the lap went 9.15 -> 9.25 and
+        # the hairpin-1 exit still bit. It trims speed AFTER the car is already
+        # wide, so it mitigates rather than prevents.
+        p('exit_guard_from', 0.0)
+        p('exit_guard_full', 0.0)
+        # SLIDE-ONSET guard, on the RATE rather than the offset. A hairpin-1
+        # exit slide on localizer v2 goes -0.13 -> -0.30..-0.53 m in 0.3 s, and
+        # by the time the offset guard above fires at 0.15 m it is over; the
+        # onset itself is an outward lateral velocity of 0.5 m/s in a corner,
+        # against +-0.1 m/s of ordinary tracking. While the car moves outward
+        # faster than exit_slide_rate_m_s in a corner (|kappa| > 0.2) the wheel
+        # is commanded to the car's speed -- no drive slip, no brake slip --
+        # for exit_slide_hold_s, so the fronts keep their lateral grip. The
+        # rate comes from the follower's own lateral error, which on v2 moves
+        # in 21 mm steps; AMCL's 0.46 m jumps would false-trigger it, so it is
+        # OFF (0) unless the localizer is v2. (2026-09-19, FINDINGS section 13)
+        p('exit_slide_rate_m_s', 0.0)
+        p('exit_slide_hold_s', 0.3)
+        p('steer_excess_rad', 0.0)
+        # What the excess is measured against: 'gyro' = the turn the car is ACTUALLY
+        # making now, atan(L * yaw_rate / v) -- a real slip-angle limiter, the
+        # command may only lead the car's own turning by the excess, so the tyre is
+        # never asked past its peak; 'path' = the path's curvature at the lookahead
+        # point, a plain feed-forward bound.
+        p('steer_excess_ref', 'gyro')
         p('lookahead_sag_frac', 0.5)           # chord sagitta <= frac * inside margin; 0 = off
         p('lookahead_delay_ref', 0.175)        # k and max scale by cmd_delay / this; 0 = off
-        # Exponent applied to (cmd_delay / ref) when the loop is FASTER than the
-        # reference. 1.0 reproduces the old proportional law in both directions;
-        # 0.5 (sqrt) is the default because proportional extrapolates badly
-        # downward -- at 40 Hz it asks for 0.37 * 2.2 = 0.82 m, which is under
-        # lookahead_min and would clamp the lookahead flat at every speed.
-        # Above the reference the law stays proportional and untouched: that
-        # side is the one that was actually proven on a slow machine.
-        p('lookahead_delay_exp_fast', 0.5)
-        p('lookahead_delay_min_scale', 0.62)
-        p('lookahead_delay_max_scale', 1.2)
         # ---- derating on a slow loop ------------------------------------
         # The profile's lateral limit was proven on a 175 ms round trip. A slower
         # machine (the evaluation box is unknown; this one decayed from 17.3 to
@@ -193,6 +227,33 @@ class PurePursuit(Node):
         p('a_lat_max', 3.0)
         p('v_min', 1.0)
         p('v_max', 4.0)
+        # ---- warmup speed cap ----------------------------------------
+        # Cap the speed TARGET over the first warmup_dist_m of driving
+        # (0 = off). The competition's first lap is a warmup and the timer
+        # starts after it, so this costs no race time.
+        #
+        # Why it is needed: the encoders report the throttle COMMAND, so
+        # dead reckoning over-reads distance while the wheel slips, by 5 %
+        # under hard acceleration and 2 % over a lap. A long straight gives
+        # AMCL almost no along-track correction (its walls are parallel to
+        # the error), so that over-read simply accumulates. Measured on IROS
+        # 2026, whose spawn is at the top of a 16 m straight: from the spawn
+        # the along-track error grows monotonically with distance and peaks
+        # at the hairpin-1 braking point, +0.43 m (run 13), +0.58 (run 3),
+        # +1.01 (run 14, which then hit). Starting the same stack mid-track
+        # instead, so the car meets corners before the straight, it stays
+        # under 0.10 m and the straight later in the run costs only +0.32
+        # (run 18). Corners are what makes the along-track direction
+        # observable; the cap buys the filter metres of scan updates and
+        # gentler acceleration until it has seen one.
+        p('warmup_v_max', 0.0)
+        p('warmup_dist_m', 0.0)
+        # After a wall reset the follower used to resume at full race speed on a
+        # pose that is still on the duct. M11: 9 recoveries in ~20 s, every one
+        # a re-hit within 1 s of "follower resumes". Cap the target for a few
+        # metres after /localization_ready returns; 0 dist disables.
+        p('recover_warmup_v_max', 2.0)
+        p('recover_warmup_dist_m', 8.0)
         # ---- speed source ---------------------------------------------
         # 'tire' (default), 'fused' or 'encoder'. See the module docstring: the
         # encoder is the throttle echo in this simulator, so 'tire' runs the
@@ -200,6 +261,22 @@ class PurePursuit(Node):
         # speed, which is bounded-error by construction. 'fused' (IMU integral +
         # pose blend) is kept for reference only; it failed twice in the sim.
         p('speed_source', 'tire')
+        # 1: the observer simulates one wheel at the car's speed. 4: four contact
+        # speeds -- inner/outer offset by yaw_rate * track/2, fronts faster by
+        # 1/cos(steer) along their steered direction -- all spun at the same u.
+        # The curve is concave, so four wheels at spread slips deliver LESS force
+        # than one at the mean slip, and the one-wheel model reads high exactly
+        # where that spread is large: ICRA run 13, +0.15-0.19 m/s at the hairpin
+        # apexes and 0 on the straights, the car 10 % slower than the follower
+        # believed. Replayed offline on that log, 4 takes the apex bias to ~0,
+        # and did so on the car (run 14: +0.02, p90 0.14). It STAYS 1: no lap
+        # gain, and with the true speed in hand the follower asked for more out
+        # of the left-leg apex at full lock (exit slip +60 %), the front tires
+        # lost lateral grip to it, and the car understeered into the exit wall.
+        # The one-wheel optimism was doubling as the throttle limiter there; the
+        # principled replacement is a friction-circle scaling of slip_accel.
+        # Float so it passes through the launch files like the other tunables.
+        p('observer_wheels', 1.0)
         # Initial slope of the rising branch of the friction curve, as a multiple
         # of the smoothstep's (which is zero). Unity does not document it; the
         # top-speed datum implies ~2 and the offline fit against ground truth
@@ -237,6 +314,50 @@ class PurePursuit(Node):
         # under the 7.06 peak, with the encoders about 0.3 m/s high while it binds.
         p('slip_accel', 0.08)
         p('slip_brake', 0.08)
+        # Friction-circle band. > 0 replaces slip_accel/slip_brake with this
+        # value at zero lateral load, scaled by sqrt(1 - (a_lat/steer_a_lat_max)^2)
+        # where a_lat = v^2 * |kappa| of the path at the car. ICRA run 17: only
+        # 4 % of the lap is grip-limited and 78 % is acceleration or braking,
+        # the +-0.08 band saturated 28 % of the time and the tire ran at slip
+        # 0.03 while its curve is flat-topped at 6.8-7.1 m/s^2 over 0.10-0.18.
+        # 0.12 puts a straight on that top; a hairpin exit at a_lat 6 gets
+        # 0.06, LESS than 0.08, which is what run 14's understeer asked for.
+        p('slip_circle', 0.0)
+        # Feed the slip that produces the PLAN's acceleration forward through
+        # the inverse tire curve, instead of waiting for a speed error to ask
+        # for it: the car delivered 91 % of its plan on run 17. Acceleration
+        # only; see _throttle_slip for what the brake side did on run 18.
+        # Float, like observer_wheels: the launch files cast every tunable to
+        # float, so accel_ff:=1.0 on, 0.0 off.
+        p('accel_ff', 0.0)
+        # Drag is a DISTURBANCE, not an acceleration. Where the profile holds a
+        # speed the plan's acceleration is ~0, accel_ff above does not fire, and
+        # the law falls through to a plain proportional term with no drag
+        # compensation at all -- so the whole drag-balancing slip has to come out
+        # of the tracking error and the car settles that far under its target.
+        # Measured on IROS 2026 (run 21, 63 laps): 0.199 m/s under the profile
+        # wherever the profile is flat, at BOTH the 8.5 m/s cap and the 2.4 m/s
+        # hairpin apexes, and drag there is 32 % and 9 % of peak longitudinal
+        # grip respectively. Raising slip_kp barely touches it (run kp15: flat
+        # zones 0.202 -> 0.182 while the powered zones scaled as 1/(1+kp) to the
+        # decimal), because the offset is set by the missing feedforward, not by
+        # the gain. 1.0 feeds drag forward at a_pred == 0 as well, which closes
+        # the offset WITHOUT raising the target -- unlike every profile-side
+        # lever tried on that track, which bought time on paper and paid for it
+        # in wall clearance. Braking is deliberately untouched: fed forward there
+        # it tracks the plan's deceleration instead of its speed and cost 0.09 s
+        # (ICRA run 18), and a car already ABOVE its target must be allowed to
+        # fall back to it rather than hold speed against drag.
+        p('drag_ff', 0.0)
+        # Braking: never command a wheel more than this above the TARGET. Below the
+        # band the wheel is placed relative to the observer's speed (v_land - s_brk
+        # * den), and the observer runs 0.4-0.9 m/s HIGH at hairpin turn-in on every
+        # IROS run (it has no cornering drag), exactly where the friction circle
+        # also shrinks s_brk to its 0.02 floor -- so the "brake" wheel sat above the
+        # real car and DROVE it into the apex (M03 hp2, M08 hp1: +0.95 m/s, IMU
+        # +2.6 m/s2 while braking). Capping against the target cannot be fooled by
+        # the observer. Only ever lowers u, only when braking. 0 = off.
+        p('brake_cap_margin', 0.0)
         # Loop delay from publishing a throttle to seeing it on the wheel. MEASURED
         # 0.15 s (see _throttle_slip). Everything in the band is predicted this far
         # ahead with the observer's acceleration. 0 = the old behaviour.
@@ -251,45 +372,17 @@ class PurePursuit(Node):
         # wheel speed) pairs are cross-correlated at lags 0..0.35 s and the best
         # lag is low-pass blended into cmd_delay_s. Needs throttle to vary, which
         # any lap provides. Off = the fixed value above.
+        # Encoder rate over at least this much time. One sample at 18 Hz spans 55 ms
+        # and the rate was clean (RMS 0.22 m/s against 25.25*throttle, IROS run 12);
+        # at 45 Hz one sample spans 22 ms with the same +-1 physics step of jitter,
+        # the per-sample rate scattered 0.6-1.9x (RMS 0.44, run 15) and the tire
+        # observer, fed that through a saturating slip curve, ran 0.4 m/s low on the
+        # straight: 0.5 m/s of car speed at the same target, 0.55 s a lap. 0.05 s
+        # picks the previous sample at 18 Hz (unchanged) and the third-previous at 45.
+        p('enc_rate_window_s', 0.05)
         p('cmd_delay_auto', True)
         p('cmd_delay_window_s', 6.0)
         p('cmd_delay_update_s', 2.0)
-        # Lag grid for the cross-correlation. 25 ms was fine against a 175 ms
-        # round trip (7 %); against the 60-75 ms of a 40-50 Hz machine it is a
-        # 19 % quantisation, and it lands straight in the lookahead scale and
-        # the derate. 5 ms is the resolution the original throttle-to-wheel
-        # regression used. 72 lags over a 6 s window is a few ms of numpy every
-        # cmd_delay_update_s -- immaterial next to being wrong by a third.
-        p('cmd_delay_lag_step_s', 0.005)
-        p('cmd_delay_lag_max_s', 0.36)
-        # The round trip is a fixed number of SIM FRAMES (three: 171 ms at 17.5
-        # Hz, 75 ms at 40 Hz, 60 ms at 50 Hz), so the measured tick gives the
-        # delay directly -- no throttle variation required and no 6 s window.
-        p('cmd_delay_frames', 3.0)
-        # Seed cmd_delay from the first measured tick. Without this the value
-        # starts at cmd_delay_s and the 0.3-per-2 s blend needs ~20 s to walk
-        # from 175 ms down to 75 ms: on a 40 Hz machine that is three laps
-        # driven on slow-machine lookahead, which on a timed run is the run.
-        p('cmd_delay_tick_seed', True)
-        # Floor cmd_delay at frames / tick. The correlator needs ~10 s to react
-        # (6 s window, 2 s update, 0.3 blend); the tick moves in half a second,
-        # so this is what lets the derate fire on a mid-lap collapse instead of
-        # a lap later. It only ever RAISES the delay, and releases as soon as
-        # the tick recovers -- self.cmd_delay is recomputed, never ratcheted.
-        p('cmd_delay_tick_floor', True)
-        # Window for the median, in FRAMES rather than seconds. A time window
-        # keeps the fast tail in the majority: 0.5 s after a 40 Hz machine falls
-        # to 12 Hz, a 1 s window still holds 20 fast gaps against 6 slow ones and
-        # the median still reads 40 Hz. A count window self-scales -- the median
-        # flips once half the retained frames are slow, 0.7 s into a collapse,
-        # while a single stall is 1 gap in 16 and moves nothing.
-        p('cmd_delay_tick_frames', 16)
-        # Ceiling on the effective delay. A freeze is scored as silence (below),
-        # which is unbounded, and cmd_delay multiplies the speed lead and the
-        # landing-speed prediction -- a 1 s freeze must derate the car, not ask
-        # it to aim three seconds down the track. 0.35 s is the correlator's own
-        # lag ceiling and is already past full derate.
-        p('cmd_delay_max_s', 0.35)
         # Proportional gain on (v_target - v_land) added to the wheel command inside
         # the band; 0.76 = 25.25 * throttle_kp, the legacy law's effective gain.
         p('slip_kp', 0.76)
@@ -373,33 +466,44 @@ class PurePursuit(Node):
         self.ld_min, self.ld_max, self.ld_k = g('lookahead_min'), g('lookahead_max'), g('lookahead_k')
         self.ld_curv_gain = float(g('lookahead_curv_gain'))
         self.steer_a_lat_max = float(g('steer_a_lat_max'))
+        self.controller_mode = str(g('controller_mode')).lower()
+        self.lqr_k_lat = float(g('lqr_k_lat'))
+        self.lqr_k_head = float(g('lqr_k_head'))
+        self.lqr_k_yaw = float(g('lqr_k_yaw'))
+        self.lqr_max_correction = float(g('lqr_max_correction_rad'))
+        if self.controller_mode not in ('pure_pursuit', 'hybrid_lqr', 'ff_lqr'):
+            raise RuntimeError(f'controller_mode must be pure_pursuit, hybrid_lqr or ff_lqr, not {self.controller_mode!r}')
+        self.exit_guard_from = float(g('exit_guard_from'))
+        self.exit_guard_full = float(g('exit_guard_full'))
+        self.slide_rate = float(g('exit_slide_rate_m_s'))
+        self.slide_hold = float(g('exit_slide_hold_s'))
+        self._elat_hist = []            # (t, e_lat_now) over the last ~0.1 s
+        self._slide_until = 0.0
+        self.slide_events = 0
+        if self.exit_guard_from < 0.0 or self.exit_guard_full < self.exit_guard_from:
+            raise RuntimeError('exit_guard_full must be >= exit_guard_from >= 0')
+        self.steer_excess_rad = float(g('steer_excess_rad'))
+        self.steer_excess_ref = str(g('steer_excess_ref'))
         self.ld_sag_frac = float(g('lookahead_sag_frac'))
         self.ld_delay_ref = float(g('lookahead_delay_ref'))
-        self.ld_delay_exp = float(g('lookahead_delay_exp_fast'))
-        self.ld_scale_min = float(g('lookahead_delay_min_scale'))
-        self.ld_scale_max = float(g('lookahead_delay_max_scale'))
         self.derate_from = float(g('derate_delay_from'))
         self.derate_to = float(g('derate_delay_to'))
         self.derate_a_lat = float(g('derate_a_lat'))
-        # lookahead_max * the smallest delay scale must still clear
-        # lookahead_min, or np.clip below collapses the lookahead to a constant
-        # at EVERY speed -- the same trap the lookahead_max note warns about,
-        # reached through the scale instead of through the raw value.
-        if self.ld_delay_ref > 0.0 and self.ld_max * self.ld_scale_min <= self.ld_min:
-            raise RuntimeError(
-                f'lookahead_max ({self.ld_max}) * lookahead_delay_min_scale '
-                f'({self.ld_scale_min}) = {self.ld_max * self.ld_scale_min:.3f} '
-                f'does not clear lookahead_min ({self.ld_min}): the lookahead '
-                f'would clamp flat at every speed on a fast loop')
         self.wheelbase = g('wheelbase')
         self.max_steer = g('max_steer_rad')
         self.steer_gain = g('steering_gain')
         self.a_lat, self.v_min, self.v_max = g('a_lat_max'), g('v_min'), g('v_max')
+        self.warm_v = float(g('warmup_v_max'))
+        self.warm_d = float(g('warmup_dist_m'))
+        self._warm_dist = 0.0        # metres driven since the follower first moved
+        self._warm_t = None          # previous control tick, for that integral
+        self._warm_done = not (self.warm_v > 0.0 and self.warm_d > 0.0)
+        self.rec_warm_v = float(g('recover_warmup_v_max'))
+        self.rec_warm_d = float(g('recover_warmup_dist_m'))
+        self._rec_warm = False
+        self._rec_warm_dist = 0.0
+        self._rec_warm_t = None
         self.hz = float(g('control_hz'))
-        self.hz_auto = bool(g('control_hz_auto'))
-        self.hz_min = float(g('control_hz_min'))
-        self.hz_max = float(g('control_hz_max'))
-        self._control_timer = None
         self.a_long_launch = float(g('a_long_launch'))
         self.a_long_launch_v = float(g('a_long_launch_v'))
         self._v_cmd = 0.0               # rate-limited speed target, m/s
@@ -413,30 +517,26 @@ class PurePursuit(Node):
         self.wheel_r = g('wheel_radius')
         self.speed_source = str(g('speed_source')).lower()
         self.throttle_mode = str(g('throttle_mode')).lower()
+        self.obs_wheels = int(round(float(g('observer_wheels'))))
+        if self.obs_wheels not in (1, 4):
+            raise RuntimeError(f'observer_wheels must be 1 or 4, not {self.obs_wheels}')
         if self.speed_source not in ('tire', 'fused', 'encoder'):
             raise RuntimeError(f"speed_source must be 'tire', 'fused' or 'encoder', not {self.speed_source!r}")
         self.tire_m = float(g('tire_rise_slope'))
-        # _delay_base is what the correlator estimates (or the fixed value when
-        # auto is off); self.cmd_delay is the EFFECTIVE delay every consumer
-        # reads, recomputed each control cycle as max(base, tick-implied). The
-        # split is what lets the tick floor release cleanly: with a single
-        # variable a stall would ratchet the delay up and never let it back.
-        self._delay_base = float(g('cmd_delay_s'))
-        self.cmd_delay = self._delay_base
+        self.cmd_delay = float(g('cmd_delay_s'))
         self.slip_kp = float(g('slip_kp'))
+        self.enc_win = float(g('enc_rate_window_s'))
         self.delay_auto = bool(g('cmd_delay_auto'))
         self.delay_win = float(g('cmd_delay_window_s'))
+        # The delay estimator is FROZEN through a recovery and for one window
+        # after it: the stop-and-restart of a wall reset puts a standstill and a
+        # launch into its correlation window, and it read 0.114 -> 0.043 s
+        # within 4 s of a reset (my_run_1, 2026-09-19). The follower then led
+        # by a third of the real delay, arrived at s 35-37 0.4-0.6 m/s over its
+        # target, ran 0.17 m wide at s 39 and hit again 8 s after the first
+        # contact. The true delay does not change through a reset.
+        self._delay_hold_until = 0.0
         self.delay_every = float(g('cmd_delay_update_s'))
-        self.delay_lag_step = float(g('cmd_delay_lag_step_s'))
-        self.delay_lag_max = float(g('cmd_delay_lag_max_s'))
-        self.delay_frames = float(g('cmd_delay_frames'))
-        self.delay_tick_seed = bool(g('cmd_delay_tick_seed'))
-        self.delay_tick_floor = bool(g('cmd_delay_tick_floor'))
-        self.tick_frames = max(4, int(g('cmd_delay_tick_frames')))
-        self.delay_max = float(g('cmd_delay_max_s'))
-        self.tick_hz = float('nan')     # measured simulator tick, for both of the above
-        self._tick_t = deque()          # last tick_frames+1 frame stamps
-        self._delay_seeded = False
         self._thr_hist = []             # (t, throttle published)
         self._enc_hist = []             # (t, wheel speed measured)
         self._delay_next = None
@@ -448,6 +548,13 @@ class PurePursuit(Node):
             raise RuntimeError(f"throttle_mode must be 'slip' or 'legacy', not {self.throttle_mode!r}")
         self.u_per_thr = float(g('u_per_throttle'))
         self.slip_accel, self.slip_brake = float(g('slip_accel')), float(g('slip_brake'))
+        self.slip_circle = float(g('slip_circle'))
+        self.accel_ff = float(g('accel_ff')) > 0.5
+        self.drag_ff = float(g('drag_ff')) > 0.0
+        self.brake_cap = float(g('brake_cap_margin'))
+        # mu is monotone on [0, S_PEAK]: tabulate it once for the inverse.
+        self._s_tab = np.linspace(0.0, TIRE_S_PEAK, 151)
+        self._mu_tab = np.array([self._mu(float(S)) for S in self._s_tab])
         self.u_launch = float(g('u_launch'))
         self.v_slip_den = float(g('v_slip_den'))
         self.imu_lever = float(g('imu_lever_arm'))
@@ -460,8 +567,10 @@ class PurePursuit(Node):
         # fused speed estimate
         self.v_est = 0.0                # IMU-integrated, pose-corrected car speed
         self.v_enc = 0.0                # wheel surface speed from the encoders
+        self._enc_win = {}              # side -> deque of (t, angle) spanning >= enc_win
         self.v_pose = float('nan')      # speed implied by the pose over pose_win
         self.yaw_rate = 0.0             # IMU gyro z, for latency compensation
+        self.steer_angle = 0.0          # last commanded steer [rad], for the 4-wheel observer
         self._imu_t = None
         self._imu_seen = False
         self._pose_hist = []            # (stamp, x, y, v_est) of the poses steered on
@@ -482,23 +591,32 @@ class PurePursuit(Node):
         self.truth_pose = None
 
         csv = g('path_csv')
-        line = load_raceline(csv)
-        self.s, self.px, self.py = line.s, line.x, line.y
-        self.psi, self.kappa = line.psi, line.kappa
-        # Room to the wall on the INSIDE of each point's curve, minus half the
-        # car: what a corner-cutting chord may consume.
-        self.margin_in = line.margin_in
-        self.path_v = line.v
-        # The profile's own longitudinal acceleration, v dv/ds, closed loop. Used
-        # to place the slip band where the car will be when a command lands, and
-        # its lateral limit, which is what derating on a slow loop scales down.
-        self.path_a = line.a
-        self.profile_a_lat = line.profile_a_lat
+        if not csv:
+            raise RuntimeError('path_csv parameter is required')
+        data = np.loadtxt(csv, delimiter=',')
+        self.s, self.px, self.py = data[:, 0], data[:, 1], data[:, 2]
+        self.psi, self.kappa = data[:, 3], data[:, 4]
+        # Room to the wall on the INSIDE of each point's curve, minus half the car:
+        # what a corner-cutting chord may consume. The CSV's width columns are
+        # ray-cast from the map at the line (optimize_raceline.export_csv).
+        half_w = 0.135
+        self.margin_in = np.where(self.kappa > 0.0, data[:, 6], data[:, 5]) - half_w
+        self.path_v = data[:, 7] if data.shape[1] > 7 else None
+        # The profile's own longitudinal acceleration, v dv/ds, closed loop. Used to
+        # place the slip band where the car will be when a command lands.
+        if self.path_v is not None:
+            ds = np.hypot(np.roll(self.px, -1) - np.roll(self.px, 1), np.roll(self.py, -1) - np.roll(self.py, 1))
+            self.path_a = self.path_v * (np.roll(self.path_v, -1) - np.roll(self.path_v, 1)) / np.maximum(ds, 1e-3)
+            # the profile's own lateral limit, for derating on a slow loop
+            self.profile_a_lat = float(np.max(self.path_v ** 2 * np.abs(self.kappa)))
+        else:
+            self.path_a = np.zeros_like(self.px)
+            self.profile_a_lat = 0.0
         if self.use_path_speed and self.path_v is None:
             self.get_logger().warn(
                 'use_path_speed is set but the CSV has no v_mps column; '
                 'falling back to curvature-derived speed')
-        self.lap_len = line.lap_len
+        self.lap_len = float(self.s[-1] + (self.s[1] - self.s[0]))
         self.get_logger().info(
             f'path: {len(self.px)} points, {self.lap_len:.2f} m lap, from {csv}')
 
@@ -539,6 +657,11 @@ class PurePursuit(Node):
         else:
             self.get_logger().info(f'steering on {self.pose_topic}')
 
+        if not self._warm_done:
+            self.get_logger().info(
+                f'warmup cap: speed target held at {self.warm_v:.2f} m/s for the '
+                f'first {self.warm_d:.1f} m of driving, then released')
+
         if self.using_truth:
             self.create_subscription(Odometry, self.bootstrap_topic,
                                      self._cb_truth, QOS)
@@ -557,6 +680,11 @@ class PurePursuit(Node):
             f'slip band [-{self.slip_brake:g}, +{self.slip_accel:g}]  u_launch {self.u_launch:g} m/s  '
             f'lookahead {self.ld_min:g}-{self.ld_max:g} m (k {self.ld_k:g})  '
             f'latency_comp {self.latency:g} s')
+        if self.slip_circle > 0.0 or self.accel_ff:
+            self.get_logger().info(
+                (f'slip band: circle {self.slip_circle:.2f} x sqrt(1 - (a_lat/{self.steer_a_lat_max:g})^2), '
+                 'replacing the fixed band above' if self.slip_circle > 0.0 else 'slip band: fixed')
+                + ('  |  plan-acceleration feedforward ON' if self.accel_ff else ''))
         if self.dev_lap:
             # RESTRICTED topics -- never enable this for an evaluation run.
             self.get_logger().warn('dev_lap_telemetry ON: subscribing to RESTRICTED lap topics')
@@ -576,9 +704,7 @@ class PurePursuit(Node):
         self.pub_target = self.create_publisher(Marker, '~/lookahead', 1)
         self.pub_status = self.create_publisher(Float32MultiArray, '~/status', 1)
 
-        self._control_timer = self.create_timer(1.0 / self.hz, self._control)
-        if self.hz_auto:
-            self.create_timer(1.0, self._retune_control_timer)
+        self.create_timer(1.0 / g('control_hz'), self._control)
         self.create_timer(2.0, self._publish_path)
 
     # ---- callbacks -------------------------------------------------------
@@ -623,10 +749,18 @@ class PurePursuit(Node):
             return
         dt = t - prev[1]
         if dt <= 1e-4 or dt > 0.5:
+            self._enc_win.pop(side, None)
             return   # stale or duplicate frame; a bad dt yields a garbage speed
-        self._enc_rate[side] = (ang - prev[0]) / dt * self.wheel_r
-        if side == 'l':
-            self._note_tick(t)
+        # Difference against the newest sample at least enc_win old, so the rate
+        # spans the same physics time at any loop rate (see enc_rate_window_s).
+        win = self._enc_win.setdefault(side, collections.deque())
+        win.append((t, ang))
+        while len(win) > 2 and t - win[1][0] >= self.enc_win:
+            win.popleft()
+        t_old, a_old = win[0]
+        if t - t_old < self.enc_win:
+            t_old, a_old = prev[1], prev[0]              # window not filled yet: previous sample
+        self._enc_rate[side] = (ang - a_old) / (t - t_old) * self.wheel_r
         rates = [v for v in self._enc_rate.values() if v is not None]
         if rates:
             self.v_enc = float(np.mean(rates))
@@ -713,10 +847,24 @@ class PurePursuit(Node):
             return
         u, h = self.v_enc, dt / 5.0
         for _ in range(5):
-            S = (u - self.v_est) / max(self.v_est, self.v_slip_den)
-            a = math.copysign(self._mu(S) * G, S) - DRAG_LIN * self.v_est
+            if self.obs_wheels == 4:
+                # Four contact speeds along each wheel's rolling direction, one
+                # wheel speed u, equal loads: a = (g/4) sum mu(S_i). See the
+                # observer_wheels parameter for why this differs from one wheel.
+                w = self.yaw_rate * TRACK_WIDTH / 2.0
+                vf = self.v_est / max(math.cos(self.steer_angle), 0.5)
+                a = 0.25 * sum(self._wheel_accel(u, vc)
+                               for vc in (self.v_est - w, self.v_est + w, vf - w, vf + w))
+                a -= DRAG_LIN * self.v_est
+            else:
+                a = self._wheel_accel(u, self.v_est) - DRAG_LIN * self.v_est
             self.v_est = max(0.0, self.v_est + a * h)
         self.a_est = a                            # for the command-delay prediction
+
+    def _wheel_accel(self, u, vc):
+        """g * mu at one wheel: rim speed u, contact-patch speed vc (PhysX slip)."""
+        S = (u - vc) / max(vc, self.v_slip_den)
+        return math.copysign(self._mu(S) * G, S)
 
     def _note_pose(self, t, x, y):
         """Record a pose sample, stamped AT ITS SOURCE, for the speed correction.
@@ -828,8 +976,40 @@ class PurePursuit(Node):
 
     def _cb_ready(self, msg):
         if msg.data and not self.ready:
+            # A re-confirm after a wall reset (initial warmup already finished)
+            # must not resume at 9 m/s on the duct. Initial seed uses the
+            # ordinary warmup cap instead.
+            if self._warm_done and self.rec_warm_v > 0.0 and self.rec_warm_d > 0.0:
+                self._rec_warm = True
+                self._rec_warm_dist = 0.0
+                self._rec_warm_t = None
+                self.get_logger().info(
+                    f'localization re-confirmed after reset: speed cap {self.rec_warm_v:.2f} m/s '
+                    f'for {self.rec_warm_d:.1f} m')
             self.ready = True
+            self._delay_hold_until = self.get_clock().now().nanoseconds * 1e-9 + self.delay_win
             self.get_logger().info('localization converged, taking over')
+        elif not msg.data and self.ready:
+            # The bootstrap detected a wall reset and is re-localizing; it owns
+            # the actuators until it latches true again. Nothing is published
+            # from here meanwhile (the control tick returns on not ready).
+            self.ready = False
+            self.v_est = 0.0
+            self._pose_hist.clear()
+            # STOP, explicitly. The bridge holds the last command, so "publish
+            # nothing" means "keep the last throttle": the bootstrap's own
+            # (0, 0) is one message that can land BEFORE this node's last
+            # control tick, and then the unsteered car drives on at the old
+            # throttle. v2_L875_w28 (2026-09-19): held at 0.17 throttle, the
+            # car went 0.9 -> 4.2 m/s in a second and hit the hairpin-2 wall.
+            # Published from here, after the control tick can no longer run,
+            # the zero is the last word from this node.
+            z = Float32()
+            z.data = 0.0
+            self.pub_t.publish(z)
+            self.pub_s.publish(z)
+            self._delay_hold_until = float('inf')      # until ready returns, plus a window
+            self.get_logger().warn('localization lost after a reset: holding until it is re-confirmed')
 
     def _limit_accel(self, v_target):
         """Hold the speed TARGET down while the car is barely moving.
@@ -869,7 +1049,7 @@ class PurePursuit(Node):
         self._v_cmd = min(v_target, self._v_cmd + a_allowed * dt)
         return self._v_cmd
 
-    def _throttle_slip(self, v_target, a_plan=0.0):
+    def _throttle_slip(self, v_target, a_plan=0.0, a_lat=0.0):
         """Command a WHEEL speed, bounded to the tire's peak-force slip band.
 
         The sim spins the wheel to u = u_per_throttle * throttle regardless of
@@ -911,115 +1091,47 @@ class PurePursuit(Node):
         # 1.76x the speed error. Commanding u = v_t alone tracked the target 0.15
         # m/s low against legacy's 0.07 (run 5 vs run 4); the same gain, applied
         # to the error at landing time, closes that. The band still bounds the slip.
-        u = v_target + self.slip_kp * (v_target - v_land)
-        u = min(max(u, v_land - self.slip_brake * den), v_land + self.slip_accel * den)
+        if self.slip_circle > 0.0:
+            cap = self.steer_a_lat_max if self.steer_a_lat_max > 0.0 else 7.0
+            f = math.sqrt(max(0.0, 1.0 - (a_lat / cap) ** 2))
+            s_acc = s_brk = max(self.slip_circle * f, 0.02)
+        else:
+            s_acc, s_brk = self.slip_accel, self.slip_brake
+        # a_pred == 0 covers two different states: the profile is flat and the car
+        # is at or under its target (drag must be fed forward), or the car is
+        # ABOVE its target and the plan says accelerate (it must be allowed to
+        # fall back). Only the first gets the feedforward. See drag_ff.
+        # drag_ff only where the plan is genuinely FLAT and the tire has lateral
+        # room. a_pred is also clamped to 0 when the plan BRAKES with the car
+        # under target, and there the old `a_pred == 0` test fed drive into every
+        # braking zone; at an apex (lateral limit) the extra slip is grip the
+        # tire does not have. M03 (2026-09-18): three contacts in two laps.
+        flat = (self.drag_ff and a_pred == 0.0 and v_target >= v
+                and abs(a_plan) < 0.05 and a_lat < 0.5 * (self.steer_a_lat_max or 7.0))
+        ff_on = self.accel_ff and (a_pred > 0.0 or flat)
+        if ff_on:
+            # ACCELERATION ONLY. The slip that delivers the plan's (gated)
+            # acceleration at landing, gross of drag; the proportional term then
+            # corrects the lag. Fed forward on the BRAKE side too (ICRA run 18)
+            # it made the car track the plan's deceleration instead of its
+            # speed: a car entering a braking zone slightly slow no longer
+            # braked less and caught up, every apex came in 0.1 m/s lower, and
+            # the lap was 0.09 s slower; braking delivery did not improve (91 %
+            # either way). Accel delivery went 91 -> 98 %, so that half stays.
+            gross = a_pred + DRAG_LIN * v_land
+            mu_need = min(abs(gross) / G, 0.95 * TIRE_MU_PEAK)
+            s_ff = math.copysign(float(np.interp(mu_need, self._mu_tab, self._s_tab)), gross)
+            u = v_land + s_ff * den + self.slip_kp * (v_target - v_land)
+        else:
+            u = v_target + self.slip_kp * (v_target - v_land)
+        u = min(max(u, v_land - s_brk * den), v_land + s_acc * den)
+        if self.brake_cap > 0.0 and v_target < v_land:
+            u = min(u, v_target + self.brake_cap)
         if v_target > v and u < self.u_launch:
             u = self.u_launch
         self.v_land = v_land
         self.u_cmd = u
         return float(np.clip(u / self.u_per_thr, 0.0, self.thr_max))
-
-    def _note_tick(self, t):
-        """One simulator frame arrived; keep a short history of frame stamps.
-
-        The bridge publishes all fourteen topics from a single @sio.on('Bridge')
-        handler, one burst per WebSocket frame, so a left-encoder message IS a
-        frame and its rate is the simulator's tick. Measuring it costs a deque
-        append and gives the loop the one thing the cross-correlation cannot: a
-        delay estimate that moves within half a second of the rate changing,
-        needs no throttle variation, and exists on the very first lap.
-
-        The MEDIAN gap, not the mean: one 200 ms stall in a second of frames
-        must not read as a halved tick and derate the whole car for it. A
-        sustained collapse moves the median within half a window; a single
-        freeze does not move it at all.
-        """
-        if self._tick_t and t <= self._tick_t[-1]:
-            return                      # duplicate or out-of-order stamp
-        self._tick_t.append(t)
-        while len(self._tick_t) > self.tick_frames + 1:
-            self._tick_t.popleft()
-        if len(self._tick_t) < 4:
-            return
-        gaps = sorted(b - a for a, b in zip(self._tick_t, list(self._tick_t)[1:]))
-        med = gaps[len(gaps) // 2]
-        if med > 1e-4:
-            self.tick_hz = 1.0 / med
-
-    def _tick_delay(self, now=None):
-        """Round trip implied by the tick, or NaN before a tick is known.
-
-        A freeze that is still going produces no frames AT ALL, so the median
-        cannot see it -- the last stamp simply stops moving. The silence since
-        that stamp is therefore taken as the current frame gap whenever it is
-        the larger of the two, which is what makes a stall visible while it is
-        still happening rather than one frame after it ends.
-        """
-        if self.tick_hz != self.tick_hz or self.tick_hz <= 0.0:
-            return float('nan')
-        gap = 1.0 / self.tick_hz
-        if now is not None and self._tick_t:
-            silence = now - self._tick_t[-1]
-            if silence > gap:
-                gap = silence
-        return min(self.delay_frames * gap, self.delay_max)
-
-    def _apply_tick_delay(self, now=None):
-        """Seed and floor the effective delay from the measured tick.
-
-        Called once per control cycle. self.cmd_delay is recomputed rather than
-        adjusted, so the floor RELEASES the moment the tick recovers instead of
-        leaving the car derated for the rest of the run.
-        """
-        d = self._tick_delay(now)
-        if d != d:
-            self.cmd_delay = self._delay_base
-            return
-        # The SEED takes the median alone, never the silence-aware value: this
-        # fires once and sticks, and a control cycle that happens to land late
-        # in a frame gap would otherwise seed 150 ms on a 40 Hz machine and
-        # leave the correlator to walk it back. It also waits for a full window
-        # rather than the four frames tick_hz needs, so the one number that is
-        # never re-measured is not taken off three gaps during startup.
-        if (self.delay_tick_seed and not self._delay_seeded
-                and len(self._tick_t) > self.tick_frames):
-            self._delay_seeded = True
-            self._delay_base = self._tick_delay()
-            self.get_logger().info(
-                f'cmd_delay seeded from a {self.tick_hz:.1f} Hz tick: '
-                f'{self._delay_base * 1e3:.0f} ms '
-                f'({self.delay_frames:.0f} frames). '
-                f'lookahead scale {self._delay_scale(self._delay_base):.2f}')
-        self.cmd_delay = max(self._delay_base, d) if self.delay_tick_floor \
-            else self._delay_base
-
-    def _delay_scale(self, delay):
-        """Lookahead scale for a round trip: see lookahead_delay_exp_fast."""
-        if self.ld_delay_ref <= 0.0:
-            return 1.0
-        r = delay / self.ld_delay_ref
-        s = r if r >= 1.0 else r ** self.ld_delay_exp
-        return max(self.ld_scale_min, min(self.ld_scale_max, s))
-
-    def _retune_control_timer(self):
-        """Track the simulator tick with the control rate, within the clamp.
-
-        Runs on its own 1 s timer: rclpy does not promise anything sane about a
-        timer destroying itself from inside its own callback. The 10 % deadband
-        keeps a tick that jitters across a boundary from rebuilding the timer
-        every second.
-        """
-        if self.tick_hz != self.tick_hz:
-            return
-        target = min(self.hz_max, max(self.hz_min, self.tick_hz))
-        if abs(target - self.hz) <= 0.1 * self.hz:
-            return
-        old, self.hz = self.hz, target
-        if self._control_timer is not None:
-            self.destroy_timer(self._control_timer)
-        self._control_timer = self.create_timer(1.0 / self.hz, self._control)
-        self.get_logger().info(
-            f'control_hz {old:.1f} -> {self.hz:.1f} (tick {self.tick_hz:.1f} Hz)')
 
     def _update_delay(self, now):
         """Cross-correlate published throttle against measured wheel speed.
@@ -1034,6 +1146,8 @@ class PurePursuit(Node):
         if self._delay_next is not None and now < self._delay_next:
             return
         self._delay_next = now + self.delay_every
+        if now < self._delay_hold_until:
+            return
         t_min = now - self.delay_win
         self._thr_hist = [p for p in self._thr_hist if p[0] >= t_min - 0.5]
         self._enc_hist = [p for p in self._enc_hist if p[0] >= t_min]
@@ -1043,11 +1157,11 @@ class PurePursuit(Node):
         te = np.array([p[0] for p in self._enc_hist]); ve = np.array([p[1] for p in self._enc_hist])
         if ut.std() < 0.3:                          # throttle barely moved: nothing to correlate
             return
-        lags = np.arange(0.0, self.delay_lag_max + 1e-9, self.delay_lag_step)
+        lags = np.arange(0.0, 0.36, 0.025)
         rms = [math.sqrt(np.mean((ve - np.interp(te - lag, tt, ut)) ** 2)) for lag in lags]
         best = float(lags[int(np.argmin(rms))])
         self.delay_meas = best
-        self._delay_base += 0.3 * (best - self._delay_base)
+        self.cmd_delay += 0.3 * (best - self.cmd_delay)
 
     def _publish_status(self, values):
         m = Float32MultiArray()
@@ -1059,7 +1173,6 @@ class PurePursuit(Node):
             return
 
         now = self.get_clock().now().nanoseconds * 1e-9
-        self._apply_tick_delay(now)
         pose = self.pose
         if self.use_tf_pose:
             tf_pose = self._pose_from_tf()
@@ -1126,16 +1239,9 @@ class PurePursuit(Node):
         # gave a 2.9 m lookahead whose
         # lateral gain (2/Ld^2) was too soft to catch a 0.1 m drift with 5 deg of
         # heading before a wall 0.33 m away, twice, on the straight after R1.
-        # Above the reference the law is PROPORTIONAL and bit-identical to what
-        # was proven here: 2.2 m weaved into a wall at 210 ms until the scale
-        # lengthened it. Below the reference -- the 40-50 Hz evaluation machine,
-        # 60-75 ms -- proportional would ask for 0.82 m at 40 Hz, under
-        # lookahead_min, clamping the lookahead flat at every speed. The sqrt
-        # spends half the gain on phase margin and half on tracking: at 40 Hz
-        # the scale is 0.65, so Ld_max is 1.44 m and the phase lag at 6.7 m/s is
-        # 28 deg, against 43 deg for the 2.2 m this replaces. Shorter line, more
-        # margin, and the corner cut (kappa Ld^2 / 8) falls by more than half.
-        d_scale = self._delay_scale(self.cmd_delay)
+        d_scale = 1.0
+        if self.ld_delay_ref > 0.0:
+            d_scale = max(0.7, min(1.2, self.cmd_delay / self.ld_delay_ref))
         ld = float(np.clip(self.ld_k * d_scale * abs(self.speed), self.ld_min, self.ld_max * d_scale))
         # Shorten the lookahead where the path AHEAD curves. Pure pursuit aims at
         # the chord to the lookahead point, so on corner entry it cuts inside by
@@ -1192,11 +1298,46 @@ class PurePursuit(Node):
         # curvature at a_cap / v^2 holds the steering where the force is still
         # near its maximum and lets the car run wide by the physical amount
         # instead of spiralling. Measured usable maxima: 6.4-7.8 m/s^2.
+        if self.controller_mode == 'ff_lqr':
+            # Feed-forward from the PATH's curvature at the point the car reaches
+            # when the command lands (the latency-propagated pose), instead of
+            # the pursuit chord. Pure pursuit steers at a point 0.8-1.9 m ahead,
+            # so through a 1.22 hairpin it commands 1.08-1.16 and runs 0.13 m
+            # wide on every lap (IROS 2026, true pose, 2026-09-18); that 0.13 m
+            # is what sizes the wall margin. The LQR below is the whole
+            # correction here, so it needs its design gains (0.18 / 0.70 /
+            # 0.035, 0.12 rad), not the 0.03 / 0.05 / 0.02 the hybrid mode
+            # runs with beside pursuit.
+            kappa_cmd = float(self.kappa[near])
         if self.steer_a_lat_max > 0.0 and self.speed > 0.5:
             k_cap = self.steer_a_lat_max / (self.speed ** 2)
             kappa_cmd = max(-k_cap, min(k_cap, kappa_cmd))
+        e_lat_now = ((x - self.px[near]) * -math.sin(self.psi[near])
+                     + (y - self.py[near]) * math.cos(self.psi[near]))
+        if self.controller_mode in ('hybrid_lqr', 'ff_lqr') and self.speed > 0.8:
+            # Pure pursuit supplies the path-curvature feedforward term. LQR
+            # only corrects measured lateral/heading/yaw-rate error and is
+            # bounded so stale localization cannot replace the proven fallback.
+            yaw_error = (yaw - self.psi[near] + math.pi) % (2.0 * math.pi) - math.pi
+            yaw_error_rate = self.yaw_rate - self.speed * float(self.kappa[near])
+            delta_lqr = -(self.lqr_k_lat * e_lat_now
+                          + self.lqr_k_head * yaw_error
+                          + self.lqr_k_yaw * yaw_error_rate)
+            delta_lqr = float(np.clip(delta_lqr, -self.lqr_max_correction, self.lqr_max_correction))
+            kappa_cmd += math.tan(delta_lqr) / self.wheelbase
         delta = math.atan(kappa_cmd * self.wheelbase)          # bicycle model
+        if self.steer_excess_rad > 0.0:
+            # feed-forward angle from the path curvature at the lookahead point (same
+            # sign convention as kappa_cmd: + left), command may sit at most
+            # steer_excess_rad either side of it
+            if self.steer_excess_ref == 'gyro' and self.speed > 0.8:
+                k_ref = self.yaw_rate / self.speed
+            else:
+                k_ref = self.kappa[idx]
+            delta_ref = math.atan(k_ref * self.wheelbase)
+            delta = max(delta_ref - self.steer_excess_rad, min(delta_ref + self.steer_excess_rad, delta))
         steering = float(np.clip(self.steer_gain * delta / self.max_steer, -1.0, 1.0))
+        self.steer_angle = steering * self.max_steer
 
         step = self.lap_len / n
 
@@ -1230,14 +1371,96 @@ class PurePursuit(Node):
             v_target = float(np.clip(math.sqrt(self.a_lat / max(k_worst, 1e-3)),
                                      self.v_min, self.v_max))
 
+        # Warmup cap: hold the target down over the first warmup_dist_m of
+        # driving, measured by the tire observer (encoders, race-legal) rather
+        # than by the pose, which is the thing being protected.
+        if not self._warm_done:
+            if self._warm_t is not None:
+                dt_w = now - self._warm_t
+                if 0.0 < dt_w < 0.5:
+                    self._warm_dist += max(self.speed, 0.0) * dt_w
+            self._warm_t = now
+            if self._warm_dist >= self.warm_d:
+                self._warm_done = True
+                self.get_logger().info(
+                    f'warmup cap released after {self._warm_dist:.1f} m; '
+                    f'v_max back to {self.v_max:.2f} m/s')
+            else:
+                v_target = min(v_target, self.warm_v)
+
+        if self._rec_warm:
+            if self._rec_warm_t is not None:
+                dt_r = now - self._rec_warm_t
+                if 0.0 < dt_r < 0.5:
+                    self._rec_warm_dist += max(self.speed, 0.0) * dt_r
+            self._rec_warm_t = now
+            if self._rec_warm_dist >= self.rec_warm_d:
+                self._rec_warm = False
+                self.get_logger().info(
+                    f'recover warmup released after {self._rec_warm_dist:.1f} m')
+            else:
+                v_target = min(v_target, self.rec_warm_v)
+
+        # Corner-exit guard: while the car is outward of the line in a corner and
+        # the profile is asking for MORE speed, give it only the part of that
+        # increase it has earned back. Reduces the demand, never raises it.
+        #
+        # Lowering v_target alone is not enough in slip mode: accel_ff still
+        # commands u > v from the plan's a_long, so the car keeps driving while
+        # wide (M12, hp1 exit, e_lat -0.10 -> -0.50 with throttle 0.09 -> 0.14).
+        outward = 0.0
+        if self.exit_guard_full > 0.0 and abs(float(self.kappa[near])) > 1e-3:
+            outward = -math.copysign(e_lat_now, float(self.kappa[near]))
+            if outward > self.exit_guard_from and v_target > self.speed:
+                span = self.exit_guard_full - self.exit_guard_from
+                fraction = 1.0 if span <= 0.0 else min(1.0, (outward - self.exit_guard_from) / span)
+                v_target = self.speed + (v_target - self.speed) * (1.0 - fraction)
+
+        a_plan_use = float(self.path_a[near])
+        if outward > self.exit_guard_from:
+            a_plan_use = min(a_plan_use, 0.0)
+
+        # Slide onset: outward lateral velocity in a corner (see the parameter).
+        sliding = False
+        if self.slide_rate > 0.0:
+            self._elat_hist.append((now, e_lat_now))
+            while len(self._elat_hist) > 1 and now - self._elat_hist[0][0] > 0.12:
+                self._elat_hist.pop(0)
+            t0, e0 = self._elat_hist[0]
+            kap = float(self.kappa[near])
+            if now - t0 >= 0.04 and abs(kap) > 0.2:
+                out_rate = -math.copysign((e_lat_now - e0) / (now - t0), kap)
+                if out_rate > self.slide_rate and now >= self._slide_until:
+                    self._slide_until = now + self.slide_hold
+                    self.slide_events += 1
+                    self.get_logger().warn(
+                        f'slide onset at s {float(self.s[near]):.1f}: outward {out_rate:.2f} m/s, '
+                        f'e_lat {e_lat_now:+.3f}; coasting {self.slide_hold:.1f} s')
+            sliding = now < self._slide_until
+            if sliding:
+                v_target = min(v_target, max(self.speed, 0.0))
+                a_plan_use = min(a_plan_use, 0.0)
+
         if self.throttle_mode == 'slip':
-            throttle = self._throttle_slip(v_target, float(self.path_a[near]))
+            throttle = self._throttle_slip(v_target, a_plan_use,
+                                           max(self.speed, 0.0) ** 2 * abs(float(self.kappa[near])))
         else:
             v_target = self._limit_accel(v_target)
             err = v_target - self.speed
             throttle = float(np.clip(self.ff * v_target + self.kp * err, 0.0, self.thr_max))
             self.u_cmd = throttle * self.u_per_thr
             self.v_land = max(self.speed, 0.0)
+
+        if sliding and self.u_cmd > max(self.speed, 0.0):
+            self.u_cmd = max(self.speed, 0.0)
+            throttle = float(np.clip(self.u_cmd / self.u_per_thr, 0.0, self.thr_max))
+        if self.exit_guard_full > 0.0 and outward > self.exit_guard_from:
+            u_cap = self.speed
+            if outward >= self.exit_guard_full:
+                u_cap = max(0.0, self.speed - 0.4)
+            if self.u_cmd > u_cap:
+                self.u_cmd = u_cap
+                throttle = float(np.clip(u_cap / self.u_per_thr, 0.0, self.thr_max))
 
         t, s = Float32(), Float32()
         t.data, s.data = throttle, steering

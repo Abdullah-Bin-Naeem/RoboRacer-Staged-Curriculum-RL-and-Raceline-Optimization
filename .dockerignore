@@ -1,7 +1,17 @@
-# Development leftovers that may exist on a checkout but are not part of the
-# image (the Dockerfile copies only roboracer_stack/ and the entrypoint).
-logs/
-tools/
+# The Dockerfile copies roboracer_stack/ and the entrypoint, and nothing else.
+# Anything a development checkout leaves lying around at the repo root stays
+# out of the build context.
+/logs/
+/runs/
+/runs_docker/
+/raceline/
+/experiments/
+/scripts/
+/tools/
+*.csv
+*.npz
+*.log
+image.png
 
 # colcon artefacts, if the repo was ever built in place
 build/
@@ -11,3 +21,7 @@ log/
 **/*.pyc
 **/*.egg-info/
 .git/
+.claude/
+
+# Built into the image from roboracer_stack/tools/nodelay.c; never copied in.
+**/libnodelay.so

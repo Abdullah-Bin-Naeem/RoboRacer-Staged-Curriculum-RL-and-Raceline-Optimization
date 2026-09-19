@@ -9,5 +9,10 @@ __pycache__/
 *.pyc
 *.egg-info/
 
-# Run logs written by the entrypoint inside the container.
-*.log
+# The LD_PRELOAD shim is compiled inside the image, never committed.
+libnodelay.so
+
+# Development leftovers that are not part of this branch.
+logs/
+runs/
+runs_docker/

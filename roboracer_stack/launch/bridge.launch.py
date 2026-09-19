@@ -12,12 +12,36 @@ at race time anyway, and /tf_ground_truth stays available for measuring how good
 the race-legal estimate actually is.
 
 autodrive_devkit itself is not modified; this is a topic remap only.
+
+tcp_nodelay:=true preloads tools/libnodelay.so into the bridge process, which
+sets TCP_NODELAY on every TCP socket it creates or accepts and re-arms
+TCP_QUICKACK after every recv AND every send syscall on them. The simulator only
+emits telemetry in reply to the bridge's message, over a websocket on loopback;
+Nagle's algorithm holds each small write until the previous one is acknowledged
+and the receiver's delayed ACK holds that acknowledgment for up to 40 ms, so the
+loop runs at 10-20 Hz on any machine -- every rate measured here, and what
+another team traced to this cause. Measured 2026-09-12 on the lidar topic,
+same session: 18.6 Hz off, 77.3 Hz on (tools/nodelay.c has the table; the
+send-side re-arm is the half that matters). Still a launch-level change: the devkit's
+code is untouched, only the environment the process starts with.
+
+loop_hz_cap:=45 (needs tcp_nodelay:=true) paces the bridge's replies so the
+simulator loop runs at most that fast. The simulator only emits in reply, so
+the whole loop follows. The organizers quote 40-50 Hz for the evaluation
+machine; this laptop runs 77-85 with the deadlock gone, and the cap is how the
+stack is tuned at the evaluation rate. 0 = uncapped.
 """
 
+import os
+
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
+from launch.actions import DeclareLaunchArgument, LogInfo
+from launch.conditions import IfCondition
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
+from roboracer_stack.common import frames
+
+NODELAY_SHIM = frames.NODELAY_SHIM
 
 
 def generate_launch_description():
@@ -25,6 +49,23 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'tf_topic', default_value='/tf_ground_truth',
             description="where the devkit's ground-truth TF goes instead of /tf"),
+        DeclareLaunchArgument(
+            'tcp_nodelay', default_value='false',
+            description='preload tools/libnodelay.so into the bridge: TCP_NODELAY and a QUICKACK '
+                        're-arm on its websocket, 18.6 -> 77 Hz here; see the module docstring'),
+        DeclareLaunchArgument(
+            'loop_hz_cap', default_value='0',
+            description='with tcp_nodelay: pace the bridge replies so the simulator loop runs at most '
+                        'this many Hz (organizers: evaluation is 40-50); 0 = uncapped'),
+        LogInfo(
+            condition=IfCondition(LaunchConfiguration('tcp_nodelay')),
+            msg=['[bridge] loop cap NODELAY_CAP_HZ=', LaunchConfiguration('loop_hz_cap'), ' (0 = uncapped)']),
+        LogInfo(
+            condition=IfCondition(LaunchConfiguration('tcp_nodelay')),
+            msg=(f'[bridge] TCP_NODELAY via LD_PRELOAD={NODELAY_SHIM}'
+                 if os.path.exists(NODELAY_SHIM) else
+                 f'[bridge] WARNING: tcp_nodelay requested but {NODELAY_SHIM} is missing; the Dockerfile '
+                 'builds it from roboracer_stack/tools/nodelay.c')),
         Node(
             package='autodrive_roboracer',
             executable='autodrive_bridge',
@@ -32,5 +73,10 @@ def generate_launch_description():
             output='screen',
             emulate_tty=True,
             remappings=[('/tf', LaunchConfiguration('tf_topic'))],
+            additional_env={
+                'LD_PRELOAD': PythonExpression([
+                    "'", NODELAY_SHIM, "' if '", LaunchConfiguration('tcp_nodelay'), "'.lower() == 'true' else ''"]),
+                'NODELAY_CAP_HZ': LaunchConfiguration('loop_hz_cap'),
+            },
         ),
     ])

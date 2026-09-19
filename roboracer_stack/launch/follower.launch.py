@@ -2,7 +2,10 @@
 
     ros2 launch roboracer_stack follower.launch.py
 
-Normally reached as race.launch.py; launchable alone against
+RViz and /map used to be started here. They are not this package's to own --
+racer_bringup composes the window, racer_mapping serves the grid -- and having
+the follower start them is how two /map publishers on different frames ended up
+racing each other. Normally reached as race.launch.py; launchable alone against
 an already-running localizer.
 
 Tuning knobs are exposed as launch arguments so they can be overridden without
@@ -14,7 +17,7 @@ POSE SOURCE -- the one setting that decides whether a run means anything.
 `pose_topic` defaults to the devkit's odometry, which is simulator GROUND TRUTH
 and RESTRICTED at race time. That default is a development convenience for
 driving the line with localization out of the picture; the node now says so
-loudly at startup (common/restricted.py). For a real run pass
+loudly at startup (roboracer_stack/common/restricted.py). For a real run pass
 use_tf_pose:=true, which reads the localizer's map->base correction instead.
 race.launch.py sets that for you.
 """
@@ -26,7 +29,8 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from roboracer_stack.common.frames import DEFAULT_RACELINE, NS
+from roboracer_stack.common import frames
+from roboracer_stack.common.frames import NS, TRACK
 
 # Overridable at launch time; empty string keeps whatever the params file says.
 # curvature_preview_m matters more than it looks: with no v_mps column in the
@@ -38,12 +42,16 @@ from roboracer_stack.common.frames import DEFAULT_RACELINE, NS
 # names through. A name listed there but not here is dropped silently.
 TUNABLES = ('lookahead_min', 'lookahead_max', 'lookahead_k', 'lookahead_curv_gain', 'lookahead_sag_frac',
             'lookahead_delay_ref', 'derate_delay_from', 'derate_delay_to', 'derate_a_lat',
-            'steer_a_lat_max',
+            'steer_a_lat_max', 'steer_excess_rad',
+            'exit_guard_from', 'exit_guard_full', 'exit_slide_rate_m_s', 'exit_slide_hold_s',
+            'lqr_k_lat', 'lqr_k_head', 'lqr_k_yaw', 'lqr_max_correction_rad',
             'v_max', 'a_lat_max', 'throttle_max', 'steering_gain',
+            'warmup_v_max', 'warmup_dist_m',
+            'recover_warmup_v_max', 'recover_warmup_dist_m',
             'curvature_preview_m',
             # slip throttle and fused speed (see pure_pursuit.py docstring)
             'slip_accel', 'slip_brake', 'u_launch', 'u_per_throttle', 'v_slip_den', 'tire_rise_slope',
-            'cmd_delay_s', 'slip_kp', 'target_lead_s',
+            'cmd_delay_s', 'slip_kp', 'target_lead_s', 'enc_rate_window_s', 'observer_wheels', 'slip_circle', 'accel_ff', 'drag_ff', 'brake_cap_margin',
             # control loop rate; 20 matches the 17.5 Hz sim tick seen here, raise it
             # with the tick (headless sim, faster machine) so the loop is not the limit
             'control_hz',
@@ -51,11 +59,13 @@ TUNABLES = ('lookahead_min', 'lookahead_max', 'lookahead_k', 'lookahead_curv_gai
             # legacy launch ramp
             'a_long_launch', 'a_long_launch_v')
 # String-valued switches, passed through without the float() cast.
-STR_TUNABLES = ('speed_source', 'throttle_mode')
+STR_TUNABLES = ('speed_source', 'throttle_mode', 'steer_excess_ref', 'controller_mode')
 
 
 def _nodes(context, *args, **kwargs):
     cfg = lambda n: LaunchConfiguration(n).perform(context)
+    # The track's default line unless a CSV was named (race.launch.py names it).
+    path_csv = cfg('path_csv') or frames.raceline(cfg('track'))
     overrides = {n: float(cfg(n)) for n in TUNABLES if cfg(n) != ''}
     overrides.update({n: cfg(n) for n in STR_TUNABLES if cfg(n) != ''})
     if overrides:
@@ -70,7 +80,7 @@ def _nodes(context, *args, **kwargs):
             emulate_tty=True,
             parameters=[
                 cfg('pp_params_file'),
-                {'path_csv': cfg('path_csv'),
+                {'path_csv': path_csv,
                  'pose_topic': cfg('pose_topic'),
                  'use_tf_pose': cfg('use_tf_pose').lower() == 'true',
                  'wait_for_ready': cfg('wait_for_ready').lower() == 'true',
@@ -89,9 +99,11 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'pp_params_file',
             default_value=os.path.join(pkg_share, 'config', 'pure_pursuit.yaml')),
+        DeclareLaunchArgument('track', default_value=TRACK,
+                              description="track whose default line to follow"),
         DeclareLaunchArgument(
             'path_csv',
-            default_value=DEFAULT_RACELINE,
+            default_value='',
             description='path to follow (s,x,y,psi,kappa,w_r,w_l)'),
         DeclareLaunchArgument('wait_for_ready', default_value='false'),
         DeclareLaunchArgument('bootstrap_seconds', default_value='0.0'),

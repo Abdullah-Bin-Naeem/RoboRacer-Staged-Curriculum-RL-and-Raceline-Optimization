@@ -10,15 +10,7 @@ pure_pursuit:
 
     path_csv: ''            # set on the command line or in the launch file
     pose_topic: /autodrive/roboracer_1/odom   # RESTRICTED at race time; see below
-    control_hz: 20.0           # starting value, and the value used when auto is off
-    # Track the simulator tick. 20 Hz matched the 17.5 Hz development machine
-    # almost exactly; on the 40 Hz evaluation machine a fixed 20 Hz drops every
-    # second frame and adds up to 25 ms of command staleness on top of the round
-    # trip. Clamped to [min, max]: at 17.5 Hz the clamp holds it at the proven
-    # 20.0, so nothing about the slow machine changes.
-    control_hz_auto: true
-    control_hz_min: 20.0
-    control_hz_max: 50.0
+    control_hz: 20.0
 
     # ---- Lookahead ----
     # Ld = lookahead_k * v_est, clamped. Short oscillates, long cuts corners.
@@ -58,21 +50,6 @@ pure_pursuit:
     # was 190-210 ms and the same lookahead weaved into a wall on the straight
     # after the first corner. Phase margin goes as v*delay/Ld.
     lookahead_delay_ref: 0.175
-    # Exponent on (cmd_delay / ref) when the loop is FASTER than the reference.
-    # The proportional law was only ever validated in the SLOW direction, and it
-    # extrapolates badly the other way: at 40 Hz (75 ms) it gives 0.43, so
-    # lookahead_max becomes 0.94 m and lookahead_k 0.24 -- close to
-    # lookahead_min, i.e. a nearly constant sub-metre lookahead at 7 m/s, which
-    # is the short-and-oscillating failure the block above describes. sqrt gives
-    # 0.65: Ld_max 1.44 m, phase lag 28 deg at 6.7 m/s against the 43 deg that
-    # the proven 2.2 m ran at 175 ms. More margin than the setting it replaces,
-    # and the corner cut (kappa Ld^2 / 8) drops from 0.26 m to 0.11 m.
-    # 1.0 restores the old proportional behaviour in both directions.
-    lookahead_delay_exp_fast: 0.5
-    # Floor and cap on the scale. 0.62 * 2.20 = 1.36 m, which still clears
-    # lookahead_min 0.80 -- the node refuses to start if it does not.
-    lookahead_delay_min_scale: 0.62
-    lookahead_delay_max_scale: 1.2
     # Derate the speed targets on a slow loop. The profile's lateral limit was
     # proven at a 175 ms round trip (runs 17 and 21, 17.3-17.5 Hz); the
     # evaluation machine is unknown and this one decayed from 17.3 to 12.8 Hz
@@ -84,17 +61,6 @@ pure_pursuit:
     # A slow machine gets a slower clean lap instead of a hit. With the earlier
     # 0.15 reference the derate was already 36 % in at 175 ms and cost 0.1 s a
     # lap on this machine (run 21: 6.80/6.88 against run 17's 6.65/6.79).
-    # NOT rescaled for 40-50 Hz, deliberately. These are ABSOLUTE round trips,
-    # and the thing they protect is the profile's lateral limit, which was
-    # proven at 175 ms. Any loop faster than that has more margin than the
-    # profile was proven with, so no derate is the correct answer at 40-50 Hz --
-    # and re-anchoring them to a fast machine's baseline (derate at 75 -> 90 ms)
-    # would throw away lap time to buy margin the car already has. The tire, not
-    # the loop rate, is the limit above 175 ms: measured usable a_lat is 6.4-7.8
-    # and the profile sits at 7.0, so there is nothing to uprate into either.
-    # What DID change is that cmd_delay now responds in half a second instead of
-    # ten, so on a 40 Hz machine that collapses mid-lap these thresholds are
-    # actually reached in time to matter.
     derate_delay_from: 0.175
     derate_delay_to: 0.21
     derate_a_lat: 6.0
@@ -117,7 +83,7 @@ pure_pursuit:
     # so there is comfortable margin.
     wheelbase: 0.3240
     max_steer_rad: 0.5236
-    steering_gain: 1.0        # trim; measured with the calibrate_steering tool (qualification_1_pure_pursuit branch)
+    steering_gain: 1.0        # trim; verify with `ros2 run racer_control calibrate_steering`
 
     # ---- Speed ----
     # v = sqrt(a_lat_max / |kappa|), clamped to [v_min, v_max].
@@ -198,7 +164,7 @@ pure_pursuit:
     # the speed the car will have when the command lands (cmd_delay_s), so they
     # are real tire slips: 0.08 is ~5.5 m/s^2 on the fitted curve, above the
     # profile's 4.55 and under the 7.06 peak, encoders ~0.3 m/s high while it binds.
-    slip_accel: 0.11
+    slip_accel: 0.08
     slip_brake: 0.08
     v_slip_den: 4.0            # PhysX minLongSlipDenominator, default 4 m/s
     slip_kp: 0.76              # proportional lead on (v_target - v_land) inside the band;
@@ -210,38 +176,6 @@ pure_pursuit:
                                # 190-210 ms at 13-14.6 Hz, and laps moved 0.2 s with it.
     cmd_delay_window_s: 6.0
     cmd_delay_update_s: 2.0
-    # 25 ms of lag resolution was 7 % of a 175 ms round trip; it is 19 % of the
-    # 60-75 ms of a 40-50 Hz machine, and that error lands directly in the
-    # lookahead scale and the derate trigger. 5 ms is what the original
-    # throttle-to-wheel regression used. 72 lags x a 6 s window every 2 s is a
-    # few ms of numpy.
-    cmd_delay_lag_step_s: 0.005
-    cmd_delay_lag_max_s: 0.36
-    # The round trip is a fixed number of SIM FRAMES, so the measured tick gives
-    # it directly: 3 / 17.5 = 171 ms, 3 / 40 = 75 ms, 3 / 50 = 60 ms. This is
-    # the same three frames the correlator finds, without needing 6 s of varying
-    # throttle to find it.
-    cmd_delay_frames: 3.0
-    # Seed from the first measured tick instead of walking there. The 0.3-per-2 s
-    # blend needs ~20 s to get from 175 ms to 75 ms: on a 40 Hz machine that is
-    # three laps driven on slow-machine lookahead, which on a timed run is most
-    # of the run.
-    cmd_delay_tick_seed: true
-    # Floor the effective delay at frames / tick. The correlator needs ~10 s to
-    # notice a collapse (6 s window, 2 s update, 0.3 blend); the tick notices in
-    # half a second. This is what makes the derate below able to fire on a
-    # mid-lap stall rather than a lap later. It only RAISES the delay and
-    # releases as soon as the tick recovers.
-    cmd_delay_tick_floor: true
-    # Median window in FRAMES, not seconds: a time window keeps the fast tail in
-    # the majority, so 0.5 s after 40 Hz collapses to 12 Hz a 1 s window still
-    # reads 40 Hz. A count window flips 0.7 s into a collapse while a lone stall
-    # (1 gap in 16) still moves nothing.
-    cmd_delay_tick_frames: 16
-    # Ceiling on the effective delay -- a freeze is scored as silence, which is
-    # unbounded, and cmd_delay multiplies the speed lead and the landing-speed
-    # prediction. Already well past full derate.
-    cmd_delay_max_s: 0.35
     cmd_delay_s: 0.175         # starting value / fixed value when auto is off. MEASURED: the
                                # wheel follows 25.25*throttle 175 ms late (three sim
                                # frames, 5 ms regression grid). Without this the band's lead was

@@ -20,12 +20,18 @@
 #                              with the ground-truth TF remapped off /tf (or
 #                              roboracer_1 gets two parents and the TF tree
 #                              breaks). Exactly one bridge, one owner.
-#   our localization + control  dead reckoning, AMCL against the baked-in Porto
-#                              map, and pure pursuit along the baked-in raceline.
+#   our localization + control  dead reckoning, the segmented scan-to-map
+#                              localizer against the baked-in IROS 2026 map,
+#                              and pure pursuit along the baked-in raceline.
 #
 # The bridge listens on 4567 and blocks until the simulator connects, so
 # starting before the operator hits Connect is correct: everything is up and
 # waiting, and the car moves the moment the socket opens.
+#
+# NOTHING IS WRITTEN TO DISK. The stack runs in the FOREGROUND and its output is
+# the container's output, so `docker run` shows it live and `docker logs` has it
+# afterwards. No CSV, no scan dump, no run directory: the nodes that produced
+# those are development-only and are not in this image at all.
 #
 # IF YOU STARTED THE CONTAINER WITH --entrypoint /bin/bash
 # --------------------------------------------------------
@@ -35,6 +41,7 @@
 #
 # TO GET A ROS ENVIRONMENT IN AN INSPECTION SHELL
 # -----------------------------------------------
+#     docker exec -it autodrive_roboracer_api bash
 #     source /home/autodrive_devkit/install/setup.bash
 set -uo pipefail
 
@@ -78,69 +85,32 @@ fi
 unset _dds
 
 # ---- What is being raced ---------------------------------------------------
-# Every value is overridable from `docker run -e NAME=...` for development;
-# the organizers run the image with none set.
+# NOTHING, by design. Every value that makes this the promoted configuration is
+# a launch default -- the line, the localizer, the seed mode, the bridge rate
+# cap and the follower arguments all live in race.launch.py and
+# roboracer_stack/common/frames.py, so `ros2 launch roboracer_stack
+# race.launch.py` by hand races exactly what the organizers' `docker run` does.
+# There is no second copy of the configuration here to drift from it.
 #
-#   mode:=race        instruments off, no lap telemetry, steer on the estimate.
-#                     race.launch.py refuses every restricted reader in this
-#                     mode; see roboracer_stack/common/restricted.py.
-#   bootstrap_mode:=spawn
-#                     Seed AMCL from the MEASURED spawn constant
-#                     (common/frames.py SPAWN_*: 0.800, 3.158, -1.5707) plus
-#                     the IMU heading. No restricted topic is read at any
-#                     point, so there is nothing for a steward to question in
-#                     the ROS graph. Alternatives, via RACER_BOOTSTRAP_MODE:
-#                       truth   ONE read of /ips before the car moves, then the
-#                               subscription is destroyed (restricted.seed /
-#                               released). The organizers confirmed restricted
-#                               topics may be read in the warm-up lap.
-#                       global  AMCL's particle search with no prior at all;
-#                               costs a convergence phase.
-#   control_hz:=40    the follower loop. Runs 29-41 were all measured at 40
-#                     against a headless sim so that the loop is never the
-#                     limiter. Harmless when the sim is slower -- pure_pursuit
-#                     measures its own round trip and derates the speed targets,
-#                     it does not key off this.
-#
-# The localizer is nav2 AMCL against maps/track_clean.pgm and the line is
-# raceline_a7.0.csv, the only ones shipped; both are the launch defaults
-# (common/frames.py), so neither is passed here.
-ARGS=(
-  "mode:=${RACER_MODE:-race}"
-  "bootstrap:=true"
-  "bootstrap_mode:=${RACER_BOOTSTRAP_MODE:-spawn}"
-  "control_hz:=${RACER_CONTROL_HZ:-40}"
-)
-# Anything else, word-split on purpose: RACER_EXTRA_ARGS="v_max:=7.5 lookahead_k:=0.6"
+# RACER_EXTRA_ARGS is the one hook, for us, during development:
+#     docker run -e RACER_EXTRA_ARGS="v_max:=8.5 rviz:=false" ...
+ARGS=()
+# Word-split on purpose: RACER_EXTRA_ARGS="v_max:=7.5 lookahead_k:=0.6"
 # shellcheck disable=SC2206
 [ -n "${RACER_EXTRA_ARGS:-}" ] && ARGS+=(${RACER_EXTRA_ARGS})
 
 # ---- Launch ----------------------------------------------------------------
-# In the background, so the container's CMD (bash) runs in the foreground and
-# `docker run -it` lands on a usable prompt with the car already driving.
-LOG_DIR=/home/autodrive_devkit/log
-mkdir -p "$LOG_DIR"
-LOG="$LOG_DIR/racer_$(date +%Y%m%d_%H%M%S).log"
-
+# In the FOREGROUND, as the container's main process: its output is the
+# container's output and nothing is written to disk. Inspection shells come from
+# `docker exec`, which the image environment already sets up.
 if [ "${RACER_AUTOSTART:-1}" = "1" ]; then
     echo "[entrypoint] ros2 launch roboracer_stack race.launch.py ${ARGS[*]}"
-    ros2 launch roboracer_stack race.launch.py "${ARGS[@]}" >"$LOG" 2>&1 &
-    RACER_PID=$!
-    echo "[entrypoint] race stack pid $RACER_PID -- follow it with: tail -f $LOG"
     echo "[entrypoint] waiting for the simulator to connect on port 4567"
-else
-    RACER_PID=""
-    echo "[entrypoint] RACER_AUTOSTART=0 -- not starting the stack."
-    echo "[entrypoint] start it by hand with: ros2 launch roboracer_stack race.launch.py"
+    exec ros2 launch roboracer_stack race.launch.py "${ARGS[@]}"
 fi
 
-# Hand over to CMD (bash). Without a TTY -- `docker run -d`, or a CI job -- an
-# interactive bash would read EOF and exit immediately, taking the container and
-# our backgrounded stack with it, so in that case wait on the stack instead.
-if [ $# -gt 0 ] && { [ -t 0 ] || [ -z "$RACER_PID" ]; }; then
-    exec "$@"
-elif [ -n "$RACER_PID" ]; then
-    wait "$RACER_PID"
-else
-    exec "$@"
-fi
+# RACER_AUTOSTART=0: hand over to CMD (bash) with the workspace sourced and
+# nothing running.
+echo "[entrypoint] RACER_AUTOSTART=0 -- not starting the stack."
+echo "[entrypoint] start it by hand with: ros2 launch roboracer_stack race.launch.py"
+exec "$@"

@@ -5,23 +5,32 @@
     odom -> roboracer_1 -> lidar
 
 Encoder + IMU dead reckoning, and the lidar extrinsic the devkit normally
-broadcasts. AMCL builds on top of this and does not own it, so it lives here
-rather than in the localizer's launch file.
+broadcasts. Both AMCL and slam_toolbox build on top of this and neither owns it,
+so it lives here rather than being copy-pasted into both -- which is exactly
+what it was before this package existed.
 
 Race-legal: encoders, IMU and a constant transform. No ground truth.
 """
 
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from roboracer_stack.common.frames import BASE, LIDAR, LIDAR_XYZ, ODOM
 
 
 def generate_launch_description():
     return LaunchDescription([
+        DeclareLaunchArgument(
+            'distance_source', default_value='encoder',
+            description="dead reckoning distance: 'encoder' (the wheel angle, which in "
+                        "this sim is the throttle echo) or 'tire' (the tire observer's "
+                        "car speed, which leaves the wheelspin out). See dead_reckoning.py."),
         Node(
             package='roboracer_stack', executable='dead_reckoning',
             name='dead_reckoning', output='screen', emulate_tty=True,
-            parameters=[{'odom_frame': ODOM, 'base_frame': BASE}],
+            parameters=[{'odom_frame': ODOM, 'base_frame': BASE,
+                         'distance_source': LaunchConfiguration('distance_source')}],
         ),
         # Normally supplied by the devkit's /tf, which bridge.launch.py remaps
         # away so that roboracer_1 does not end up with two parents.

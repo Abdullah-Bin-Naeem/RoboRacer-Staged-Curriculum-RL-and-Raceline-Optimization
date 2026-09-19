@@ -479,3 +479,28 @@ Read the result with
 (from `.venv-rl`). The same line without `drive_on_truth:=true` is the
 race-legal launch, and there the propagation should start at
 `latency_comp_s:=0.05`: the localized car already exits 0.05 m wider.
+
+### 11.3 What the evaluation machine actually does (Phase 1 qualification bag)
+
+`qualification_data/Phase 1 - Qualification/qualification.bag` is our race
+stack (bridge, dead_reckoning, localization_bootstrap, AMCL, pure_pursuit; the
+rosgraph.png confirms) recorded on the organizers' machine, 87 s, 12 laps of
+the 29 m qualification track, best lap 6.49 s, laps 6.49-6.65.
+
+| topic | rate | note |
+|---|---|---|
+| every bridge topic (lidar, imu, encoders, ips, odom, camera) | **130 Hz** | median 7.3 ms, p90 9.3, one 55 ms gap |
+| our steering/throttle commands, pure_pursuit status | 50 Hz | the follower's timer |
+| dead_reckoning /odom, /tf | 200 / 330 Hz | |
+| /amcl_pose, particle cloud | 32 Hz | |
+
+The follower's own delay estimate there: p50 **33 ms** (p10 28, p90 48), against
+120-125 ms on the development laptop at the 45 Hz cap. Tracking on that
+track: e_lat p10/p90 -0.06/+0.10 m, slip command within the band.
+
+So the "40-50 Hz evaluation machine" in the launch notes is wrong by 3x on
+the loop and by 4x on the delay. Everything tuned to 125 ms is conservative
+there (the follower re-measures the delay, so the speed target lead adapts;
+`latency_comp_s` does not, so on that machine 0.075 over-propagates and a
+value near 0.03 would be right). A bag from the IROS 2026 phase is the way to
+confirm the same holds on the race track.

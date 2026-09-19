@@ -216,14 +216,14 @@ def generate_launch_description():
         DeclareLaunchArgument('follower', default_value='true'),
 
         # The bridge. Both default to the race setting: without TCP_NODELAY the
-        # simulator loop runs at 10-20 Hz on any machine, and the cap is what
-        # the stack is tuned at (the organizers quote 40-50 Hz).
+        # simulator loop runs at 10-20 Hz on any machine, and the loop is left
+        # uncapped so it runs as fast as the evaluation machine feeds it.
         DeclareLaunchArgument(
             'tcp_nodelay', default_value='true',
             description='TCP_NODELAY and a QUICKACK re-arm on the bridge '
                         'websocket via LD_PRELOAD; see bridge.launch.py'),
         DeclareLaunchArgument(
-            'loop_hz_cap', default_value='45',
+            'loop_hz_cap', default_value='0',
             description='pace the bridge replies so the simulator loop runs at '
                         'most this many Hz (0 = uncapped)'),
 

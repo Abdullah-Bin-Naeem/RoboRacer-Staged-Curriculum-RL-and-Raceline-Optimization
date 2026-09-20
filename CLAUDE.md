@@ -89,7 +89,9 @@ time from the simulator's own timer (printed) no worse than the previous stage.
 - `stages/stage5_fresh.py`, `stage6_push.py` — `NAME` / `RESUME_FROM` /
   `DEFAULTS` / `apply(cfg)`; stage 6 composes stage 5 and changes the reward.
 - `tests/mock_bridge.py` — lockstep stand-in for the bridge with the sim's tire
-  model; `tests/test_env_mock.py` runs the env against it (42 checks).
+  model; `tests/test_env_mock.py` runs the env against it (66 checks). If a
+  real bridge is up, run it under `ROS_DOMAIN_ID=42` so the two cannot see
+  each other; a second LiDAR publisher silently corrupts the tick measurement.
 
 Observation, 117 floats in [-1, 1]: 110 min-pooled beams over ±110° (raw scan
 indices 100:980, 8 raw beams → 1), wheel speed `u` (the throttle echo),
@@ -154,6 +156,13 @@ rate. `tools/sim_rate_probe.py` measures the loop with no ROS.
 - Subscriber QoS must match the bridge exactly (RELIABLE / VOLATILE / KEEP_LAST
   / depth 1); a mismatch connects and silently delivers nothing.
 - `reset_command` is level-triggered: the env pulses it True→False.
+- A counted collision respawns the car at the sim's last checkpoint **in the
+  same frame** the counter increments, so on a crash step `/odom` is the
+  respawn, not the crash site. The env pays no progress for that teleport and
+  logs the previous step's pose; skipping the reset pulse leaves the car there,
+  which is how `cfg.env.crash_restart` builds a corner-first curriculum with
+  no spawn API. There is no spawn API: the bridge sends throttle, steering and
+  reset, nothing else.
 - The sim's ResetManager restores the encoder counters on reset; the env clears
   its encoder state after the settle.
 - `pgrep -f` / `pkill -f` match the calling shell's own script text.

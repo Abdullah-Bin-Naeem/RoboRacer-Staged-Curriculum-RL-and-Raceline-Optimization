@@ -18,6 +18,7 @@ from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 from stable_baselines3.common.monitor import Monitor
 
 import stages as stage_registry
+from rl_racer.checkpoint import load_sac
 from rl_racer.config import Cfg
 from rl_racer.env import AutoDriveRacerEnv
 
@@ -55,12 +56,26 @@ class RewardBreakdown(BaseCallback):
     dominating.
     """
 
-    def __init__(self):
+    _END_COLS = ("timestep", "reason", "steps", "dist_m", "x", "y", "speed",
+                 "approach_speed", "progress", "ttc", "start_x", "start_y", "resumed")
+
+    def __init__(self, run_dir=None):
         super().__init__()
         self._acc, self._reasons = [], {}
         self._warned_yaw = False
         self._warned_period = False
+        self._warned_alpha = False
+        self._alpha_min = None
         self.design_period_ms = None     # set by main() from the env
+        # One row per episode end, with the /odom pose: where it dies, how fast
+        # it arrived. Training-only telemetry; nothing here feeds the policy.
+        self._end_log = None
+        if run_dir:
+            path = os.path.join(run_dir, "episode_ends.csv")
+            new = not os.path.exists(path)
+            self._end_log = open(path, "a", buffering=1)
+            if new:
+                self._end_log.write(",".join(self._END_COLS) + "\n")
 
     def _on_step(self) -> bool:
         for info in self.locals.get("infos", []):
@@ -68,6 +83,15 @@ class RewardBreakdown(BaseCallback):
                 self._acc.append(info["episode_stats"])
                 r = info.get("reason", "?")
                 self._reasons[r] = self._reasons.get(r, 0) + 1
+                if self._end_log is not None:
+                    st = info["episode_stats"]
+                    row = (self.num_timesteps, r, info.get("episode", {}).get("l", ""),
+                           st.get("dist", 0.0), st.get("end_x", 0.0), st.get("end_y", 0.0),
+                           st.get("end_speed", 0.0), st.get("end_approach_speed", 0.0),
+                           st.get("progress", 0.0), st.get("ttc", 0.0),
+                           st.get("start_x", 0.0), st.get("start_y", 0.0), st.get("resumed", 0.0))
+                    self._end_log.write(",".join(f"{v:.3f}" if isinstance(v, float) else str(v)
+                                                 for v in row) + "\n")
             if "laps" in info and info.get("episode_stats"):
                 self.logger.record("race/laps_completed", info["laps"])
 
@@ -85,6 +109,8 @@ class RewardBreakdown(BaseCallback):
                     self.logger.record("diag/enc_discontinuities", mean)
                 elif k.startswith("diag_"):
                     self.logger.record(f"diag/{k[5:]}", mean)
+                elif k.startswith("end_") or k in ("start_x", "start_y", "resumed"):
+                    self.logger.record(f"end/{k[4:] if k.startswith('end_') else k}", mean)
                 elif k == "max_speed":
                     self.logger.record("race/max_speed", mean)
                 elif k == "dist":
@@ -117,6 +143,27 @@ class RewardBreakdown(BaseCallback):
                           f"Gradient steps are outlasting the decimation window: lower "
                           f"--gradient-steps or the tick budget is wrong for gamma.", flush=True)
                     self._warned_period = True
+            # Alpha runaway. SAC tunes the entropy coefficient toward a fixed
+            # target (-dim(A) = -2); a policy that converges tighter than that
+            # sits BELOW the target, so alpha climbs to force exploration and
+            # re-randomises the policy -- which worsens the data and diverges
+            # the critic. Killed stage5_v4 at ~100k steps: alpha 0.039 -> 0.45,
+            # critic_loss 2 -> 1.9e6, ep_len 107 -> 22. Freeze it with
+            # --ent-coef at the value it settled on while learning was healthy.
+            _a = getattr(self.model, "log_ent_coef", None)
+            if _a is not None and not self._warned_alpha:
+                import torch as _th
+                with _th.no_grad():
+                    alpha = float(_a.exp())
+                self._alpha_min = alpha if self._alpha_min is None else min(self._alpha_min, alpha)
+                if self._alpha_min > 0 and alpha > 3.0 * self._alpha_min:
+                    print(f"[rl_racer] WARNING: entropy coefficient has risen to {alpha:.3f} "
+                          f"from a low of {self._alpha_min:.3f} ({alpha/self._alpha_min:.1f}x). "
+                          f"SAC is re-randomising the policy against its entropy target; "
+                          f"expect episode length to fall and train/critic_loss to climb. "
+                          f"Restart from a healthy checkpoint with "
+                          f"--ent-coef {self._alpha_min:.3f} to freeze it.", flush=True)
+                    self._warned_alpha = True
             total = sum(self._reasons.values())
             for r, c in self._reasons.items():
                 self.logger.record(f"ends/{r}", c / total)
@@ -127,10 +174,13 @@ class RewardBreakdown(BaseCallback):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--stage", choices=["5", "6"], default="5",
+    p.add_argument("--stage", choices=["5", "6", "7", "8", "9"], default="5",
                    help="5 = learn to drive (from scratch), 6 = speed pressure "
-                        "(resumes stage 5 with its buffer). Sets config, run name "
-                        "and defaults for the stage.")
+                        "(resumes stage 5 with its buffer), 7 = smooth and fast "
+                        "(resumes stage 6), 8 = stop pumping the brake (resumes "
+                        "stage 7), 9 = grip not wheelspin, and a racing line "
+                        "(resumes stage 8). Sets config, run name and defaults "
+                        "for the stage.")
     p.add_argument("--timesteps", type=int, default=None)
     p.add_argument("--run-name", default=None)
     p.add_argument("--logdir", default="runs")
@@ -178,9 +228,21 @@ def main():
               f"competition_legal={stage.COMPETITION_LEGAL}")
         print(f"    fov=+/-{cfg.obs.fov_half_deg:g} beams={cfg.obs.n_beams}  "
               f"throttle scale={cfg.act.throttle_max}  decimation={cfg.env.decimation}")
-        print(f"    reward: progress={cfg.rew.w_progress} speed={cfg.rew.w_speed} "
-              f"center={cfg.rew.w_center} lap={cfg.rew.w_lap} grip={cfg.rew.w_grip}")
+        print(f"    reward: progress={cfg.rew.w_progress} (v_ref={cfg.rew.v_ref or 'off'}) "
+              f"speed={cfg.rew.w_speed} center={cfg.rew.w_center} lap={cfg.rew.w_lap} "
+              f"grip={cfg.rew.w_grip} ttc={cfg.rew.w_ttc}@{cfg.rew.ttc_ref}s "
+              f"smooth={cfg.rew.w_smooth}+{cfg.rew.w_smooth2}sq "
+              f"thr_smooth={cfg.rew.w_thr_smooth} slip={cfg.rew.w_slip} "
+              f"prox={cfg.rew.w_prox}@{cfg.rew.safe_dist}m "
+              f"crash=-{cfg.rew.crash_penalty:g}")
         print(f"    lr={_lr}  timesteps={args.timesteps}  gradient_steps={args.gradient_steps}")
+        if cfg.env.spawn_drive:
+            print(f"    start point: drive to ({cfg.env.spawn_x:g}, {cfg.env.spawn_y:g}) "
+                  f"+/-{cfg.env.spawn_radius:g} m at {cfg.env.spawn_cruise:g} m/s, "
+                  f"stop, then hand over")
+        if cfg.env.crash_restart:
+            print(f"    crash restart: {cfg.env.crash_restart_prob:.0%} of crash-ended episodes "
+                  f"resume at the sim's checkpoint (max {cfg.env.crash_restart_max} in a row)")
         if stage.RESUME_FROM and not args.resume:
             print(f"    NOTE: this stage expects --resume from {stage.RESUME_FROM}")
         if cfg.obs.dim != stage.EXPECTED_OBS_DIM:
@@ -205,7 +267,7 @@ def main():
 
     if args.resume:
         print(f"[rl_racer] resuming from {args.resume}")
-        model = SAC.load(args.resume, env=env, device=args.device)
+        model = load_sac(args.resume, ent_coef=args.ent_coef, env=env, device=args.device)
         # SAC.load restores these from the checkpoint, so CLI flags are ignored
         # unless we reapply them. Without the first line the run logs into the
         # OLD run's tensorboard directory.
@@ -238,6 +300,12 @@ def main():
             model.ent_coef_optimizer = None
             model.log_ent_coef = None
             model.ent_coef_tensor = _th.tensor(float(args.ent_coef), device=model.device)
+            # Also the ATTRIBUTE, not just the runtime tensors: SB3 saves
+            # `ent_coef` in the checkpoint's metadata and rebuilds the model
+            # from it on load. Left at "auto" the rebuilt model expects an
+            # ent_coef_optimizer this checkpoint no longer has, and every
+            # load of it fails (see load_sac_checkpoint).
+            model.ent_coef = float(args.ent_coef)
             print(f"[rl_racer] ent_coef FROZEN at {args.ent_coef} (was auto, {_old:.4f})")
 
         model.learning_rate = _lr        # stages fine-tune at a lower LR
@@ -259,9 +327,25 @@ def main():
         _cands += [f for f in (os.path.join(_d, "latest_replay_buffer.pkl"),
                                os.path.join(_d, "..", "latest_replay_buffer.pkl"))
                    if os.path.exists(f)]
-        buf = _cands[0] if _cands else ""
-        if buf and os.path.exists(buf):
-            model.load_replay_buffer(buf)
+        # Try each candidate and fall through on an unreadable one: a buffer
+        # whose write was interrupted is truncated, and loading it raises
+        # EOFError. Taking _cands[0] blindly meant one bad file masked a good
+        # one sitting beside it (stage5_v5: final_replay_buffer.pkl 468 MB of
+        # an expected 956 MB, next to an intact latest_replay_buffer.pkl).
+        buf = ""
+        for _cand in _cands:
+            if not os.path.exists(_cand):
+                continue
+            try:
+                model.load_replay_buffer(_cand)
+            except Exception as _e:
+                print(f"[rl_racer] replay buffer {os.path.basename(_cand)} is unreadable "
+                      f"({type(_e).__name__}: {_e}) -- {os.path.getsize(_cand)/1e6:.0f} MB, "
+                      f"its write was interrupted. Trying the next candidate.", flush=True)
+                continue
+            buf = _cand
+            break
+        if buf:
             print(f"[rl_racer] loaded replay buffer: {model.replay_buffer.size():,} transitions "
                   f"from {os.path.basename(buf)}")
             model.learning_starts = 0        # buffer is full; train immediately
@@ -331,7 +415,7 @@ def main():
           f"gradient_steps={model.gradient_steps}")
     if _dev == "cpu":
         print("[rl_racer] WARNING: running on CPU -- expect ~7 fps instead of ~18")
-    _rb = RewardBreakdown()
+    _rb = RewardBreakdown(run_dir)
     _rb.design_period_ms = 1000.0 * raw_env.control_period
     cbs = [ckpt, bufsave, _rb]
     try:
@@ -339,9 +423,18 @@ def main():
                     reset_num_timesteps=args.resume is None,
                     tb_log_name="sac", progress_bar=False)
     finally:
+        # A second Ctrl-C here used to truncate the buffer mid-write and leave
+        # an unloadable file (stage5_v5: 468 MB of 956 MB). The write takes
+        # ~40 s at a 1M buffer, so ignore SIGINT for its duration and go
+        # through a temp name, as BufferSaver does.
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
         model.save(os.path.join(run_dir, "final"))
         try:      # so the NEXT stage can resume with a populated buffer
-            model.save_replay_buffer(os.path.join(run_dir, "final_replay_buffer"))
+            _bp = os.path.join(run_dir, "final_replay_buffer")
+            print(f"[rl_racer] saving the replay buffer (~40 s at a 1M buffer) -- "
+                  f"Ctrl-C is ignored until it is written", flush=True)
+            model.save_replay_buffer(_bp + "_tmp")
+            os.replace(_bp + "_tmp.pkl", _bp + ".pkl")
             print(f"[rl_racer] saved replay buffer -> {run_dir}/final_replay_buffer.pkl")
         except Exception as e:
             print(f"[rl_racer] could not save replay buffer: {e}")

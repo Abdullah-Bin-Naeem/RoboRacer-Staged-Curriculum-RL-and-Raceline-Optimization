@@ -10,6 +10,12 @@ saved next to it). Only the reward changes:
                          progress lacks near the limit. ~10% of reward.
   w_grip  0   -> 0.05    mu(|S|)/mu_peak per step: pays for being AT the tire's
                          limit, accelerating or braking; ~3% of reward.
+  start point -> line    stage 5's corner drill stops: lap time is paid per
+                         COMPLETED lap, which needs whole laps from the line.
+  v_ref   3.0 -> 0       stage 5's reward-side speed cap comes off: progress
+                         pays at any speed. No action is re-labelled by this,
+                         only the incentive moves. The ttc term and the crash
+                         penalty stay: they are what makes the speed survivable.
 
 The buffer's stored rewards are under stage 5's weights (~10-20% low). That is
 a bias in the critic's targets that ages out over ~150k steps, not a dynamics
@@ -29,4 +35,10 @@ def apply(cfg):
     cfg.rew.w_speed = 0.6
     cfg.rew.w_lap = 200.0
     cfg.rew.w_grip = 0.05
+    cfg.rew.v_ref = 0.0                     # cap off; ttc + crash penalty stay
+    # Stage 5's corner-first curriculum comes off: w_lap pays per COMPLETED lap
+    # (w_lap / lap_time), so this stage needs whole laps from the start line,
+    # not repeated attempts at one corner.
+    cfg.env.crash_restart = False
+    cfg.env.spawn_drive = False              # full laps from the line, not corner drills
     return cfg

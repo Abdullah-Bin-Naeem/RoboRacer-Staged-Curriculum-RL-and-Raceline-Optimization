@@ -75,12 +75,24 @@ def main():
     rclpy.init()
     n = Probe()
     ex = SingleThreadedExecutor(); ex.add_node(n)
-    threading.Thread(target=ex.spin, daemon=True).start()
+    # Own spin loop with a stop flag: Executor.spin() cannot be stopped from
+    # outside, and shutting rclpy down under it aborts the process at exit.
+    stop = threading.Event()
+    def _spin():
+        while not stop.is_set() and rclpy.ok():
+            try: ex.spin_once(timeout_sec=0.05)
+            except Exception: break
+    spin_thread = threading.Thread(target=_spin, daemon=True); spin_thread.start()
+
+    def _shutdown():
+        stop.set(); spin_thread.join(2.0)
+        ex.shutdown(); n.destroy_node(); rclpy.shutdown()
 
     print("[1/5] waiting for first LiDAR scan (30 s) ...")
     if not n.wait(1, 30.0):
         print("  FAIL: no scan. Is the simulator running AND the bridge launched?")
         print("        ros2 launch racer_bringup bridge.launch.py tcp_nodelay:=true loop_hz_cap:=45")
+        _shutdown()
         return 1
     s = n.scan
     print(f"  OK  beams={len(s.ranges)} angle=[{math.degrees(s.angle_min):.1f},"
@@ -128,7 +140,7 @@ def main():
     n.send(0.0, 0.0)
 
     print("\nAll checks done. If steps 1-4 are OK you are clear to train.")
-    ex.shutdown(); n.destroy_node(); rclpy.shutdown()
+    _shutdown()
     return 0
 
 

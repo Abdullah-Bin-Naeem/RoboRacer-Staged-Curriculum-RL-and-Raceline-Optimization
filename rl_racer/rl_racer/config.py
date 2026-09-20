@@ -91,8 +91,72 @@ class RewardCfg:
     # the earlier lineage. 0.15 loosens the line without deleting the signal.
     w_center: float = 0.15      # lateral asymmetry, 0 = perfectly centred
     w_smooth: float = 0.3       # |steer_t - steer_{t-1}|
+    # Quadratic companion to w_smooth. The linear term taxes a big reversal and
+    # a small correction at the same rate per degree, so raising it to kill
+    # jitter also makes the policy sluggish where speed needs quick hands; a
+    # square charges a large jump hard and a small one almost nothing. Both use
+    # only prev_steer, which is observation slot 113, so the reward stays
+    # Markovian -- a true jerk term would need prev_prev_steer in the
+    # observation and would unload every checkpoint. MEASURED at stage 6:
+    # |d_steer| averaged 0.164/step (4.9 deg every 48.6 ms) against a mean lock
+    # of 8.2 deg, i.e. it reversed most of its steering every step.
+    w_smooth2: float = 0.0
+    # Throttle smoothness, |throttle_t - throttle_{t-1}|. MEASURED on stage 7's
+    # deterministic policy: |d_throttle| 0.165/step, 25% of steps at FULL brake
+    # in bursts averaging 2.1 steps -- 83 bursts in 700 steps, ~6x more often
+    # than a lap's corners need. Throttle 0 is brake LOCK in this sim, so each
+    # burst costs ~0.47 m/s at 4.55 m/s^2, which is why the car averages 2.9
+    # m/s while commanding throttle >0.3 on 27% of steps. Nothing charged for
+    # it: w_smooth covers steering only.
+    # LINEAR on purpose, unlike w_smooth2. The fault here is the FREQUENCY of
+    # transitions, not their size, and the total variation a linear term sums
+    # is exactly that. A square would charge one decisive 0.6 brake application
+    # (0.36) more than six 0.1 chatters (0.06) -- backwards, because braking
+    # hard once per corner is what a fast lap looks like.
+    # prev_throttle is observation slot 114, so this stays Markovian.
+    w_thr_smooth: float = 0.0
+    # Excess longitudinal slip, max(0, |S| - veh.tire_s_peak). The ONLY term
+    # with a gradient in the region the policy actually occupies: mu(|S|) is
+    # FLAT at the asymptote 0.464 for every |S| >= 0.25, so mu/mu_peak is a
+    # constant 0.644 there and w_grip has literally zero gradient -- which is
+    # why tripling it (0.05 -> 0.15) left slip/frac_peak unmoved at 0.064.
+    # MEASURED on stage 8's deterministic policy: mean |S| 0.924, with 75.6%
+    # of steps past the asymptote. The car therefore spends three quarters of
+    # its lap at 64% of the grip available to it -- spinning up under throttle
+    # and locking under brake, never gripping. Penalising the EXCESS is
+    # symmetric and physically right: peak mu is at |S| = 0.15 for braking as
+    # well as for driving, so this pushes toward threshold braking and
+    # threshold acceleration, i.e. the limit of the car.
+    # S is observation slot 116, and even though that slot saturates at
+    # obs.slip_max the policy can still derive S from slots 111 (u) and 115
+    # (v_est), so the term stays observable without touching a normaliser --
+    # changing one would invalidate every observation already in the buffer.
+    w_slip: float = 0.0
     w_prox: float = 0.5         # proximity to a wall
     step_penalty: float = 0.02
+    # --- speed cap, in the REWARD, never the action. Progress faster than
+    # v_ref earns nothing, so nothing pays above it and raising it later
+    # re-labels no action (an action-space cap collapsed the old lineage
+    # twice). w_progress is speed pressure in disguise: progress/step =
+    # w x v x dt, and stage 5 run 1 sprinted 19.2 m into the first hairpin at
+    # 4-8 m/s for 13 h on it. 0 = uncapped.
+    v_ref: float = 0.0
+    # --- braking gradient: time-to-collision over the forward +/-ttc_sector_deg
+    # of the scan, per beam r_i / (v cos th_i), min. prox fires only inside
+    # safe_dist (0.5 m = 1-2 control steps at 4-8 m/s), after braking is
+    # possible. Charges w_ttc x max(0, 1 - ttc/ttc_ref). At 3 m/s it wakes
+    # 3.6 m before a wall ahead and is silent at the raceline's 1.5 m/s hairpin
+    # speed with 1.8 m to go; a wall 1 m to the side is not "ahead" below 5 m/s.
+    # Full charge = w_ttc per step, against ~0.8/step of progress at v_ref 3.
+    # Speed from /odom (training only). 0 = off.
+    # Sector: MEASURED, the opening straight is ~1.2 m wide (pre-crash car
+    # centre x spanned 0.27-1.23 about the 0.80 centreline), so the side walls
+    # sit ~0.55 m off the sensor. At +/-10 deg their beams are 3.2 m long and
+    # the term charged from 3.2 m/s on a straight road; at +/-6 deg (5.3 m)
+    # it starts at ~4.4 m/s, above stage 5's v_ref and below racing speed.
+    w_ttc: float = 0.0
+    ttc_ref: float = 1.2
+    ttc_sector_deg: float = 6.0
     # --- lap bonus: w_lap / lap_time per completed lap (sim's own timer) ---
     # The one term aimed at lap TIME rather than distance. 200 ~= 10% of reward
     # at ~10 s laps. 0 = off.
@@ -100,9 +164,13 @@ class RewardCfg:
     min_lap_time: float = 1.0
     lap_bonus_flat: float = 0.0
     # --- terminal ---
-    # The real cost of a crash is forfeiting the rest of the episode's
-    # progress (~230 discounted at gamma ~0.996); -15 is the deterrent on top.
-    crash_penalty: float = 15.0
+    # Forfeiting the rest of the episode (~230 discounted) only deters a
+    # critic that has SEEN long episodes; a fresh policy never has, so the
+    # penalty itself must beat the reward-to-go at the braking point (~20 at
+    # 4 m/s and 1.1/step). 15 made sprint-crash-repeat the optimum for 743k
+    # steps; 50 leaves margin without making creeping (stall -5) the better
+    # deal.
+    crash_penalty: float = 50.0
     stall_penalty: float = 5.0
     # --- shaping parameters ---
     safe_dist: float = 0.5
@@ -134,6 +202,39 @@ class EnvCfg:
     race_mode: bool = False
     reset_pulse_ticks: int = 3
     reset_settle_s: float = 0.6
+    # Fixed start pose. The simulator has NO spawn command -- the bridge sends
+    # only throttle, steering and reset, and reset means "the start line" with
+    # no argument (EXPERIMENTS.md 25) -- so a chosen start pose has to be
+    # DRIVEN to: after the reset pulse the env steers dead straight to within
+    # spawn_radius of (spawn_x, spawn_y), brakes to a standstill, and only then
+    # hands over. Those ticks are not policy steps and not recorded
+    # transitions, and the car is stationary at handover, so the observation
+    # the policy sees is exactly the one a normal reset produces. At deployment
+    # (race_mode) reset does nothing, so none of this exists there.
+    spawn_drive: bool = False
+    spawn_x: float = 0.80
+    spawn_y: float = -13.31           # ~2.3 m before the corner at y = -15.6
+    spawn_radius: float = 0.35        # >= one step of travel at spawn_cruise
+    spawn_cruise: float = 3.0         # m/s on the way in
+    spawn_timeout_s: float = 15.0     # give up and start from the line instead
+    # Reverse curriculum, using the simulator's own checkpoints. A collision
+    # already leaves the car at the last checkpoint (EXPERIMENTS.md 24), so
+    # simply NOT pulsing reset starts the next episode there -- at whatever
+    # corner the policy is currently failing, rather than back at the start
+    # line. There is no spawn API to do this directly: the bridge sends only
+    # throttle, steering and reset. Checkpoints are ~3 m apart and carry the
+    # track's heading, so the car resumes pointed along the racing line.
+    # The crash still TERMINATES, so the -crash_penalty target keeps its
+    # no-bootstrap form; only the next episode's start state moves.
+    crash_restart: bool = False
+    # Fraction of crash-ended episodes that resume at the checkpoint. The rest
+    # go back to the start line, so the approach to the corner -- and the
+    # braking that belongs to it -- stays in the buffer. 0.75 gives ~4
+    # attempts at the frontier per full lap attempt.
+    crash_restart_prob: float = 0.75
+    # Force a full reset after this many consecutive checkpoint restarts, so a
+    # checkpoint the policy cannot leave cannot trap the run.
+    crash_restart_max: int = 20
     startup_timeout: float = 60.0
     # Refuse to train if the measured SIM TICK (before decimation) is outside
     # this window, ms; 0 = no check. A stock bridge ticks at ~55 ms

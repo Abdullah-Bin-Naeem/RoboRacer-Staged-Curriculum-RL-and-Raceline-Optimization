@@ -8,6 +8,9 @@ import importlib
 STAGES = {
     "5": "stages.stage5_fresh",
     "6": "stages.stage6_push",
+    "7": "stages.stage7_smooth",
+    "8": "stages.stage8_flow",
+    "9": "stages.stage9_limit",
 }
 
 

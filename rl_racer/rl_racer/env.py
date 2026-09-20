@@ -15,6 +15,7 @@ COMPETITION LEGALITY -- what feeds the OBSERVATION vs the REWARD:
 import math
 import threading
 import time
+from collections import deque
 
 import numpy as np
 import gymnasium as gym
@@ -30,7 +31,7 @@ from sensor_msgs.msg import LaserScan, Imu, JointState
 from nav_msgs.msg import Odometry
 
 from .config import Cfg
-from .obs import LidarFOV, beam_features, build_obs, yaw_from_quat
+from .obs import LidarFOV, beam_features, build_obs, yaw_from_quat, ttc_forward, ttc_penalty
 from .sensors import WheelSpeed, TireObserver, slip, tire_mu, yaw_residual
 
 NS = "/autodrive/roboracer_1"
@@ -204,7 +205,13 @@ class AutoDriveRacerEnv(gym.Env):
                   f"({self.cfg.env.episode_seconds:g} s at this rate)")
 
         self._prev_action = np.zeros(2, dtype=np.float32)
+        self._prev_throttle = 0.0       # the car is stationary at every reset
         self._prev_pos = None
+        self._warned_spawn = False
+        self._crashed_last = False      # last episode ended on a counted collision
+        self._restarts_in_row = 0
+        self._resumed = False           # this episode began at a checkpoint
+        self._start_pos = np.zeros(2)
         self._col_base = 0
         self._lap_base = 0
         self._steps = 0
@@ -216,6 +223,8 @@ class AutoDriveRacerEnv(gym.Env):
         self._acc = {k: 0.0 for k in self._ACC_KEYS}
         self._ep_max_speed = 0.0
         self._ep_max_vest = 0.0
+        # /odom speed over the last second, for the approach speed at an episode end.
+        self._recent_v = deque(maxlen=max(1, int(round(1.0 / self.control_period))))
         # Phase lock: the tick the last observation was taken at. step() waits
         # for `decimation` ticks past THAT tick, not past the send, so the
         # caller's overhead (policy + gradient steps) is absorbed into the
@@ -241,7 +250,8 @@ class AutoDriveRacerEnv(gym.Env):
             except Exception:       # ExternalShutdownException at exit
                 break
 
-    _EP_KEYS = ("progress", "speed", "center", "smooth", "prox", "dist", "lap", "grip")
+    _EP_KEYS = ("progress", "speed", "center", "smooth", "thr_smooth", "slip_excess",
+                "prox", "ttc", "dist", "lap", "grip")
     _ACC_KEYS = ("thr", "steer", "sat", "vest", "slip_abs", "peak", "accel", "yres_sq", "yaw_sq",
                  "period", "overhead", "ticks")
 
@@ -292,19 +302,84 @@ class AutoDriveRacerEnv(gym.Env):
                          a0, a1, slip_triple, o.slip_max, o.yaw_res_max)
 
     # ------------------------------------------------------------------ gym
+    def _drive_to_spawn(self) -> bool:
+        """Drive the car, dead straight, to the configured start point and stop.
+
+        There is no spawn command in the simulator, so a fixed start pose has
+        to be driven to. None of these ticks is a policy step or a recorded
+        transition. Returns False if the point was not reached, in which case
+        the episode just starts wherever the car ended up.
+        """
+        env = self.cfg.env
+        # Braking capability: the tire model's asymptote, mu 0.464 x g, taken
+        # conservatively. Used to shape the approach so the car comes to rest
+        # AT the point -- braking only on arrival overshoots by v^2/2a, which
+        # is ~1 m from 3 m/s and larger than any sane radius.
+        a_brake = 4.0
+        target = np.array([env.spawn_x, env.spawn_y], dtype=float)
+        deadline = time.perf_counter() + env.spawn_timeout_s
+        arrived = False
+        while time.perf_counter() < deadline:
+            _, pos, fwd, speed, _ = self._state()
+            to_t = target - pos
+            dist = float(np.hypot(to_t[0], to_t[1]))
+            # Arrived once inside the radius, or once the point is behind us.
+            if dist <= env.spawn_radius or float(to_t[0] * fwd[0] + to_t[1] * fwd[1]) <= 0.0:
+                arrived = True
+                break
+            od = self.node.odom
+            v = math.hypot(od[2][0], od[2][1]) if od is not None else abs(speed)
+            # Decelerating approach: the speed that can still stop by the time
+            # the radius is reached, capped at the cruise speed.
+            v_want = min(env.spawn_cruise,
+                         math.sqrt(2.0 * a_brake * max(dist - 0.5 * env.spawn_radius, 0.0)))
+            thr = 0.0 if v > v_want + 0.1 else float(np.clip(0.12 + 0.2 * (v_want - v), 0.0, 1.0))
+            self.node.send(thr, 0.0)
+            if not self.node.wait_ticks(1, env.tick_timeout):
+                return False
+        # Brake to a standstill, so the handover state matches a normal reset.
+        self.node.send(0.0, 0.0)
+        stop_by = time.perf_counter() + env.spawn_timeout_s
+        while time.perf_counter() < stop_by:
+            od = self.node.odom
+            if (math.hypot(od[2][0], od[2][1]) if od is not None else 0.0) < 0.15:
+                break
+            if not self.node.wait_ticks(1, env.tick_timeout):
+                break
+        return arrived
+
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
         env = self.cfg.env
 
         self.node.send(0.0, 0.0)
+        # Reverse curriculum: after a counted collision the sim has already put
+        # the car at its last checkpoint, so skipping the reset pulse leaves it
+        # there and this episode starts at the corner that beat it.
+        resume = (env.crash_restart and self._crashed_last and not env.race_mode
+                  and self._restarts_in_row < env.crash_restart_max
+                  and float(self.np_random.random()) < env.crash_restart_prob)
+        self._restarts_in_row = self._restarts_in_row + 1 if resume else 0
+        self._crashed_last = False
+        self._resumed = resume
+
         if not env.race_mode:
-            # reset_command is level-triggered: the bridge re-emits it as
-            # 'V1 Reset' every tick, so it must be pulsed or the sim resets
-            # forever.
-            self.node.send_reset(True)
-            self.node.wait_ticks(env.reset_pulse_ticks, env.tick_timeout)
-            self.node.send_reset(False)
+            if not resume:
+                # reset_command is level-triggered: the bridge re-emits it as
+                # 'V1 Reset' every tick, so it must be pulsed or the sim resets
+                # forever.
+                self.node.send_reset(True)
+                self.node.wait_ticks(env.reset_pulse_ticks, env.tick_timeout)
+                self.node.send_reset(False)
             time.sleep(env.reset_settle_s)
+            if env.spawn_drive and not resume and not self._drive_to_spawn():
+                if not self._warned_spawn:
+                    print(f"[rl_racer] WARNING: could not reach the start point "
+                          f"({env.spawn_x:g}, {env.spawn_y:g}) within "
+                          f"{env.spawn_timeout_s:g} s; episodes will start wherever "
+                          f"the car stopped. Check start_x/start_y in "
+                          f"episode_ends.csv.", flush=True)
+                    self._warned_spawn = True
         self.node.wait_ticks(1, env.tick_timeout)
         with self.node.cv:
             self._obs_tick = self.node.tick
@@ -329,6 +404,7 @@ class AutoDriveRacerEnv(gym.Env):
         self._lap_base = self.node.laps
         self._prev_pos = pos
         self._prev_action[:] = 0.0
+        self._prev_throttle = 0.0
         self._steps = 0
         self._stalled = 0
         self._too_close = 0
@@ -337,6 +413,8 @@ class AutoDriveRacerEnv(gym.Env):
         self._prev_laps = self.node.laps
         self._ep_max_speed = 0.0
         self._ep_max_vest = 0.0
+        self._recent_v.clear()
+        self._start_pos = np.array(pos, dtype=float)
 
         return self._build(beams, speed, yaw_rate, 0.0, 0.0, (v_est, s, yres)), {}
 
@@ -375,21 +453,48 @@ class AutoDriveRacerEnv(gym.Env):
 
         # Forward progress = displacement projected on heading. Clamped because
         # a reset teleport would otherwise inject a huge spurious reward.
+        # The sim respawns the car at the last checkpoint in the same frame
+        # that increments collision_count, so on a crash step `pos` is the
+        # respawn, not the crash: pay no progress for the teleport and keep
+        # the pre-crash pose and speed for the episode stats.
+        collided = self.node.collisions > self._col_base
+        pos_before = self._prev_pos
+        speed_before = self._recent_v[-1] if self._recent_v else 0.0
         d = pos - self._prev_pos
-        ds = float(np.clip(d[0] * fwd[0] + d[1] * fwd[1], -1.0, 1.0))
+        ds = 0.0 if collided else float(np.clip(d[0] * fwd[0] + d[1] * fwd[1], -1.0, 1.0))
         self._prev_pos = pos
 
-        r_progress = rw.w_progress * ds
+        # Speed cap in the reward, not the action: progress faster than v_ref
+        # earns nothing, so no action is re-labelled when the cap is lifted.
+        ds_paid = min(ds, rw.v_ref * self.control_period) if rw.v_ref > 0.0 else ds
+        r_progress = rw.w_progress * ds_paid
         # Speed reward from /odom (training-only, accurate) -- NOT the encoder,
         # which overreads under wheelspin and would pay the agent to spin.
         _od = self.node.odom
         _rew_speed = math.hypot(_od[2][0], _od[2][1]) if _od is not None else abs(speed)
         r_speed = rw.w_speed * float(np.clip(_rew_speed / cfg.obs.v_max, 0.0, 1.0))
+        # Braking gradient: prox is silent outside safe_dist, which at speed is
+        # 1-2 steps before the wall; time-to-collision wakes seconds earlier.
+        p_ttc = 0.0
+        if rw.w_ttc > 0.0:
+            p_ttc = rw.w_ttc * ttc_penalty(
+                ttc_forward(beams, cfg.obs.fov_half_deg, _rew_speed,
+                            rw.ttc_sector_deg, cfg.obs.range_max),
+                rw.ttc_ref)
+        self._recent_v.append(_rew_speed)
         # Grip utilisation: mu(|S|)/mu_peak, 1.0 at the tire's peak, 0.64 at the
         # asymptote (wheelspin / lock), ~0 when coasting.
         r_grip = rw.w_grip * (tire_mu(s, veh) / veh.tire_mu_peak) if rw.w_grip > 0.0 else 0.0
         p_center = rw.w_center * feats["center_err"]
-        p_smooth = rw.w_smooth * abs(float(a[0]) - float(self._prev_action[0]))
+        _dsteer = abs(float(a[0]) - float(self._prev_action[0]))
+        p_smooth = rw.w_smooth * _dsteer + rw.w_smooth2 * _dsteer * _dsteer
+        # In THROTTLE units, not action units, so the weight keeps its meaning
+        # if the throttle scale ever changes.
+        p_thr = rw.w_thr_smooth * abs(throttle - self._prev_throttle)
+        # Excess slip past the tire's peak: the one term with a gradient where
+        # mu() is flat (see config). Symmetric, so it pushes toward threshold
+        # braking as well as threshold acceleration.
+        p_slip = rw.w_slip * max(0.0, abs(s) - veh.tire_s_peak) if rw.w_slip > 0.0 else 0.0
         p_prox = rw.w_prox * feats["prox"]
 
         # Lap bonus from the simulator's own timer, once per completed lap.
@@ -406,12 +511,14 @@ class AutoDriveRacerEnv(gym.Env):
             self._prev_laps = laps_now
 
         reward = (r_progress + r_speed + r_lap + r_grip
-                  - p_center - p_smooth - p_prox - rw.step_penalty)
+                  - p_center - p_smooth - p_thr - p_slip - p_prox - p_ttc
+                  - rw.step_penalty)
 
         ep, acc = self._ep, self._acc
         ep["progress"] += r_progress; ep["speed"] += r_speed; ep["center"] += p_center
         ep["smooth"] += p_smooth;     ep["prox"] += p_prox;    ep["dist"] += ds
-        ep["lap"] += r_lap;           ep["grip"] += r_grip
+        ep["lap"] += r_lap;           ep["grip"] += r_grip;    ep["ttc"] += p_ttc
+        ep["thr_smooth"] += p_thr;    ep["slip_excess"] += p_slip
         acc["thr"] += throttle
         acc["steer"] += abs(float(a[0]))
         acc["sat"] += 1.0 if float(a[1]) > 0.9 else 0.0
@@ -427,9 +534,12 @@ class AutoDriveRacerEnv(gym.Env):
 
         terminated = False
         reason = ""
-        if self.node.collisions > self._col_base:
+        if collided:
             reward -= rw.crash_penalty
             terminated, reason = True, "crash"
+            # Only a COUNTED collision respawns the car at a checkpoint; the
+            # scrape detector below does not, so it must take a full reset.
+            self._crashed_last = True
             self._col_base = self.node.collisions   # in race mode: charge once, keep driving
 
         # Backup detector for sims that do not count wall scrapes.
@@ -458,6 +568,7 @@ class AutoDriveRacerEnv(gym.Env):
         self._steps += 1
         truncated = (self._steps >= cfg.env.max_episode_steps) and not cfg.env.race_mode
         self._prev_action[:] = a
+        self._prev_throttle = throttle
 
         obs = self._build(beams, speed, yaw_rate, a[0], a[1], (v_est, s, yres))
 
@@ -472,6 +583,20 @@ class AutoDriveRacerEnv(gym.Env):
             stats["act_steer_abs_mean"] = acc["steer"] / n
             stats["act_throttle_sat"] = acc["sat"] / n
             stats["max_speed"] = self._ep_max_speed          # encoder u
+            # Where the episode ended and how fast it arrived (/odom, training
+            # only); on a crash the pose one step earlier, before the respawn.
+            end_pos = pos_before if collided else pos
+            stats["end_x"], stats["end_y"] = float(end_pos[0]), float(end_pos[1])
+            stats["end_speed"] = float(speed_before if collided else _rew_speed)
+            recent = list(self._recent_v)
+            if collided and len(recent) > 1:
+                recent = recent[:-1]                    # drop the post-respawn sample
+            stats["end_approach_speed"] = float(np.mean(recent)) if recent else 0.0
+            # Where this episode BEGAN: the start line, or the checkpoint a
+            # previous crash left the car at. Without it an episode's distance
+            # cannot be read (a 2 m episode from the corner is not a failure).
+            stats["start_x"], stats["start_y"] = float(self._start_pos[0]), float(self._start_pos[1])
+            stats["resumed"] = 1.0 if self._resumed else 0.0
             stats["slip_v_est_max"] = self._ep_max_vest      # observer car speed
             stats["slip_v_est_mean"] = acc["vest"] / n
             stats["slip_abs_mean"] = acc["slip_abs"] / n

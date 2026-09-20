@@ -45,6 +45,10 @@ def stage5_cfg():
     from rl_racer.config import Cfg
     import stages
     cfg = Cfg(); stages.load("5").apply(cfg)
+    # The stage's fixed start point is a pose on the REAL competition track;
+    # the mock's corridor is a different frame, so the drive-in is off by
+    # default here and section 2h enables it with mock coordinates.
+    cfg.env.spawn_drive = False
     return cfg
 
 def run_steps(env, n, action, overhead_s=0.0):
@@ -120,6 +124,65 @@ def main():
     check("obs speed slot = u/v_max", abs(obs[110] - info["speed"] / cfg.obs.v_max) < 1e-5, f"{obs[110]:.4f}")
     check("obs v_est slot = v_est/v_max", abs(obs[114] - np.clip(info["v_est"] / cfg.obs.v_max, -1, 1)) < 1e-5)
     check("obs slip slot = S/0.5", abs(obs[115] - np.clip(info["slip"] / 0.5, -1, 1)) < 1e-5)
+    # 2c'': the reward-side speed cap and the time-to-collision term
+    from rl_racer.obs import ttc_forward, ttc_penalty
+    p0, d0, t0, k0 = env._ep["progress"], env._ep["dist"], env._ep["ttc"], env._steps
+    run_steps(env, 20, act)
+    n = env._steps - k0
+    v_drv = (env._ep["dist"] - d0) / n / env.control_period
+    paid = (env._ep["progress"] - p0) / n
+    cap = cfg.rew.w_progress * cfg.rew.v_ref * env.control_period
+    check("car faster than v_ref in this run", v_drv > cfg.rew.v_ref + 0.5, f"{v_drv:.2f} m/s vs v_ref {cfg.rew.v_ref}")
+    check("progress paid capped at w x v_ref x dt", 0.9 * cap <= paid <= cap + 1e-6, f"{paid:.3f}/step vs cap {cap:.3f}")
+    ttc_step = (env._ep["ttc"] - t0) / n
+    check("ttc term small in the open corridor", 0.0 <= ttc_step < 0.3, f"{ttc_step:.3f}/step at {v_drv:.1f} m/s")
+    ang = np.radians(np.linspace(-110, 110, 110))     # no beam sits exactly at 0 deg
+    open_, ahead = np.full(110, 10.0), np.minimum(10.0, 1.8 / np.maximum(np.cos(ang), 1e-3))
+    along = np.minimum(10.0, 1.0 / np.maximum(np.abs(np.sin(ang)), 1e-3))
+    check("ttc: open ahead at 3 m/s -> 0", ttc_penalty(ttc_forward(open_, 110.0, 3.0), 1.2) < 1e-9)
+    check("ttc: wall 1.8 m ahead at 3 m/s -> 0.5", abs(ttc_penalty(ttc_forward(ahead, 110.0, 3.0), 1.2) - 0.5) < 1e-3,
+          f"{ttc_penalty(ttc_forward(ahead, 110.0, 3.0), 1.2):.4f}")
+    check("ttc: wall 1.8 m ahead at 1.5 m/s -> 0", ttc_penalty(ttc_forward(ahead, 110.0, 1.5), 1.2) < 1e-9)
+    check("ttc: wall 1 m ALONGSIDE at 3 m/s -> 0", ttc_penalty(ttc_forward(along, 110.0, 3.0), 1.2) < 1e-9)
+    # Saturated beams are "nothing within range", not a wall at range_max:
+    # without that, empty road charged above range_max/ttc_ref = 8.3 m/s.
+    sat = np.full(110, 10.0)
+    check("ttc: EMPTY road at 12 m/s -> 0 once range_max is known",
+          ttc_penalty(ttc_forward(sat, 110.0, 12.0, 6.0, 10.0), 1.2) < 1e-9
+          and ttc_penalty(ttc_forward(sat, 110.0, 12.0, 6.0, 0.0), 1.2) > 0.2,
+          f"with range_max {ttc_penalty(ttc_forward(sat,110.0,12.0,6.0,10.0),1.2):.3f} vs "
+          f"without {ttc_penalty(ttc_forward(sat,110.0,12.0,6.0,0.0),1.2):.3f}")
+    check("ttc: a REAL wall still charges at 12 m/s with range_max set",
+          ttc_penalty(ttc_forward(ahead, 110.0, 12.0, 6.0, 10.0), 1.2) > 0.8,
+          f"{ttc_penalty(ttc_forward(ahead, 110.0, 12.0, 6.0, 10.0), 1.2):.3f}")
+    # Quadratic steering term: hard on a big reversal, near-free when smooth.
+    from rl_racer.config import Cfg as _Cfg
+    _c = _Cfg(); _c.rew.w_smooth, _c.rew.w_smooth2 = 0.3, 3.0
+    _pen = lambda dd: _c.rew.w_smooth * dd + _c.rew.w_smooth2 * dd * dd
+    check("smooth: quadratic term punishes a 0.5 reversal >> a 0.05 correction",
+          _pen(0.5) > 10 * _pen(0.05) and _pen(0.05) < 0.03,
+          f"d=0.05 -> {_pen(0.05):.4f}/step, d=0.164 -> {_pen(0.164):.4f}, d=0.5 -> {_pen(0.5):.4f}")
+    # Throttle smoothness is LINEAR so it measures total variation: six small
+    # chatters must cost MORE than one decisive brake of the same total travel,
+    # which is the opposite of what a square would do.
+    _tp = lambda dd: 0.6 * dd
+    check("thr_smooth: linear -> 6 chatters of 0.1 cost >= one decisive 0.6",
+          6 * _tp(0.1) >= _tp(0.6) - 1e-9 and 6 * (1.5 * 0.1 ** 2) < 1.5 * 0.6 ** 2,
+          f"6x0.1 -> {6*_tp(0.1):.3f} vs 1x0.6 -> {_tp(0.6):.3f} (a square would give "
+          f"{6*1.5*0.01:.3f} vs {1.5*0.36:.3f}, i.e. reward the chatter)")
+    # The grip reward is FLAT past the tire asymptote, which is why it could
+    # never pull slip down; the excess-slip penalty is what has a gradient there.
+    from rl_racer.sensors import tire_mu as _mu
+    _v = cfg.veh
+    _flat = abs(_mu(0.30, _v) - _mu(0.92, _v)) < 1e-9
+    _sp = lambda S: 0.25 * max(0.0, abs(S) - _v.tire_s_peak)
+    check("w_grip has NO gradient past the asymptote (why 0.05->0.15 did nothing)",
+          _flat, f"mu(0.30)={_mu(0.30,_v):.3f} == mu(0.92)={_mu(0.92,_v):.3f}")
+    check("w_slip DOES have a gradient there, and is 0 at the peak",
+          _sp(0.92) > _sp(0.30) > 0.0 and _sp(_v.tire_s_peak) == 0.0,
+          f"S=0.15 -> {_sp(0.15):.3f}, S=0.30 -> {_sp(0.30):.3f}, S=0.92 -> {_sp(0.92):.3f}/step")
+    check("w_slip is symmetric: locking a wheel under brake costs the same",
+          abs(_sp(-0.92) - _sp(0.92)) < 1e-12, f"S=-0.92 -> {_sp(-0.92):.3f}")
     yres_rms = math.sqrt(env._acc["yres_sq"] / env._steps); yaw_rms = math.sqrt(env._acc["yaw_sq"] / env._steps)
     check("yaw residual << yaw rate (sign convention)", yres_rms < 0.3 * yaw_rms,
           f"res rms {yres_rms:.3f} vs yaw rms {yaw_rms:.3f}")
@@ -172,10 +235,88 @@ def main():
     # 2f: crash termination
     cfg.env.max_episode_steps = 10 ** 9
     env.reset(); run_steps(env, 3, act)
-    side.collide(); time.sleep(0.1)
+    x_pre, dist_pre = env._prev_pos[0], env._ep["dist"]
+    side.collide(); time.sleep(0.1)          # the mock respawns the car at the origin, like the sim
     obs, r, term, trunc, info = env.step(np.array(act, dtype=np.float32))
-    check("collision -> terminated 'crash' with -15", term and info.get("reason") == "crash" and r < -10,
+    check("collision -> terminated 'crash' with -50", term and info.get("reason") == "crash" and r < -40,
           f"reason={info.get('reason')} r={r:.1f}")
+    st = info.get("episode_stats", {})
+    check("crash step pays no progress for the respawn teleport", abs(st.get("dist", -1) - dist_pre) < 1e-9,
+          f"dist {dist_pre:.3f} -> {st.get('dist', -1):.3f}")
+    check("crash stats log the PRE-respawn pose and speed, not the checkpoint",
+          all(k in st for k in ("end_x", "end_y", "end_speed", "end_approach_speed"))
+          and abs(st["end_x"] - x_pre) < 1e-6 and st["end_x"] > 0.0
+          and st["end_speed"] > 0.0 and st["end_approach_speed"] > 0.0,
+          f"x={st.get('end_x', 0):.3f} (pre-crash {x_pre:.3f}) v={st.get('end_speed', 0):.2f} "
+          f"approach={st.get('end_approach_speed', 0):.2f}")
+
+    # 2g: reverse curriculum -- resume at the sim's checkpoint after a crash
+    straight = (0.0, act[1])
+    cfg.env.crash_restart = False
+    env.reset()                                   # full reset: car at the spawn
+    run_steps(env, 40, straight)                  # drive past at least one 3 m checkpoint
+    x_pre = float(env._prev_pos[0])
+    cp = 3.0 * math.floor(x_pre / 3.0)
+    cfg.env.crash_restart = True
+    cfg.env.crash_restart_prob = 1.0
+    cfg.env.crash_restart_max = 20
+    side.collide(); time.sleep(0.1)
+    _, _, term, _, _ = env.step(np.array(straight, dtype=np.float32))
+    check("drove past a checkpoint before crashing", term and cp >= 3.0, f"crashed at x={x_pre:.2f} -> checkpoint {cp:.1f}")
+    rc0 = side.reset_count or 0
+    env.reset(); time.sleep(0.1)
+    check("crash_restart: NO reset pulse after a counted collision",
+          (side.reset_count or 0) == rc0, f"{rc0} -> {side.reset_count}")
+    check("crash_restart: the episode resumes AT the checkpoint, not the start line",
+          env._resumed and abs(float(env._start_pos[0]) - cp) < 0.3,
+          f"start x={float(env._start_pos[0]):.2f} vs checkpoint {cp:.1f}, resumed={env._resumed}")
+    # prob 0 -> always back to the start line
+    run_steps(env, 3, straight); side.collide(); time.sleep(0.1)
+    env.step(np.array(straight, dtype=np.float32))
+    cfg.env.crash_restart_prob = 0.0
+    rc0 = side.reset_count or 0
+    env.reset(); time.sleep(0.1)
+    check("crash_restart_prob 0 -> full reset to the start line",
+          (side.reset_count or 0) == rc0 + 1 and not env._resumed and abs(float(env._start_pos[0])) < 0.3,
+          f"pulses {rc0} -> {side.reset_count}, start x={float(env._start_pos[0]):.2f}")
+    # the consecutive cap must break a checkpoint the policy cannot leave
+    cfg.env.crash_restart_prob = 1.0
+    cfg.env.crash_restart_max = 0
+    run_steps(env, 3, straight); side.collide(); time.sleep(0.1)
+    env.step(np.array(straight, dtype=np.float32))
+    rc0 = side.reset_count or 0
+    env.reset(); time.sleep(0.1)
+    check("crash_restart_max 0 -> the cap forces a full reset",
+          (side.reset_count or 0) == rc0 + 1 and not env._resumed, f"pulses {rc0} -> {side.reset_count}")
+    # a non-crash end (truncation) never resumes: the sim has respawned nothing
+    cfg.env.crash_restart_max = 20
+    cfg.env.max_episode_steps = env._steps + 1
+    _, _, _, trunc_g, _ = env.step(np.array(straight, dtype=np.float32))
+    cfg.env.max_episode_steps = 10 ** 9
+    rc0 = side.reset_count or 0
+    env.reset(); time.sleep(0.1)
+    check("a truncated episode always resets to the start line",
+          trunc_g and (side.reset_count or 0) == rc0 + 1 and not env._resumed,
+          f"trunc={trunc_g} pulses {rc0} -> {side.reset_count}")
+
+    # 2h: fixed start point by driving there (no spawn command exists)
+    cfg.env.crash_restart = False
+    cfg.env.spawn_drive = True
+    cfg.env.spawn_x, cfg.env.spawn_y = 5.0, 0.0     # the mock drives +x from the origin
+    cfg.env.spawn_radius, cfg.env.spawn_cruise = 0.35, 3.0
+    cfg.env.spawn_timeout_s = 20.0
+    t_spawn = time.time()
+    obs, _ = env.reset()
+    dt_spawn = time.time() - t_spawn
+    err = abs(float(env._start_pos[0]) - cfg.env.spawn_x)
+    check("spawn_drive: episode starts AT the fixed point, not the start line",
+          err <= cfg.env.spawn_radius + 0.2, f"start x={float(env._start_pos[0]):.2f} target 5.0 err={err:.2f} m")
+    check("spawn_drive: handed over at a standstill (speed slot 0)", abs(obs[110]) < 1e-6, f"{obs[110]:.4f}")
+    check("spawn_drive: drive-in took a sane time", 0.5 < dt_spawn < 20.0, f"{dt_spawn:.1f} s")
+    cfg.env.spawn_drive = False
+    obs, _ = env.reset()
+    check("spawn_drive off -> back to the start line", abs(float(env._start_pos[0])) < 0.3,
+          f"start x={float(env._start_pos[0]):.2f}")
     env.close()
 
     # ------------------------------------------------------------ 3. race mode

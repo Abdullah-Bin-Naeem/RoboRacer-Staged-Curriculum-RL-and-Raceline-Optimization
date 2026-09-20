@@ -91,9 +91,19 @@ class Mock(Node):
                 self.reset_count += 1
             self.reset_level = bool(m.data)
             if m.data: self.spawn()
+    CHECKPOINT_M = 3.0          # the sim's checkpoints are ~3 m apart
+
     def _collide(self, m):
+        # Like the sim: the collision frame already shows the car respawned at
+        # the last CHECKPOINT (not the spawn), stopped. So the env must not pay
+        # progress for the teleport, must not log the respawn as the crash
+        # site, and -- if it skips the reset pulse -- starts the next episode
+        # from that checkpoint rather than the start line.
         with self.lock:
-            if m.data: self.collisions += 1
+            if m.data:
+                self.collisions += 1
+                self.x = self.CHECKPOINT_M * math.floor(self.x / self.CHECKPOINT_M)
+                self.y = 0.0; self.v = 0.0; self.yaw = 0.0
 
     def tick(self):
         if self.stop_after and time.time() - self.t0 > self.stop_after:

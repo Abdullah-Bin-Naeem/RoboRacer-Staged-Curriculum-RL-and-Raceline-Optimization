@@ -6,14 +6,14 @@
 """
 import argparse, os, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from stable_baselines3 import SAC
 import stages
+from rl_racer.checkpoint import load_sac
 from rl_racer.config import Cfg
 from rl_racer.env import AutoDriveRacerEnv
 
 p = argparse.ArgumentParser()
 p.add_argument("model")
-p.add_argument("--stage", choices=["5", "6"], default="5",
+p.add_argument("--stage", choices=["5", "6", "7", "8", "9"], default="5",
                help="stage config to apply (both share the observation; only the "
                     "reward differs, which does not run here)")
 p.add_argument("--episodes", type=int, default=3)
@@ -46,6 +46,10 @@ if a.race:
     a.episodes = 1
     print("[race] no reset pulse, no termination on collision/stall, no step cap; Ctrl-C to stop")
 
+# Load BEFORE touching the simulator, so a bad checkpoint fails fast instead of
+# leaving a connected env and a ROS executor behind.
+model = load_sac(a.model, device="cpu")
+
 env = AutoDriveRacerEnv(cfg)
 if a.race and any(_tick_window):
     _tick_ms = 1000.0 * env.control_period / cfg.env.decimation
@@ -53,7 +57,6 @@ if a.race and any(_tick_window):
     if (lo > 0 and _tick_ms < lo) or (hi > 0 and _tick_ms > hi):
         print(f"[race] WARNING: sim tick {_tick_ms:.1f} ms is outside the {lo:g}-{hi:g} ms "
               f"window this policy trained in; driving anyway.")
-model = SAC.load(a.model, device="cpu")
 try:
     for ep in range(a.episodes):
         obs, _ = env.reset()

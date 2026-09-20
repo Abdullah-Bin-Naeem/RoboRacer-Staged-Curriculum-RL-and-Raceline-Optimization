@@ -87,6 +87,34 @@ def beam_features(beams: np.ndarray, range_max: float, safe_dist: float):
     }
 
 
+def ttc_forward(beams: np.ndarray, fov_half_deg: float, speed: float,
+                sector_deg: float = 10.0, range_max: float = 0.0) -> float:
+    """Seconds until the nearest thing in the forward sector is reached at the
+    current speed, per beam r_i / (v cos th_i). A wall running alongside the
+    car is not ahead: its beams are long and nearly sideways. inf when clear.
+
+    `range_max` (0 = ignore) marks saturated beams as clear. Without it a beam
+    reading exactly range_max -- which means "nothing within range", not "a
+    wall at 10 m" -- divides down to a 1.0 s time-to-collision at 10 m/s, so
+    the penalty taxed a completely empty straight above 8.3 m/s.
+    """
+    n = len(beams)
+    th = np.linspace(-fov_half_deg, fov_half_deg, n) * (np.pi / 180.0)
+    sel = np.abs(th) <= sector_deg * (np.pi / 180.0)
+    r = beams[sel]
+    if range_max > 0.0:
+        r = np.where(r >= range_max - 1e-3, np.inf, r)
+    v_along = max(abs(speed), 0.1) * np.cos(th[sel])
+    return float(np.min(r / v_along))
+
+
+def ttc_penalty(ttc: float, ttc_ref: float) -> float:
+    """0 when the wall ahead is more than ttc_ref seconds away, ->1 at contact."""
+    if ttc_ref <= 0.0 or not np.isfinite(ttc):
+        return 0.0
+    return max(0.0, 1.0 - ttc / ttc_ref)
+
+
 def build_obs(beams, range_max, speed, v_max, yaw_rate, yaw_rate_max,
               prev_steer, prev_throttle, slip, slip_max=0.5, yaw_res_max=8.0) -> np.ndarray:
     """Assemble the policy input. Every component is clipped into [-1, 1].
